@@ -41,6 +41,49 @@ latter sits on an unrelated branch with a deleted working tree.
 | systemd unit | `deftrack-devnet.service` |
 | Node role | plain full node + devnet seed node — **not** a masternode |
 
+## Local development environment
+
+MongoDB runs as a **userspace install inside WSL Ubuntu 24.04** (same OS as the
+target VPS), not via Docker and not via apt — `sudo` needs a password here and
+system state is better left untouched.
+
+```
+~/opt/mongodb        MongoDB 8.0.29 (tarball)
+~/opt/mongosh        mongosh 2.10.0
+~/devnet-mongo/      dbpath, logs, start.sh, .creds (chmod 600, never leaves the machine)
+```
+
+```bash
+wsl -d Ubuntu -- ~/devnet-mongo/start.sh          # start (auth enabled, 127.0.0.1:27017)
+wsl -d Ubuntu -- ~/devnet-mongo/start.sh stop     # stop
+```
+
+WSL2 forwards the port, so Windows reaches it at `127.0.0.1:27017`. Two users
+exist on `deftrack_devnet`, both verified against their boundaries:
+
+| User | Role | Used by |
+|---|---|---|
+| `devnet_app` | `readWrite` on `deftrack_devnet` | the server (`.env`) |
+| `devnet_ro` | `read` on `deftrack_devnet` | the MongoDB MCP server |
+
+MongoDB **8.0** rather than the 7.x the plan names: 7.x is no longer among the
+supported releases. 8.0 is the long-term branch; 8.2/8.3 are rapid releases.
+
+## MCP servers
+
+Configured at **local** scope (`~/.claude.json`), so no connection string ever
+reaches this public repository.
+
+| Server | Purpose |
+|---|---|
+| `context7` | version-specific library docs (Mongoose, Express, zod, Lit) |
+| `mongodb` | schema inspection — **read-only**, `deftrack_devnet` only, local instance |
+| `playwright` | browser automation; used from Phase 3 to verify views render |
+
+The MongoDB MCP takes its connection string from `MDB_MCP_CONNECTION_STRING`
+plus `MDB_MCP_READ_ONLY=true`; the `--connectionString` flag is deprecated and
+would print the password in `claude mcp list` output.
+
 ## Verified facts about the node (DeFCoN Core v22.1.4, `v22.1.x` @ `7227180053`)
 
 ### The devnet ChainLock quorum is `LLMQ_DEVNET`, not `LLMQ_400_60`
@@ -150,6 +193,8 @@ paused" from "quorum punished the network" is the whole purpose of this tool.
 - **Validation:** zod on every route input; bounded `limit` / `hours`.
 - **Caching:** `withCachePolicy` profiles + in-flight dedup, ported from the
   production server.
+- **Commits:** no `Co-Authored-By` trailer — commits show the repository owner
+  as the sole author.
 - **Retention:** all TTLs >= 90 days, or disabled. The production noise TTL was
   shorter than the ban window, which made a real mainnet fork impossible to
   correlate afterwards.
