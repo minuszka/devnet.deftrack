@@ -1,0 +1,27 @@
+{
+  "name": "devnet-deftrack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LLMQ quorum (DKG round) and PoSe observation explorer for a DeFCoN devnet",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "dev": "concurrently -n server,client -c green,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
+    "start": "node server/dist/index.js",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

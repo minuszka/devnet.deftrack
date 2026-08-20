@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# secrets & local config -- NEVER commit these (public repository)
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+logs/
+
+# test / coverage
+coverage/
+
+# editors & OS
+.vscode/
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# local data
+data/
+backups/
+
+# ── reference material: not part of the deliverable ──────────────────────
+# Folder name is literal (19 exclamation marks); the leading '!' must be
+# escaped or git reads the line as a negation pattern.
+\!!!!!!!!!!!!!!!!!!!/
+KICKOFF_PROMPT.md
