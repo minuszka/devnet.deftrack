@@ -37,3 +37,25 @@ export function duration(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
+
+/**
+ * Satoshi string to DFCN.
+ *
+ * Parsed as BigInt, not Number: the supply is 1.1e17 satoshis, past the safe
+ * integer range, so a float would quietly lose the low digits.
+ */
+export function coin(sat: string | null | undefined, decimals = 2): string {
+  if (sat === null || sat === undefined) return '—';
+  let v: bigint;
+  try {
+    v = BigInt(sat);
+  } catch {
+    return '—';
+  }
+  const neg = v < 0n;
+  if (neg) v = -v;
+  const whole = v / 100000000n;
+  const frac = (v % 100000000n).toString().padStart(8, '0').slice(0, decimals);
+  const w = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${neg ? '-' : ''}${w}${decimals > 0 ? '.' + frac : ''}`;
+}

@@ -2,13 +2,15 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { DEVNET_BANNER } from '@devnet-deftrack/shared';
 import { api, type HealthSnapshot } from '../lib/api.js';
 import { num } from '../lib/format.js';
-import { ROUTES, matchRoute, installLinkInterceptor, type Route } from '../lib/router.js';
+import { ROUTES, matchRoute, installLinkInterceptor, type Match } from '../lib/router.js';
 import { baseStyles } from '../styles/shared.js';
 import './dd-page-overview.js';
 import './dd-page-rounds.js';
 import './dd-page-pose.js';
 import './dd-page-masternodes.js';
 import './dd-page-operators.js';
+import './dd-page-blocks.js';
+import './dd-page-txs.js';
 
 const HEALTH_REFRESH_MS = 30_000;
 
@@ -18,12 +20,12 @@ export class DdShell extends LitElement {
     _health: { state: true },
   };
 
-  private _route: Route = matchRoute(location.pathname);
+  private _route: Match = matchRoute(location.pathname);
   private _health: HealthSnapshot | null = null;
   private _timer: number | null = null;
   private _onPop = (): void => {
     this._route = matchRoute(location.pathname);
-    document.title = `devnet.deftrack — ${this._route.label}`;
+    document.title = `devnet.deftrack — ${this._route.route.label}`;
     this.scrollIntoView();
   };
 
@@ -159,7 +161,7 @@ export class DdShell extends LitElement {
       <nav>
         ${ROUTES.filter((r) => !r.hidden).map(
           (r) => html`
-            <a href=${r.path} aria-current=${r.path === this._route.path ? 'page' : nothing}>
+            <a href=${r.path} aria-current=${r.path === this._route.route.path ? 'page' : nothing}>
               ${r.label}
             </a>
           `
@@ -171,7 +173,8 @@ export class DdShell extends LitElement {
   }
 
   private _page(): TemplateResult {
-    switch (this._route.tag) {
+    const id = this._route.param;
+    switch (this._route.route.tag) {
       case 'dd-page-rounds':
         return html`<dd-page-rounds></dd-page-rounds>`;
       case 'dd-page-pose':
@@ -180,6 +183,14 @@ export class DdShell extends LitElement {
         return html`<dd-page-masternodes></dd-page-masternodes>`;
       case 'dd-page-operators':
         return html`<dd-page-operators></dd-page-operators>`;
+      case 'dd-page-blocks':
+        return html`<dd-page-blocks></dd-page-blocks>`;
+      case 'dd-page-txs':
+        return html`<dd-page-txs></dd-page-txs>`;
+      case 'dd-page-block':
+        return html`<dd-page-block .param=${id}></dd-page-block>`;
+      case 'dd-page-tx':
+        return html`<dd-page-tx .param=${id}></dd-page-tx>`;
       default:
         return html`<dd-page-overview></dd-page-overview>`;
     }

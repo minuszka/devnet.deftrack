@@ -206,3 +206,68 @@ export interface BanWaveReport {
   largestWave: number;
   totalBans: number;
 }
+
+// ── chain (blocks and transactions) ─────────────────────────────────────────
+
+export interface BlockRow {
+  height: number;
+  hash: string;
+  time: number;
+  nTx: number;
+  size: number;
+  isProofOfStake: boolean;
+  hasChainLock: boolean;
+  totalOutSat: string;
+  /** Masternode reward that reached a payee. */
+  masternodePaidSat: string;
+  /** Masternode reward burned to an OP_RETURN output. */
+  burnedSat: string;
+  payee: string | null;
+}
+
+export interface BlockTxSummary {
+  txid: string;
+  isCoinbase: boolean;
+  isCoinstake: boolean;
+  size: number;
+  valueOutSat: string;
+  voutCount: number;
+  vinCount: number;
+}
+
+export interface BlockDetail extends Omit<BlockRow, 'nTx'> {
+  previousblockhash: string | null;
+  nextblockhash: string | null;
+  mediantime: number | null;
+  version: number;
+  merkleroot: string;
+  bits: string;
+  nonce: number;
+  difficulty: number;
+  chainwork: string;
+  nTx: number;
+  /** Which masternode this block paid; all nodes share one payout address. */
+  paidMasternode: { proTxHash: string; service: string | null; operatorLabel: string | null } | null;
+  txs: BlockTxSummary[];
+}
+
+export interface TxRow {
+  txid: string;
+  height: number;
+  time: number;
+  size: number;
+  isCoinbase: boolean;
+  isCoinstake: boolean;
+  hasChainLock: boolean;
+  valueOutSat: string;
+  voutCount: number;
+  vinCount: number;
+}
+
+export interface TxDetail extends TxRow {
+  blockhash: string;
+  version: number;
+  type: number;
+  vin: Array<{ txid: string | null; vout: number | null; coinbase: string | null }>;
+  vout: Array<{ n: number; valueSat: string; scriptType: string; address: string | null }>;
+}

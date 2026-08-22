@@ -2,16 +2,24 @@
  * Minimal history router.
  *
  * Deliberately not lazy-loading page modules the way SCAN does: the whole
- * bundle is under 40 kB, so a second network round trip per navigation would
- * cost more than it saves.
+ * bundle is well under 100 kB, so a second network round trip per navigation
+ * would cost more than it saves.
  */
 
 export interface Route {
   path: string;
   tag: string;
   label: string;
-  /** Hidden from the menu but still routable. */
+  /** Routable but absent from the menu -- detail pages are reached by link. */
   hidden?: boolean;
+  /** One `:name` segment, matched against the path. */
+  pattern?: RegExp;
+  key?: string;
+}
+
+export interface Match {
+  route: Route;
+  param: string | null;
 }
 
 export const ROUTES: Route[] = [
@@ -19,12 +27,39 @@ export const ROUTES: Route[] = [
   { path: '/rounds', tag: 'dd-page-rounds', label: 'DKG Rounds' },
   { path: '/pose', tag: 'dd-page-pose', label: 'PoSe Watch' },
   { path: '/masternodes', tag: 'dd-page-masternodes', label: 'Masternodes' },
+  { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks' },
+  { path: '/txs', tag: 'dd-page-txs', label: 'Transactions' },
   { path: '/operators', tag: 'dd-page-operators', label: 'Operators' },
+  {
+    path: '/block',
+    tag: 'dd-page-block',
+    label: 'Block',
+    hidden: true,
+    pattern: /^\/block\/([^/]+)$/,
+    key: 'id',
+  },
+  {
+    path: '/tx',
+    tag: 'dd-page-tx',
+    label: 'Transaction',
+    hidden: true,
+    pattern: /^\/tx\/([^/]+)$/,
+    key: 'txid',
+  },
 ];
 
-export function matchRoute(pathname: string): Route {
+export function matchRoute(pathname: string): Match {
   const clean = pathname.replace(/\/+$/, '') || '/';
-  return ROUTES.find((r) => r.path === clean) ?? ROUTES[0]!;
+
+  for (const route of ROUTES) {
+    if (route.pattern) {
+      const m = route.pattern.exec(clean);
+      if (m) return { route, param: decodeURIComponent(m[1]!) };
+    } else if (route.path === clean) {
+      return { route, param: null };
+    }
+  }
+  return { route: ROUTES[0]!, param: null };
 }
 
 export function navigate(href: string): void {

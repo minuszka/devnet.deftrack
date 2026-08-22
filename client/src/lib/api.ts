@@ -9,6 +9,10 @@ import type {
   MasternodeTimelinePoint,
   MasternodeEventRow,
   BanWaveReport,
+  BlockRow,
+  BlockDetail,
+  TxRow,
+  TxDetail,
 } from '@devnet-deftrack/shared';
 
 const BASE = '/api/v1';
@@ -86,6 +90,14 @@ export const api = {
     get<Page<MasternodeEventRow>>('/masternodes/events', params),
 
   banWaves: (hours: number) => get<BanWaveReport>('/masternodes/ban-waves', { hours }),
+
+  blocks: (params?: { limit?: number; offset?: number }) => get<Page<BlockRow>>('/blocks', params),
+
+  block: (id: string) => get<BlockDetail>(`/blocks/${encodeURIComponent(id)}`),
+
+  txs: (params?: { limit?: number; offset?: number }) => get<Page<TxRow>>('/txs', params),
+
+  tx: (txid: string) => get<TxDetail>(`/txs/${encodeURIComponent(txid)}`),
 
   operatorReliability: (hours: number) =>
     get<{ hours: number; roundsConsidered: number; operators: OperatorReliabilityRow[] }>(
