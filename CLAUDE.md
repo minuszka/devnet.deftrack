@@ -84,11 +84,98 @@ The MongoDB MCP takes its connection string from `MDB_MCP_CONNECTION_STRING`
 plus `MDB_MCP_READ_ONLY=true`; the `--connectionString` flag is deprecated and
 would print the password in `claude mcp list` output.
 
+## Where things run
+
+| | |
+|---|---|
+| Explorer + seed node | the devnet VPS; `deftrack-devnet.service`, `/opt/devnet-deftrack/app` |
+| Second devnet node | same host, `defcond-devnet2`, exists so the seed has a peer |
+| 80 masternodes | 8 DeFCoN fullnodes, 10 each, ports 19799-19808, `defcon-devnet-mn@N` |
+| Node binaries | `/usr/local/bin/defcond` (seed, BDB wallet) and a `--without-bdb` build for the fleet |
+
+Reach the fleet through the jump host; the per-node key lives there, not
+locally. `ssh devnet` reaches the explorer VPS directly.
+
+## Operational notes earned the hard way
+
+- **`sendmany` returning a txid is not proof of anything.** One funding
+  transaction never reached the mempool and only `sendrawtransaction` revealed
+  why: `bad-txns-premature-spend-of-coinbase`. The seed node stakes
+  continuously, so immature coinstake outputs are always present for coin
+  selection to pick. After any send, check the mempool.
+
+- **A masternode refuses to start below `maxconnections=125`.** The node
+  enforces it; `LimitNOFILE=4096` in the unit keeps ten instances per host
+  clear of the default cap.
+
+- **The per-wallet staking switch does not survive a restart.** `staking=1`
+  only enables the subsystem; `setstaking <id>` must run afterwards, which
+  `ExecStartPost=/usr/local/bin/defcon-enable-staking` does.
+
+- **A solo node never leaves `MASTERNODE_SYNC_BLOCKCHAIN`,** and
+  `pos/minter.cpp:164` refuses to stake until `mn_sync.IsSynced()`. With one
+  peer it completes on its own; without one the chain stops after a restart.
+
+- **Check the firewall on every host, not one.** Two of the eight fullnodes run
+  `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
+  from the first host cost 20 unreachable masternodes and a PoSe ban wave that
+  looked like real data.
+
+- **Debian 13 has no `libdb5.3++`,** so a wallet build linked against Berkeley
+  DB will not run there. The fleet uses a `--without-bdb` build with SQLite
+  descriptor wallets, which does stake. The seed node keeps its BDB wallet and
+  must not be given the other binary.
+
+## Measurement caveats that are easy to get wrong
+
+- **ChainLock coverage starts at the first lock ever seen,** not at the start
+  of the chain. Before masternodes existed a lock is impossible, not missing;
+  counting that era reported 88% where the truth was 99%.
+
+- **ChainLock latency is an observation.** The node says whether a block is
+  locked, never when the CLSIG arrived, so resolution equals the poll interval
+  and blocks locked before the watcher started carry `null`, not a number.
+
+- **`lastPaidHeight` answers only for each node's most recent payment.** Which
+  masternode a block paid comes from `masternode payments <blockhash>`, stored
+  at index time; every masternode here shares one payout address.
+
+- **Operator attribution is by host IP** with an explicit proTxHash override.
+  It is declared through the admin API, never inferred, and never committed:
+  the host addresses are not public and this repository is.
+
 ## Verified facts about the node (DeFCoN Core v22.1.4, `v22.1.x` @ `7227180053`)
 
-### The devnet ChainLock quorum is `LLMQ_DEVNET`, not `LLMQ_400_60`
+### The chain is proof-of-work to height 1000, then proof-of-stake
 
-`src/chainparams.cpp:634` sets `llmqTypeChainLocks = LLMQ_DEVNET`.
+`GetBlockSubsidyHelper` pays 11,000,000 DFCN per PoW block and 500 after
+`lastPowBlock` (1000 on devnet). Heights 1-900 are forced to `premineAddress`;
+901-1000 reach the miner, which funded this devnet with ~1.1 billion DFCN.
+`validation.cpp:2132` enforces the boundary in both directions (`pos-early` /
+`pow-late`), so a fresh devnet cannot skip the PoW phase.
+
+Block spacing is not comparable across the boundary, and after 1000 the chain
+only advances while something stakes.
+
+### Four bugs kept a devnet from ever starting
+
+All fixed upstream: `defcon-project/defcon` #53, #54, #55.
+
+Stale genesis constants; a genesis block that failed `CheckProofOfWork`
+because Dash's nonce was mined for Dash's coinbase (re-mined, `nNonce = 0`,
+hash `61f3bbd0…`); a `vSporkAddresses` entry in Dash's `y` format while devnet
+uses prefix 55 (`P`), which still needs `-sporkaddr`; and the devnet genesis
+block's `OP_RETURN` output colliding with the premine rule.
+
+`getblock <hash> 2` also aborted on every PoS block with
+`MoneyRange(fee)` -- a coinstake mints its reward, so inputs - outputs is
+negative. Fixed in #55; that one affected mainnet too.
+
+### The devnet ChainLock quorum was `LLMQ_DEVNET`, now `LLMQ_400_60`
+
+`src/chainparams.cpp:634` originally set `llmqTypeChainLocks = LLMQ_DEVNET`;
+upstream #54 changed devnet to the mainnet profile (`LLMQ_400_60`,
+1,000,000 DFCN collateral, mainnet staking ranges).
 Its parameters (`src/llmq/params.h:270-288`):
 
 ```
