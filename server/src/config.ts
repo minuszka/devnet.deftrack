@@ -47,4 +47,10 @@ export const config = {
     // the event loop for minutes on end.
     batchSize: optionalNumber('SYNC_BATCH_SIZE', 200),
   },
+
+  quorum: {
+    // A DKG round is 72 blocks (~3 h). Polling every two minutes is far more
+    // often than needed, and keeps the observation window from ever lapsing.
+    intervalMs: optionalNumber('QUORUM_POLL_INTERVAL_MS', 120_000),
+  },
 } as const;

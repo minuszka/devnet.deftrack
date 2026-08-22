@@ -15,6 +15,8 @@ import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './db.js';
 import { rpc } from './services/rpc.service.js';
 import { syncService } from './services/sync.service.js';
+import { quorumRoundService } from './services/quorumRound.service.js';
+import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
 
@@ -26,10 +28,13 @@ app.use(compression());
 app.use(cors({ origin: config.corsOrigins }));
 
 app.get('/api/v1/health', async (_req, res) => {
-  const [state, indexedBlocks, tip] = await Promise.all([
+  const [state, indexedBlocks, tip, roundsFormed, roundsFailed, roundsPending] = await Promise.all([
     SyncState.findOne({ key: 'blocks' }).lean().catch(() => null),
     Block.estimatedDocumentCount().catch(() => -1),
     rpc.getBlockCount().catch(() => -1),
+    QuorumRound.countDocuments({ status: 'formed' }).catch(() => -1),
+    QuorumRound.countDocuments({ status: 'failed' }).catch(() => -1),
+    QuorumRound.countDocuments({ status: 'pending' }).catch(() => -1),
   ]);
 
   const body: ApiEnvelope<{
@@ -41,6 +46,7 @@ app.get('/api/v1/health', async (_req, res) => {
     indexedHeight: number;
     indexedBlocks: number;
     behind: number;
+    rounds: { formed: number; failed: number; pending: number };
   }> = {
     success: true,
     data: {
@@ -52,6 +58,7 @@ app.get('/api/v1/health', async (_req, res) => {
       indexedHeight: state?.lastSyncedHeight ?? -1,
       indexedBlocks,
       behind: tip >= 0 && state ? Math.max(0, tip - state.lastSyncedHeight) : -1,
+      rounds: { formed: roundsFormed, failed: roundsFailed, pending: roundsPending },
     },
   };
   res.json(body);
@@ -67,6 +74,7 @@ async function main(): Promise<void> {
   }
 
   syncService.start();
+  quorumRoundService.start();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);
@@ -75,6 +83,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`${signal} received, shutting down`);
     syncService.stop();
+    quorumRoundService.stop();
     server.close();
     await disconnectDatabase();
     process.exit(0);
