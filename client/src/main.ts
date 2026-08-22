@@ -1,2 +1,1 @@
-import './styles/global.css';
-import './components/dd-app.js';
+import './components/dd-shell.js';

@@ -5,6 +5,10 @@ import type {
   Page,
   QuorumRoundDetail,
   QuorumRoundListItem,
+  MasternodeRow,
+  MasternodeTimelinePoint,
+  MasternodeEventRow,
+  BanWaveReport,
 } from '@devnet-deftrack/shared';
 
 const BASE = '/api/v1';
@@ -71,6 +75,17 @@ export const api = {
 
   healthTimeline: (hours: number) =>
     get<HealthTimeline>('/quorum-rounds/health-timeline', { hours }),
+
+  masternodes: (params?: { limit?: number; offset?: number; banned?: boolean; hostIp?: string }) =>
+    get<Page<MasternodeRow>>('/masternodes', params),
+
+  masternodeTimeline: (hours: number) =>
+    get<{ hours: number; points: MasternodeTimelinePoint[] }>('/masternodes/timeline', { hours }),
+
+  masternodeEvents: (params: { hours: number; limit?: number; type?: string }) =>
+    get<Page<MasternodeEventRow>>('/masternodes/events', params),
+
+  banWaves: (hours: number) => get<BanWaveReport>('/masternodes/ban-waves', { hours }),
 
   operatorReliability: (hours: number) =>
     get<{ hours: number; roundsConsidered: number; operators: OperatorReliabilityRow[] }>(

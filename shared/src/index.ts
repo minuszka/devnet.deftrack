@@ -133,3 +133,76 @@ export interface OperatorReliabilityRow {
   /** invalidSlots / memberSlots. */
   failureRate: number | null;
 }
+
+// ── masternodes ─────────────────────────────────────────────────────────────
+
+export interface MasternodeRow {
+  proTxHash: string;
+  service: string | null;
+  hostIp: string | null;
+  operatorLabel: string | null;
+  banned: boolean;
+  poSePenalty: number;
+  poSeBanHeight: number;
+  poSeRevivedHeight: number;
+  registeredHeight: number;
+  lastPaidHeight: number;
+  payoutAddress: string | null;
+  lastSeenAt: string;
+}
+
+export interface MasternodeTimelinePoint {
+  at: string;
+  height: number;
+  total: number;
+  enabled: number;
+  banned: number;
+  penalised: number;
+  penaltyMax: number;
+  effectiveQuorumSize: number | null;
+  /** The ceiling on what a single DKG round could punish at this moment. */
+  maxPossibleBan: number | null;
+}
+
+export type MasternodeEventKind =
+  | 'registered'
+  | 'banned'
+  | 'revived'
+  | 'penalty_up'
+  | 'penalty_down'
+  | 'service_changed';
+
+export interface MasternodeEventRow {
+  eventKey: string;
+  proTxHash: string;
+  type: MasternodeEventKind;
+  height: number;
+  penaltyBefore: number | null;
+  penaltyAfter: number | null;
+  serviceBefore: string | null;
+  serviceAfter: string | null;
+  hostIp: string | null;
+  operatorLabel: string | null;
+  detectedAt: string;
+}
+
+export interface BanWave {
+  startedAt: string;
+  endedAt: string;
+  durationMinutes: number;
+  size: number;
+  /** The ceiling as it stood when the wave began, not as it stands now. */
+  maxPossibleBanAtStart: number | null;
+  firstHeight: number;
+  lastHeight: number;
+  byHost: Array<{ hostIp: string; count: number }>;
+  byOperator: Array<{ operatorLabel: string; count: number }>;
+}
+
+export interface BanWaveReport {
+  hours: number;
+  gapMinutes: number;
+  waves: BanWave[];
+  largestWave: number;
+  totalBans: number;
+}
