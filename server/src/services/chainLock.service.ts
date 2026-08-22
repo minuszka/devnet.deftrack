@@ -21,8 +21,15 @@ const WINDOW = 40;
 export class ChainLockService {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
+  /**
+   * Latency is only meaningful for blocks mined after the watcher was
+   * running. For anything older, the gap between block time and first sight
+   * measures our downtime, not the CLSIG.
+   */
+  private startedAtSec = 0;
 
   start(): void {
+    this.startedAtSec = Math.floor(Date.now() / 1000);
     void this.tick();
     this.timer = setInterval(() => void this.tick(), config.chainlock.intervalMs);
     logger.info(`ChainLock watcher started (every ${config.chainlock.intervalMs} ms, last ${WINDOW} blocks)`);
@@ -65,7 +72,11 @@ export class ChainLockService {
       const block = await rpc.getBlock(b.hash).catch(() => null);
       if (block?.chainlock !== true) continue;
 
-      const latency = Math.max(0, Math.round(now.getTime() / 1000 - b.time));
+      // Null, not a number, when the block predates the watcher: the lock is
+      // real, the timing is not ours to claim.
+      const observable = b.time >= this.startedAtSec;
+      const latency = observable ? Math.max(0, Math.round(now.getTime() / 1000 - b.time)) : null;
+
       ops.push({
         updateOne: {
           filter: { hash: b.hash, chainLockedAt: null },
@@ -76,7 +87,10 @@ export class ChainLockService {
 
     if (ops.length > 0) {
       await Block.bulkWrite(ops, { ordered: false });
-      logger.info(`ChainLock observed on ${ops.length} block(s) up to ${tip}`);
+      const timed = ops.filter((o) => o.updateOne.update.$set.chainLockLatencySec !== null).length;
+      logger.info(
+        `ChainLock observed on ${ops.length} block(s) up to ${tip}; ${timed} with measurable latency`
+      );
     }
   }
 }
