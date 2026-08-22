@@ -40,6 +40,17 @@ export interface BlockDocument extends Document {
    * each node's most recent payment -- 76 blocks out of two thousand.
    */
   paidProTxHash: string | null;
+
+  /**
+   * When a ChainLock was first *observed* on this block.
+   *
+   * The node exposes no timestamp for when a CLSIG arrived, only whether one
+   * exists now, so this is an observation and carries the poll interval as its
+   * resolution. Recorded rather than inferred, and never revised once set.
+   */
+  chainLockedAt: Date | null;
+  /** chainLockedAt - block time, in seconds. Same resolution caveat. */
+  chainLockLatencySec: number | null;
 }
 
 const blockSchema = new Schema<BlockDocument>(
@@ -69,6 +80,8 @@ const blockSchema = new Schema<BlockDocument>(
     txids: [{ type: String }],
     totalOutSat: { type: Schema.Types.Decimal128, default: '0' },
     paidProTxHash: { type: String, default: null, index: true },
+    chainLockedAt: { type: Date, default: null },
+    chainLockLatencySec: { type: Number, default: null, index: true },
   },
   { timestamps: true }
 );

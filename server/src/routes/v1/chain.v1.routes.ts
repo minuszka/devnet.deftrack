@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Block } from '../../models/Block.js';
 import { Transaction } from '../../models/Transaction.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
+import { config } from '../../config.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
 
@@ -158,6 +159,59 @@ router.get(
         voutCount: t.vout.length,
         vinCount: t.vin.length,
       })),
+    });
+  })
+);
+
+/**
+ * GET /api/v1/chainlocks
+ *
+ * Coverage and latency over recent blocks. Latency is an observation, not a
+ * chain fact -- the node reports whether a block is locked, never when the
+ * CLSIG arrived -- so the resolution is stated in the response rather than
+ * left for the reader to assume.
+ */
+router.get(
+  '/chainlocks',
+  withCachePolicy('short'),
+  validateQuery(z.object({ blocks: z.coerce.number().int().min(10).max(2000).default(200) })),
+  asyncRoute(async (_req, res) => {
+    const q = parsedQuery<{ blocks: number }>(res);
+
+    const recent = await Block.find({ isProofOfStake: true })
+      .sort({ height: -1 })
+      .limit(q.blocks)
+      .select('height time hasChainLock chainLockedAt chainLockLatencySec')
+      .lean();
+
+    const locked = recent.filter((b) => b.hasChainLock);
+    const measured = locked
+      .map((b) => b.chainLockLatencySec)
+      .filter((v): v is number => typeof v === 'number')
+      .sort((a, b) => a - b);
+
+    const pct = (p: number): number | null =>
+      measured.length === 0 ? null : measured[Math.min(measured.length - 1, Math.floor(measured.length * p))]!;
+
+    sendData(res, {
+      blocksConsidered: recent.length,
+      locked: locked.length,
+      unlocked: recent.length - locked.length,
+      coverage: recent.length > 0 ? locked.length / recent.length : null,
+      // Locks seen before the watcher started have no measured latency; they
+      // count as covered but are excluded from the timing figures.
+      latencyMeasured: measured.length,
+      latencySec: { p50: pct(0.5), p90: pct(0.9), max: measured.at(-1) ?? null },
+      resolutionSec: Math.round(config.chainlock.intervalMs / 1000),
+      points: recent
+        .slice(0, 120)
+        .map((b) => ({
+          height: b.height,
+          time: b.time,
+          locked: b.hasChainLock,
+          latencySec: b.chainLockLatencySec,
+        }))
+        .reverse(),
     });
   })
 );

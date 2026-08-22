@@ -58,6 +58,12 @@ export const config = {
     intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),
   },
 
+  chainlock: {
+    // Resolution of the measured latency. A ChainLock lands within seconds of
+    // a block, so a coarse poll would report the poll interval, not the lock.
+    intervalMs: optionalNumber('CHAINLOCK_POLL_INTERVAL_MS', 10_000),
+  },
+
   quorum: {
     // A DKG round is 72 blocks (~3 h). Polling every two minutes is far more
     // often than needed, and keeps the observation window from ever lapsing.
