@@ -148,6 +148,11 @@ export class RpcService {
     return this.call<RpcTransaction>('getrawtransaction', [txid, 1]);
   }
 
+  /** Authoritative payee for a block; empty for blocks that paid nobody. */
+  masternodePayments(blockhash: string): Promise<RpcMasternodePayment[]> {
+    return this.call<RpcMasternodePayment[]>('masternode', ['payments', blockhash, 1]);
+  }
+
   getBlockchainInfo(): Promise<RpcBlockchainInfo> {
     return this.call<RpcBlockchainInfo>('getblockchaininfo');
   }
@@ -217,6 +222,13 @@ export interface RpcTransaction {
   blocktime?: number;
   chainlock?: boolean;
   instantlock?: boolean;
+}
+
+export interface RpcMasternodePayment {
+  height: number;
+  blockhash: string;
+  amount: number;
+  masternodes?: Array<{ proTxHash: string; amount: number }>;
 }
 
 export interface RpcBlockchainInfo {

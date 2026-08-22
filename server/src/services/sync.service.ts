@@ -42,6 +42,22 @@ function looksLikeCoinstake(tx: RpcTransaction, indexInBlock: number): boolean {
   return firstOut !== undefined && Math.round(firstOut.valueSat) === 0;
 }
 
+/**
+ * Which masternode a block paid.
+ *
+ * Read from the node rather than derived from the coinbase: every masternode
+ * on this devnet shares one payout address, so the address in the block cannot
+ * distinguish them.
+ */
+async function payeeOf(blockhash: string): Promise<string | null> {
+  try {
+    const payments = await rpc.masternodePayments(blockhash);
+    return payments[0]?.masternodes?.[0]?.proTxHash ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export class SyncService {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
@@ -61,12 +77,38 @@ export class SyncService {
     this.timer = null;
   }
 
+  /**
+   * Fill in payees for blocks indexed before the field existed.
+   *
+   * Bounded per pass so a backfill never competes with keeping up with the
+   * tip, and idempotent: it only ever looks at blocks still missing a value.
+   */
+  private async backfillPayees(limit = 300): Promise<void> {
+    const pending = await Block.find({ paidProTxHash: null, height: { $gt: 0 } })
+      .sort({ height: -1 })
+      .limit(limit)
+      .select('hash height')
+      .lean();
+    if (pending.length === 0) return;
+
+    const ops = [];
+    for (const b of pending) {
+      const paid = await payeeOf(b.hash);
+      if (paid) ops.push({ updateOne: { filter: { hash: b.hash }, update: { $set: { paidProTxHash: paid } } } });
+    }
+    if (ops.length > 0) {
+      await Block.bulkWrite(ops, { ordered: false });
+      logger.info(`Backfilled payee for ${ops.length} block(s); ${pending.length - ops.length} paid nobody`);
+    }
+  }
+
   /** One pass. Overlapping timer ticks are dropped rather than queued. */
   async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
       await this.syncOnce();
+      await this.backfillPayees();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Block sync failed: ${message}`);
@@ -159,6 +201,7 @@ export class SyncService {
   private async indexBlock(height: number): Promise<string> {
     const hash = await rpc.getBlockHash(height);
     const block: RpcBlock = await rpc.getBlock(hash);
+    const paidProTxHash = await payeeOf(hash);
 
     let blockTotalSat = 0n;
     const txOps = [];
@@ -236,6 +279,7 @@ export class SyncService {
           merkleRootQuorums: block.cbTx?.merkleRootQuorums ?? null,
           txids: block.tx,
           totalOutSat: dec(blockTotalSat.toString()),
+          paidProTxHash,
         },
         $setOnInsert: { hash: block.hash },
       },

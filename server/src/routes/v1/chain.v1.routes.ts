@@ -115,11 +115,13 @@ router.get(
       .map((id) => byId.get(id))
       .filter((t): t is NonNullable<typeof t> => t !== undefined);
 
-    // All masternodes here share one payout address, so the block alone cannot
-    // say which one was paid. lastPaidHeight can.
-    const paidMasternode = await MasternodeState.findOne({ lastPaidHeight: block.height })
-      .select('proTxHash service operatorLabel')
-      .lean();
+    // Recorded at index time from `masternode payments`; the payout address in
+    // the block is shared by every masternode and cannot identify one.
+    const paidMasternode = block.paidProTxHash
+      ? await MasternodeState.findOne({ proTxHash: block.paidProTxHash })
+          .select('proTxHash service operatorLabel')
+          .lean()
+      : null;
 
     sendData(res, {
       height: block.height,

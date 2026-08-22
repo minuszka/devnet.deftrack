@@ -31,6 +31,15 @@ export interface BlockDocument extends Document {
 
   txids: string[];
   totalOutSat: mongoose.Types.Decimal128;
+
+  /**
+   * Which masternode this block paid, from `masternode payments`.
+   *
+   * The coinbase payee address cannot answer this on a devnet where every
+   * masternode shares one payout address, and lastPaidHeight only ever covers
+   * each node's most recent payment -- 76 blocks out of two thousand.
+   */
+  paidProTxHash: string | null;
 }
 
 const blockSchema = new Schema<BlockDocument>(
@@ -59,6 +68,7 @@ const blockSchema = new Schema<BlockDocument>(
 
     txids: [{ type: String }],
     totalOutSat: { type: Schema.Types.Decimal128, default: '0' },
+    paidProTxHash: { type: String, default: null, index: true },
   },
   { timestamps: true }
 );
