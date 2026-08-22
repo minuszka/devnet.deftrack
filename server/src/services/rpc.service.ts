@@ -153,6 +153,10 @@ export class RpcService {
     return this.call<RpcMasternodePayment[]>('masternode', ['payments', blockhash, 1]);
   }
 
+  getNetworkInfo(): Promise<{ version: number; subversion: string; connections: number }> {
+    return this.call('getnetworkinfo');
+  }
+
   getBlockchainInfo(): Promise<RpcBlockchainInfo> {
     return this.call<RpcBlockchainInfo>('getblockchaininfo');
   }

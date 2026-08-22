@@ -40,6 +40,11 @@ export class DdShell extends LitElement {
         padding: 18px 20px 48px;
       }
       .banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
         border: 1px solid var(--accent);
         color: var(--accent);
         background: var(--accent-wash);
@@ -49,6 +54,26 @@ export class DdShell extends LitElement {
         font-weight: 600;
         letter-spacing: 0.14em;
         text-transform: uppercase;
+      }
+      /* Live counters share the banner strip rather than taking a row of their
+         own: they are status, not content. */
+      .monitor {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        letter-spacing: 0.08em;
+        color: var(--ink-2);
+        font-weight: 500;
+      }
+      .monitor b {
+        color: var(--ink);
+        font-weight: 700;
+      }
+      .monitor .ok {
+        color: var(--accent);
+      }
+      .monitor .bad {
+        color: var(--crit);
       }
       header.site {
         display: flex;
@@ -140,7 +165,10 @@ export class DdShell extends LitElement {
   override render(): TemplateResult {
     const h = this._health;
     return html`
-      <div class="banner">${DEVNET_BANNER}</div>
+      <div class="banner">
+        <span>${DEVNET_BANNER}</span>
+        ${h ? this._monitor(h) : nothing}
+      </div>
 
       <header class="site">
         <div class="brand">devnet<span class="dim">.deftrack</span></div>
@@ -170,6 +198,29 @@ export class DdShell extends LitElement {
       </nav>
 
       ${this._page()}
+    `;
+  }
+
+  /**
+   * Wallet version, masternode counts and how many wallets are actually
+   * producing blocks. The staker count is measured from coinstake payees over
+   * a block window, because no RPC reports who is staking network-wide --
+   * getstakinginfo speaks only for the node you ask.
+   */
+  private _monitor(h: HealthSnapshot): TemplateResult {
+    const allUp = h.masternodes.total > 0 && h.masternodes.enabled === h.masternodes.total;
+    return html`
+      <span class="monitor">
+        <span>wallet <b>v${h.nodeVersion}</b></span>
+        <span>mn <b>${num(h.masternodes.total)}</b></span>
+        <span>
+          active
+          <b class=${h.masternodes.total > 0 ? (allUp ? 'ok' : 'bad') : ''}>
+            ${num(h.masternodes.enabled)}
+          </b>
+        </span>
+        <span>staking <b>${num(h.stakers.active)}</b></span>
+      </span>
     `;
   }
 

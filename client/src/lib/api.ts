@@ -82,6 +82,9 @@ export interface HealthSnapshot {
   indexedBlocks: number;
   behind: number;
   rounds: { formed: number; failed: number; pending: number };
+  nodeVersion: string;
+  masternodes: { total: number; enabled: number };
+  stakers: { active: number; windowBlocks: number };
 }
 
 export const api = {

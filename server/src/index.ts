@@ -21,8 +21,13 @@ import { chainLockService } from './services/chainLock.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
+import { Transaction } from './models/Transaction.js';
+import { MasternodeState } from './models/MasternodeState.js';
 import v1Routes from './routes/v1/index.js';
 import { sendError } from './utils/http.js';
+
+/** Blocks looked at when counting who is actually producing them. */
+const STAKER_WINDOW = 200;
 
 const app = express();
 
@@ -35,14 +40,32 @@ app.use(express.json({ limit: '256kb' }));
 app.use('/api/v1', v1Routes);
 
 app.get('/api/v1/health', async (_req, res) => {
-  const [state, indexedBlocks, tip, roundsFormed, roundsFailed, roundsPending] = await Promise.all([
-    SyncState.findOne({ key: 'blocks' }).lean().catch(() => null),
-    Block.estimatedDocumentCount().catch(() => -1),
-    rpc.getBlockCount().catch(() => -1),
-    QuorumRound.countDocuments({ status: 'formed' }).catch(() => -1),
-    QuorumRound.countDocuments({ status: 'failed' }).catch(() => -1),
-    QuorumRound.countDocuments({ status: 'pending' }).catch(() => -1),
-  ]);
+  const [state, indexedBlocks, tip, roundsFormed, roundsFailed, roundsPending, net, mnTotal, mnEnabled] =
+    await Promise.all([
+      SyncState.findOne({ key: 'blocks' }).lean().catch(() => null),
+      Block.estimatedDocumentCount().catch(() => -1),
+      rpc.getBlockCount().catch(() => -1),
+      QuorumRound.countDocuments({ status: 'formed' }).catch(() => -1),
+      QuorumRound.countDocuments({ status: 'failed' }).catch(() => -1),
+      QuorumRound.countDocuments({ status: 'pending' }).catch(() => -1),
+      rpc.getNetworkInfo().catch(() => null),
+      MasternodeState.estimatedDocumentCount().catch(() => -1),
+      MasternodeState.countDocuments({ banned: false }).catch(() => -1),
+    ]);
+
+  // How many wallets actually produced a block recently. There is no RPC for
+  // "who is staking" network-wide -- getstakinginfo speaks only for this node --
+  // so the honest answer is the count of distinct coinstake payees, which is
+  // what block production actually depended on.
+  const stakers =
+    tip >= 0
+      ? await Transaction.distinct('vout.address', {
+          isCoinstake: true,
+          height: { $gt: tip - STAKER_WINDOW },
+        })
+          .then((a) => a.filter(Boolean).length)
+          .catch(() => -1)
+      : -1;
 
   const body: ApiEnvelope<{
     status: string;
@@ -54,6 +77,9 @@ app.get('/api/v1/health', async (_req, res) => {
     indexedBlocks: number;
     behind: number;
     rounds: { formed: number; failed: number; pending: number };
+    nodeVersion: string;
+    masternodes: { total: number; enabled: number };
+    stakers: { active: number; windowBlocks: number };
   }> = {
     success: true,
     data: {
@@ -66,6 +92,10 @@ app.get('/api/v1/health', async (_req, res) => {
       indexedBlocks,
       behind: tip >= 0 && state ? Math.max(0, tip - state.lastSyncedHeight) : -1,
       rounds: { formed: roundsFormed, failed: roundsFailed, pending: roundsPending },
+      // "/DeFCoN:22.1.4(devnet.devnet-defcon-q60)/" -> "22.1.4"
+      nodeVersion: net?.subversion?.match(/:([0-9.]+)/)?.[1] ?? 'unknown',
+      masternodes: { total: mnTotal, enabled: mnEnabled },
+      stakers: { active: stakers, windowBlocks: STAKER_WINDOW },
     },
   };
   res.json(body);
