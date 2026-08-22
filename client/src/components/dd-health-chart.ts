@@ -155,7 +155,7 @@ export class DdHealthChart extends LitElement {
         <line x1=${padL} x2=${W - padR} y1=${railY} y2=${railY} stroke="var(--line)" stroke-width="1" />
         ${failed.map(({ i }) => svg`<line x1=${x(i)} x2=${x(i)} y1=${railY - 7} y2=${railY + 7}
                                           stroke="var(--crit)" stroke-width="2" />`)}
-        <text class="rail-label" x=${padL - 8} y=${railY + 3} text-anchor="end">did not form</text>
+        <text class="rail-label" x=${padL} y=${railY - 11} text-anchor="start">did not form</text>
       </svg>
 
       <div class="legend">
