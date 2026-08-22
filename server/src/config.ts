@@ -32,6 +32,10 @@ export const config = {
 
   mongoUri: required('MONGODB_URI'),
 
+  // Empty means the admin routes refuse service; an unset secret must fail
+  // closed rather than quietly disable the check.
+  adminApiKey: process.env.ADMIN_API_KEY ?? '',
+
   rpc: {
     host: process.env.RPC_HOST ?? '127.0.0.1',
     port: optionalNumber('RPC_PORT', 0),

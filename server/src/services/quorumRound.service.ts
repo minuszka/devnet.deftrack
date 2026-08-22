@@ -5,6 +5,7 @@ import { chainlockProfile, maxPossibleBan, type LlmqProfile } from '../config/ll
 import { QuorumRound, type RoundMember, type RoundStatus } from '../models/QuorumRound.js';
 import { classifyRound, currentRoundHeight, expectedRoundHeights, roundKeyFor } from '../domain/dkgSchedule.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
+import { OperatorIndex, hostOf } from '../domain/operatorIndex.js';
 
 /**
  * `quorum listextended` shape (rpc/quorums.cpp:138-166):
@@ -153,13 +154,10 @@ export class QuorumRoundService {
     }
   }
 
-  private async operatorIndex(): Promise<Map<string, string>> {
-    const operators = await DevnetOperator.find().select('operatorLabel proTxHashes').lean();
-    const index = new Map<string, string>();
-    for (const op of operators) {
-      for (const hash of op.proTxHashes) index.set(hash, op.operatorLabel);
-    }
-    return index;
+  private async operatorIndex(): Promise<OperatorIndex> {
+    return new OperatorIndex(
+      await DevnetOperator.find().select('operatorLabel proTxHashes hostIps').lean()
+    );
   }
 
   private async upsertRound(
@@ -167,7 +165,7 @@ export class QuorumRoundService {
     status: RoundStatus,
     entry: (ListExtendedEntry & { quorumHash: string }) | undefined,
     effectiveSize: number | null,
-    operators: Map<string, string>
+    operators: OperatorIndex
   ): Promise<void> {
     const p = this.profile;
     const quorumIndex = entry?.quorumIndex ?? 0;
@@ -186,7 +184,7 @@ export class QuorumRoundService {
         proTxHash: m.proTxHash,
         service: m.service || null,
         valid: m.valid,
-        operatorLabel: operators.get(m.proTxHash) ?? null,
+        operatorLabel: operators.resolve(m.proTxHash, hostOf(m.service)),
       }));
       invalidMembers = members.filter((m) => !m.valid).map((m) => m.proTxHash);
       if (members.length > 0) observedSize = members.length;

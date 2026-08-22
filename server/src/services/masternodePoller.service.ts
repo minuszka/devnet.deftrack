@@ -6,6 +6,7 @@ import { MasternodeState } from '../models/MasternodeState.js';
 import { MasternodeEvent, type MasternodeEventType } from '../models/MasternodeEvent.js';
 import { MasternodeSnapshot } from '../models/MasternodeSnapshot.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
+import { OperatorIndex, hostOf } from '../domain/operatorIndex.js';
 
 interface ProTxState {
   service?: string;
@@ -30,12 +31,6 @@ interface ProTxEntry {
 
 /** A snapshot is written at least this often even when nothing changes. */
 const HEARTBEAT_MS = 5 * 60_000;
-
-function hostOf(service: string | null): string | null {
-  if (!service) return null;
-  const idx = service.lastIndexOf(':');
-  return idx > 0 ? service.slice(0, idx) : service;
-}
 
 export class MasternodePollerService {
   private running = false;
@@ -97,7 +92,7 @@ export class MasternodePollerService {
       const revivedHeight = st.PoSeRevivedHeight ?? -1;
       const isBanned = banHeight !== -1;
       const hostIp = hostOf(service);
-      const operatorLabel = operators.get(entry.proTxHash) ?? null;
+      const operatorLabel = operators.resolve(entry.proTxHash, hostIp);
 
       if (isBanned) banned++;
       else enabled++;
@@ -222,13 +217,10 @@ export class MasternodePollerService {
     }
   }
 
-  private async operatorIndex(): Promise<Map<string, string>> {
-    const operators = await DevnetOperator.find().select('operatorLabel proTxHashes').lean();
-    const index = new Map<string, string>();
-    for (const op of operators) {
-      for (const hash of op.proTxHashes) index.set(hash, op.operatorLabel);
-    }
-    return index;
+  private async operatorIndex(): Promise<OperatorIndex> {
+    return new OperatorIndex(
+      await DevnetOperator.find().select('operatorLabel proTxHashes hostIps').lean()
+    );
   }
 }
 

@@ -9,7 +9,16 @@ import mongoose, { Schema, type Document } from 'mongoose';
  */
 export interface DevnetOperatorDocument extends Document {
   operatorLabel: string;
+  /** Explicit per-masternode attribution; wins over hostIps. */
   proTxHashes: string[];
+  /**
+   * Whole hosts owned by this operator.
+   *
+   * Coarser than proTxHashes and better for it: an address survives a
+   * re-registration that gives the masternode a new proTxHash, and eight
+   * lines cover eighty nodes.
+   */
+  hostIps: string[];
   contact: string | null;
   vpsProvider: string | null;
   country: string | null;
@@ -22,6 +31,7 @@ const devnetOperatorSchema = new Schema<DevnetOperatorDocument>(
     // Indexed because resolving a member to its operator is a per-member lookup
     // on every round.
     proTxHashes: [{ type: String, index: true }],
+    hostIps: [{ type: String, index: true }],
     contact: { type: String, default: null },
     vpsProvider: { type: String, default: null, index: true },
     country: { type: String, default: null, index: true },

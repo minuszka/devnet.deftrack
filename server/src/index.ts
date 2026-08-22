@@ -29,6 +29,7 @@ app.disable('x-powered-by');
 app.use(helmet());
 app.use(compression());
 app.use(cors({ origin: config.corsOrigins }));
+app.use(express.json({ limit: '256kb' }));
 
 app.use('/api/v1', v1Routes);
 

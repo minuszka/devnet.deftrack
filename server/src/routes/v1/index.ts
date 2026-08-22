@@ -4,6 +4,7 @@ import quorumRoundRoutes from './quorumRounds.v1.routes.js';
 import operatorRoutes from './operators.v1.routes.js';
 import masternodeRoutes from './masternodes.v1.routes.js';
 import chainRoutes from './chain.v1.routes.js';
+import adminRoutes from './admin.v1.routes.js';
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.use('/masternodes/ban-waves', heavyLimiter);
 
 router.use('/quorum-rounds', quorumRoundRoutes);
 router.use('/operators', operatorRoutes);
+router.use('/admin', adminRoutes);
 router.use('/masternodes', masternodeRoutes);
 // Blocks and transactions mount at the router root: /blocks, /txs.
 router.use('/', chainRoutes);
