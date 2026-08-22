@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { DevnetOperator } from '../../models/DevnetOperator.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
+import { QuorumRound } from '../../models/QuorumRound.js';
 import { requireAdminApiKey } from '../../middleware/requireAdminApiKey.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, sendData, sendError } from '../../utils/http.js';
-import { OperatorIndex } from '../../domain/operatorIndex.js';
+import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
 
 const router = Router();
 
@@ -64,10 +65,32 @@ router.put(
       }));
     if (relabel.length > 0) await MasternodeState.bulkWrite(relabel, { ordered: false });
 
+    // Rounds carry the label they were collected under, so a mapping added
+    // later would leave every past round reading "unattributed". Relabelling
+    // them is not rewriting an observation: who ran a node is metadata, and
+    // which member was invalid is untouched.
+    const rounds = await QuorumRound.find({ 'members.0': { $exists: true } })
+      .select('roundKey members')
+      .lean();
+    const roundOps = [];
+    for (const round of rounds) {
+      const members = round.members.map((m) => ({
+        ...m,
+        operatorLabel: index.resolve(m.proTxHash, hostOf(m.service)),
+      }));
+      if (members.some((m, i) => m.operatorLabel !== round.members[i]?.operatorLabel)) {
+        roundOps.push({
+          updateOne: { filter: { roundKey: round.roundKey }, update: { $set: { members } } },
+        });
+      }
+    }
+    if (roundOps.length > 0) await QuorumRound.bulkWrite(roundOps, { ordered: false });
+
     sendData(res, {
       upserted: result.upsertedCount,
       modified: result.modifiedCount,
       masternodesRelabelled: relabel.length,
+      roundsRelabelled: roundOps.length,
       unattributed: nodes.length - nodes.filter((n) => index.resolve(n.proTxHash, n.hostIp)).length,
     });
   })
