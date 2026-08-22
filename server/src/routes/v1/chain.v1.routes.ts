@@ -174,9 +174,14 @@ router.get(
 router.get(
   '/chainlocks',
   withCachePolicy('short'),
-  validateQuery(z.object({ blocks: z.coerce.number().int().min(10).max(2000).default(200) })),
+  validateQuery(z.object({ blocks: z.coerce.number().int().min(10).max(5000).default(500) })),
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<{ blocks: number }>(res);
+
+    // ChainLocks cannot exist before a quorum does, so coverage is measured
+    // from the first lock ever seen. Counting the pre-masternode era as missed
+    // locks reported 88% where the truthful figure was 99%.
+    const first = await Block.findOne({ hasChainLock: true }).sort({ height: 1 }).select('height').lean();
 
     const recent = await Block.find({ isProofOfStake: true })
       .sort({ height: -1 })
@@ -184,27 +189,44 @@ router.get(
       .select('height time hasChainLock chainLockedAt chainLockLatencySec')
       .lean();
 
-    const locked = recent.filter((b) => b.hasChainLock);
+    const eligible = first ? recent.filter((b) => b.height >= first.height) : [];
+    const locked = eligible.filter((b) => b.hasChainLock);
+    const missing = eligible.filter((b) => !b.hasChainLock).map((b) => b.height).sort((a, b) => a - b);
+
+    // Contiguous runs: one long gap is an outage, scattered singles are noise.
+    const gaps: Array<{ from: number; to: number; blocks: number }> = [];
+    for (const h of missing) {
+      const last = gaps.at(-1);
+      if (last && h === last.to + 1) {
+        last.to = h;
+        last.blocks++;
+      } else {
+        gaps.push({ from: h, to: h, blocks: 1 });
+      }
+    }
+
     const measured = locked
       .map((b) => b.chainLockLatencySec)
       .filter((v): v is number => typeof v === 'number')
       .sort((a, b) => a - b);
-
     const pct = (p: number): number | null =>
       measured.length === 0 ? null : measured[Math.min(measured.length - 1, Math.floor(measured.length * p))]!;
 
     sendData(res, {
+      firstLockedHeight: first?.height ?? null,
       blocksConsidered: recent.length,
+      eligible: eligible.length,
       locked: locked.length,
-      unlocked: recent.length - locked.length,
-      coverage: recent.length > 0 ? locked.length / recent.length : null,
-      // Locks seen before the watcher started have no measured latency; they
-      // count as covered but are excluded from the timing figures.
+      unlocked: eligible.length - locked.length,
+      coverage: eligible.length > 0 ? locked.length / eligible.length : null,
+      gaps: gaps.sort((a, b) => b.blocks - a.blocks).slice(0, 20),
+      // Locks seen before the watcher started count as covered but have no
+      // measurable latency; they are excluded from the timings, not guessed at.
       latencyMeasured: measured.length,
       latencySec: { p50: pct(0.5), p90: pct(0.9), max: measured.at(-1) ?? null },
       resolutionSec: Math.round(config.chainlock.intervalMs / 1000),
-      points: recent
-        .slice(0, 120)
+      points: eligible
+        .slice(0, 150)
         .map((b) => ({
           height: b.height,
           time: b.time,

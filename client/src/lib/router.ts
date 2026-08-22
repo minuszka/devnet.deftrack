@@ -27,6 +27,7 @@ export const ROUTES: Route[] = [
   { path: '/rounds', tag: 'dd-page-rounds', label: 'DKG Rounds' },
   { path: '/pose', tag: 'dd-page-pose', label: 'PoSe Watch' },
   { path: '/masternodes', tag: 'dd-page-masternodes', label: 'Masternodes' },
+  { path: '/chainlocks', tag: 'dd-page-chainlocks', label: 'ChainLocks' },
   { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks' },
   { path: '/txs', tag: 'dd-page-txs', label: 'Transactions' },
   { path: '/operators', tag: 'dd-page-operators', label: 'Operators' },

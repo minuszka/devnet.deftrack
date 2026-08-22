@@ -57,6 +57,21 @@ async function get<T>(path: string, params?: Params): Promise<T> {
   return body.data;
 }
 
+export interface ChainLockReport {
+  firstLockedHeight: number | null;
+  blocksConsidered: number;
+  eligible: number;
+  locked: number;
+  unlocked: number;
+  coverage: number | null;
+  gaps: Array<{ from: number; to: number; blocks: number }>;
+  latencyMeasured: number;
+  latencySec: { p50: number | null; p90: number | null; max: number | null };
+  /** Poll interval of the watcher; the latency figures are no finer than this. */
+  resolutionSec: number;
+  points: Array<{ height: number; time: number; locked: boolean; latencySec: number | null }>;
+}
+
 export interface HealthSnapshot {
   status: string;
   devnet: string;
@@ -90,6 +105,8 @@ export const api = {
     get<Page<MasternodeEventRow>>('/masternodes/events', params),
 
   banWaves: (hours: number) => get<BanWaveReport>('/masternodes/ban-waves', { hours }),
+
+  chainlocks: (blocks: number) => get<ChainLockReport>('/chainlocks', { blocks }),
 
   blocks: (params?: { limit?: number; offset?: number }) => get<Page<BlockRow>>('/blocks', params),
 

@@ -11,6 +11,7 @@ import './dd-page-masternodes.js';
 import './dd-page-operators.js';
 import './dd-page-blocks.js';
 import './dd-page-txs.js';
+import './dd-page-chainlocks.js';
 
 const HEALTH_REFRESH_MS = 30_000;
 
@@ -183,6 +184,8 @@ export class DdShell extends LitElement {
         return html`<dd-page-masternodes></dd-page-masternodes>`;
       case 'dd-page-operators':
         return html`<dd-page-operators></dd-page-operators>`;
+      case 'dd-page-chainlocks':
+        return html`<dd-page-chainlocks></dd-page-chainlocks>`;
       case 'dd-page-blocks':
         return html`<dd-page-blocks></dd-page-blocks>`;
       case 'dd-page-txs':
