@@ -19,6 +19,8 @@ import { quorumRoundService } from './services/quorumRound.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
+import v1Routes from './routes/v1/index.js';
+import { sendError } from './utils/http.js';
 
 const app = express();
 
@@ -26,6 +28,8 @@ app.disable('x-powered-by');
 app.use(helmet());
 app.use(compression());
 app.use(cors({ origin: config.corsOrigins }));
+
+app.use('/api/v1', v1Routes);
 
 app.get('/api/v1/health', async (_req, res) => {
   const [state, indexedBlocks, tip, roundsFormed, roundsFailed, roundsPending] = await Promise.all([
@@ -63,6 +67,10 @@ app.get('/api/v1/health', async (_req, res) => {
   };
   res.json(body);
 });
+
+// Anything unmatched under /api gets the same envelope as everything else,
+// rather than Express's HTML 404 page.
+app.use('/api', (_req, res) => sendError(res, 404, 'not found'));
 
 async function main(): Promise<void> {
   await connectDatabase();

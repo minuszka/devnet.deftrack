@@ -1,8 +1,5 @@
 /**
  * Types and constants shared between the server and the client.
- *
- * Phase 0: only the API envelope and the devnet identity live here. The
- * QuorumRound / DevnetOperator view types arrive with Phase 1.
  */
 
 /** Devnet network name. Every node must pass the identical `-devnet=` value. */
@@ -34,4 +31,105 @@ export interface Page<T> {
   total: number;
   limit: number;
   offset: number;
+}
+
+// ── quorum rounds ───────────────────────────────────────────────────────────
+
+export type RoundStatus = 'pending' | 'formed' | 'failed';
+
+export interface RoundMemberView {
+  proTxHash: string;
+  service: string | null;
+  valid: boolean;
+  operatorLabel: string | null;
+}
+
+export interface QuorumRoundView {
+  roundKey: string;
+  llmqName: string;
+  llmqType: number;
+  quorumIndex: number;
+  expectedHeight: number;
+
+  status: RoundStatus;
+  formed: boolean;
+
+  /** null for a round that never formed -- there is no commitment to hash. */
+  quorumHash: string | null;
+  minedBlockHash: string | null;
+
+  size: number;
+  minSize: number;
+  threshold: number;
+  dkgInterval: number;
+  effectiveSize: number | null;
+
+  numValidMembers: number | null;
+  healthRatio: number | null;
+
+  /**
+   * Always 0 for a failed round, and that is a statement about consensus: with
+   * no commitment mined, the node's punishment loop never runs.
+   */
+  punishedCount: number;
+  /** effectiveSize - minSize: the ceiling on what a single round can punish. */
+  maxPossibleBan: number | null;
+  consecutiveFailures: number;
+
+  invalidMembers: string[];
+  detectedAt: string;
+}
+
+/** List rows omit the member array; it is only worth sending for one round. */
+export type QuorumRoundListItem = Omit<QuorumRoundView, 'invalidMembers'> & {
+  invalidMemberCount: number;
+  /** "op-koen (2), op-marsellus (6)" -- who the invalid members belonged to. */
+  failuresByOperator: Array<{ operatorLabel: string | null; count: number }>;
+};
+
+export interface QuorumRoundDetail extends QuorumRoundView {
+  members: RoundMemberView[];
+}
+
+export interface HealthTimelinePoint {
+  expectedHeight: number;
+  detectedAt: string;
+  status: RoundStatus;
+  /** null when the round did not form; the chart must show a gap, not a zero. */
+  healthRatio: number | null;
+  numValidMembers: number | null;
+  effectiveSize: number | null;
+  punishedCount: number;
+}
+
+export interface HealthTimeline {
+  points: HealthTimelinePoint[];
+  hours: number;
+  llmqName: string;
+  summary: {
+    rounds: number;
+    formed: number;
+    failed: number;
+    pending: number;
+    /** Formed / (formed + failed). Pending rounds are excluded, not counted as failures. */
+    formationRate: number | null;
+    medianHealthRatio: number | null;
+    worstHealthRatio: number | null;
+    longestFailureStreak: number;
+  };
+}
+
+export interface OperatorReliabilityRow {
+  operatorLabel: string;
+  vpsProvider: string | null;
+  country: string | null;
+  masternodeCount: number;
+  /** Rounds this operator had at least one member in. */
+  roundsSelected: number;
+  /** Member-slots across those rounds. */
+  memberSlots: number;
+  /** Member-slots marked invalid. */
+  invalidSlots: number;
+  /** invalidSlots / memberSlots. */
+  failureRate: number | null;
 }
