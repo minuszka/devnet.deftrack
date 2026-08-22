@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import quorumRoundRoutes from './quorumRounds.v1.routes.js';
 import operatorRoutes from './operators.v1.routes.js';
+import masternodeRoutes from './masternodes.v1.routes.js';
 
 const router = Router();
 
@@ -24,8 +25,10 @@ const heavyLimiter = rateLimit({
 router.use(apiLimiter);
 router.use('/quorum-rounds/health-timeline', heavyLimiter);
 router.use('/operators/reliability', heavyLimiter);
+router.use('/masternodes/ban-waves', heavyLimiter);
 
 router.use('/quorum-rounds', quorumRoundRoutes);
 router.use('/operators', operatorRoutes);
+router.use('/masternodes', masternodeRoutes);
 
 export default router;

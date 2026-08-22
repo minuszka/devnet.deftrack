@@ -16,6 +16,7 @@ import { connectDatabase, disconnectDatabase } from './db.js';
 import { rpc } from './services/rpc.service.js';
 import { syncService } from './services/sync.service.js';
 import { quorumRoundService } from './services/quorumRound.service.js';
+import { masternodePollerService } from './services/masternodePoller.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
@@ -83,6 +84,7 @@ async function main(): Promise<void> {
 
   syncService.start();
   quorumRoundService.start();
+  masternodePollerService.start();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);
@@ -92,6 +94,7 @@ async function main(): Promise<void> {
     logger.info(`${signal} received, shutting down`);
     syncService.stop();
     quorumRoundService.stop();
+    masternodePollerService.stop();
     server.close();
     await disconnectDatabase();
     process.exit(0);

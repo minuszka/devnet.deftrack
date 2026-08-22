@@ -48,6 +48,12 @@ export const config = {
     batchSize: optionalNumber('SYNC_BATCH_SIZE', 200),
   },
 
+  masternode: {
+    // PoSe penalty decays one per block (~150 s here), so a minute of
+    // resolution captures every transition without missing a step.
+    intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),
+  },
+
   quorum: {
     // A DKG round is 72 blocks (~3 h). Polling every two minutes is far more
     // often than needed, and keeps the observation window from ever lapsing.
