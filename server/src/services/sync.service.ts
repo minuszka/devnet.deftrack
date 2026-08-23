@@ -241,6 +241,7 @@ export class SyncService {
                 valueSat: dec(Math.round(out.valueSat)),
                 scriptType: out.scriptPubKey.type,
                 address: outputAddress(out),
+                scriptHex: out.scriptPubKey.hex || null,
               })),
               valueOutSat: dec(valueOutSat),
             },

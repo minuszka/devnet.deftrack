@@ -55,15 +55,19 @@ app.get('/api/v1/health', async (_req, res) => {
 
   // How many wallets actually produced a block recently. There is no RPC for
   // "who is staking" network-wide -- getstakinginfo speaks only for this node --
-  // so the honest answer is the count of distinct coinstake payees, which is
-  // what block production actually depended on.
+  // so this counts distinct coinstake payees, which is what block production
+  // actually depended on.
+  //
+  // Keyed on the output script, not the address: coinstake payouts are
+  // pay-to-pubkey and the RPC reports no address for them, so counting
+  // addresses returned zero while the chain was plainly being staked.
   const stakers =
     tip >= 0
-      ? await Transaction.distinct('vout.address', {
+      ? await Transaction.distinct('vout.scriptHex', {
           isCoinstake: true,
           height: { $gt: tip - STAKER_WINDOW },
         })
-          .then((a) => a.filter(Boolean).length)
+          .then((a) => a.filter((h) => typeof h === 'string' && h.length > 0).length)
           .catch(() => -1)
       : -1;
 

@@ -12,6 +12,14 @@ export interface TxOutput {
   valueSat: mongoose.Types.Decimal128;
   scriptType: string;
   address: string | null;
+  /**
+   * The raw output script.
+   *
+   * Coinstake payouts are pay-to-pubkey, which the RPC reports with no
+   * `address` at all, so an address is not enough to say who was paid. The
+   * script is the only identity those outputs have.
+   */
+  scriptHex: string | null;
 }
 
 export interface TransactionDocument extends Document {
@@ -55,6 +63,7 @@ const outputSchema = new Schema<TxOutput>(
     valueSat: { type: Schema.Types.Decimal128, required: true },
     scriptType: { type: String, required: true },
     address: { type: String, default: null },
+    scriptHex: { type: String, default: null },
   },
   { _id: false }
 );
@@ -82,5 +91,7 @@ const transactionSchema = new Schema<TransactionDocument>(
 
 transactionSchema.index({ height: -1, txid: 1 });
 transactionSchema.index({ 'vout.address': 1, height: -1 });
+// Counting distinct block producers scans coinstakes by script.
+transactionSchema.index({ isCoinstake: 1, height: -1 });
 
 export const Transaction = mongoose.model<TransactionDocument>('Transaction', transactionSchema);
