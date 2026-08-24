@@ -69,6 +69,12 @@ export const config = {
     intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),
   },
 
+  ingest: {
+    // Shared by every host agent, so it is the credential most likely to leak.
+    // Empty disables the endpoint outright rather than leaving it open.
+    token: process.env.INGEST_TOKEN ?? '',
+  },
+
   zmq: {
     // Empty disables the listener entirely; the poller then carries the
     // measurement on its own, at its own coarser resolution.
