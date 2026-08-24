@@ -109,6 +109,13 @@ export class ChainLockService {
     } finally {
       this.applying = false;
     }
+
+    // A notification that arrived while the batch was running set the flag
+    // again. Without this it would wait for the next block index or the next
+    // RPC tick -- which, now that ZMQ demoted polling to reconciliation, can be
+    // minutes. The stored arrival times are unaffected either way; what would
+    // lag is when the views can see them.
+    if (this.deferredObservations) void this.applyPendingObservations();
   }
 
   /**

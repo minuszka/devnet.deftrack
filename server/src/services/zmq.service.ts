@@ -105,7 +105,14 @@ export class ZmqService {
       logger.warn(`ZMQ gap on ${gap.topic}: missed ${gap.missed} message(s) (${gap.from}-${gap.to})`);
     }
 
-    const observationKey = `${msg.topic}:${msg.hash ?? `seq-${msg.sequence}`}`;
+    // A hash identifies its notification uniquely. A sequence number does not:
+    // the node's per-topic counter restarts with the node, so `sequence:seq-5`
+    // would collide with an older row and $setOnInsert would silently drop the
+    // new observation -- the exact class of invisible gap this collector exists
+    // to make visible. Sequence rows are keyed by arrival instead.
+    const observationKey = msg.hash
+      ? `${msg.topic}:${msg.hash}`
+      : `${msg.topic}:${receivedAt.toISOString()}:${msg.sequence}`;
     await NodeObservation.updateOne(
       { observationKey },
       {
