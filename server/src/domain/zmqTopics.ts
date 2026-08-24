@@ -27,17 +27,16 @@ export interface ZmqMessage {
 }
 
 /**
- * The hash frames are published in internal byte order -- the reverse of what
- * every RPC and every explorer URL uses. Publishing them unreversed would
- * produce hashes that match nothing, and the mismatch would look like missing
- * data rather than a byte-order mistake.
+ * The hash frames arrive in the same byte order the RPC prints, so they are
+ * taken verbatim.
+ *
+ * Not an assumption: reversing them (the usual internal-vs-display convention)
+ * was tried first and produced hashes that matched no indexed block. Verified
+ * against blocks 1382-1385 on the live devnet, where the unreversed payload is
+ * the block hash exactly.
  */
 export function toRpcHash(payload: Uint8Array): string {
-  const hex: string[] = [];
-  for (let i = payload.length - 1; i >= 0; i--) {
-    hex.push(payload[i]!.toString(16).padStart(2, '0'));
-  }
-  return hex.join('');
+  return Buffer.from(payload).toString('hex');
 }
 
 export function parseMessage(frames: Uint8Array[]): ZmqMessage | null {

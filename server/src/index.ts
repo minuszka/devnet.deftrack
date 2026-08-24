@@ -19,6 +19,7 @@ import { quorumRoundService } from './services/quorumRound.service.js';
 import { masternodePollerService } from './services/masternodePoller.service.js';
 import { chainLockService } from './services/chainLock.service.js';
 import { zmqService } from './services/zmq.service.js';
+import { mnListDiffService } from './services/mnListDiff.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
@@ -149,6 +150,7 @@ async function main(): Promise<void> {
   syncService.start();
   quorumRoundService.start();
   masternodePollerService.start();
+  mnListDiffService.start();
   chainLockService.start();
   zmqService.start();
 
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
     syncService.stop();
     quorumRoundService.stop();
     masternodePollerService.stop();
+    mnListDiffService.stop();
     chainLockService.stop();
     await zmqService.stop();
     server.close();

@@ -9,11 +9,11 @@ const seq = (n: number): Uint8Array => {
 const hash32 = (fill: number): Uint8Array => Uint8Array.from(Buffer.alloc(32, fill));
 
 describe('ZMQ message framing', () => {
-  it('reverses the hash into the byte order the RPC uses', () => {
-    // Internal order is the reverse of display order; publishing it unreversed
-    // would yield hashes that match no block we ever indexed.
+  it('takes the hash verbatim, because the node publishes display order', () => {
+    // Reversing it -- the usual internal-vs-display convention -- was tried
+    // first and matched no indexed block. Pinned so it is not "corrected" back.
     const payload = Uint8Array.from([1, 2, 3, 4]);
-    expect(toRpcHash(payload)).toBe('04030201');
+    expect(toRpcHash(payload)).toBe('01020304');
   });
 
   it('parses a block hash notification', () => {

@@ -6,6 +6,8 @@ import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { QuorumRound } from '../models/QuorumRound.js';
 import { quorumReorgReset } from '../domain/reorg.js';
+import { MasternodeEvent } from '../models/MasternodeEvent.js';
+import { DIFF_CURSOR_KEY, mnListDiffService } from './mnListDiff.service.js';
 import { SyncState } from '../models/SyncState.js';
 
 const SYNC_KEY = 'blocks';
@@ -205,6 +207,23 @@ export class SyncService {
     // The predecessor of the first rewound block now has a successor that was
     // just deleted.
     await Block.updateOne({ height: cursor }, { $set: { nextblockhash: null } });
+
+    // Masternode transitions read off the abandoned blocks describe changes
+    // that no longer happened. Only the chain-derived ones are dropped -- a
+    // polled sighting was still a real observation of a real moment.
+    const events = await MasternodeEvent.deleteMany({
+      source: 'listdiff',
+      height: { $gt: cursor },
+    });
+    await SyncState.updateOne(
+      { key: DIFF_CURSOR_KEY, lastSyncedHeight: { $gt: cursor } },
+      { $set: { lastSyncedHeight: cursor } }
+    );
+    // The in-memory penalty baseline belongs to a chain that no longer exists.
+    mnListDiffService.reset();
+    if (events.deletedCount > 0) {
+      logger.warn(`Dropped ${events.deletedCount} chain-derived masternode event(s) above ${cursor}`);
+    }
 
     logger.warn(
       `Rewound to height ${cursor}, dropped ${deleted.deletedCount} block(s), ` +

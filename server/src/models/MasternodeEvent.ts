@@ -7,7 +7,9 @@ export type MasternodeEventType =
   | 'penalty_up'
   | 'penalty_down'
   | 'service_changed'
-  | 'removed';
+  | 'removed'
+  | 'key_changed'
+  | 'revoked';
 
 /**
  * Append-only log of every masternode state transition.
@@ -38,6 +40,18 @@ export interface MasternodeEventDocument extends Document {
   operatorLabel: string | null;
   hostIp: string | null;
 
+  /** Reason the node itself gave, on a ProUpRevTx. */
+  revocationReason: number | null;
+  /**
+   * Where the transition was seen.
+   *
+   * 'listdiff' is chain-derived and exact to the block; 'poll' is a comparison
+   * of two snapshots, dated to when the poller happened to look. Mixing the two
+   * without saying which is which would make a timing claim the data cannot
+   * support.
+   */
+  source: 'listdiff' | 'poll';
+
   detectedAt: Date;
 }
 
@@ -55,6 +69,9 @@ const masternodeEventSchema = new Schema<MasternodeEventDocument>({
 
   operatorLabel: { type: String, default: null, index: true },
   hostIp: { type: String, default: null, index: true },
+
+  revocationReason: { type: Number, default: null },
+  source: { type: String, enum: ['listdiff', 'poll'], default: 'poll', index: true },
 
   detectedAt: { type: Date, default: () => new Date(), index: true },
 });

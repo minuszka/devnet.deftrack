@@ -171,7 +171,9 @@ export type MasternodeEventKind =
   | 'penalty_up'
   | 'penalty_down'
   | 'service_changed'
-  | 'removed';
+  | 'removed'
+  | 'key_changed'
+  | 'revoked';
 
 export interface MasternodeEventRow {
   eventKey: string;
