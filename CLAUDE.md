@@ -123,6 +123,39 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   like a network fault. Compare `md5sum`, not the version string, and ship the
   binary with any consensus change.
 
+- **Once masternodes exist, every transaction waits 10 minutes to be mined.**
+  `BlockAssembler::TestPackageTransactions` drops any package whose transaction
+  is not InstantSend-locked unless `CChainLocksHandler::IsTxSafeForMining`
+  agrees, and that is simply `txAge >= WAIT_FOR_ISLOCK_TIMEOUT`
+  (`llmq/chainlocks.h:45`, 600 s). With no InstantSend quorum yet, no lock can
+  ever arrive, so the full ten minutes is always paid. A transaction sitting in
+  the mempool with an enormous fee is therefore normal, not stuck -- raising the
+  fee changes nothing, and `prioritisetransaction` only appeared to help because
+  the timeout expired at the same moment.
+
+- **A masternode can never also stake.** `init.cpp:997` soft-sets
+  `disablewallet=1` whenever `masternodeblsprivkey` is present, and overriding
+  it with an explicit `disablewallet=0` makes the node refuse to start at all:
+  "You can not start a masternode with wallet enabled". Distributing block
+  production therefore needs a separate daemon per host -- instance 11 of the
+  same systemd template, with a wallet and no BLS key.
+
+- **`createwallet` defaults to a legacy wallet the fleet build cannot create.**
+  The `--without-bdb` binary answers "Compiled without bdb support (required for
+  legacy wallets)"; pass `descriptors=true` (and `load_on_startup=true`).
+
+- **Never let the wallet pick its own inputs on the seed node.** It stakes
+  continuously, so its balance is full of coinstake outputs below
+  `COINBASE_MATURITY` (25, and spending needs depth 26), and automatic selection
+  keeps choosing them: `sendmany` returns a txid and the transaction never
+  reaches the mempool. Select inputs explicitly from `listunspent <minconf>`,
+  and exclude anything equal to the collateral amount.
+
+- **`abandontransaction` on a broad filter destroys wallet accounting, not
+  coins.** Abandoning 16 transactions at once dropped the reported balance from
+  1.09 billion to 380 million; `rescanblockchain 0` rebuilt it exactly. The
+  chain is the record -- the wallet is a cache of it.
+
 - **Check the firewall on every host, not one.** Two of the eight fullnodes run
   `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
   from the first host cost 20 unreachable masternodes and a PoSe ban wave that
