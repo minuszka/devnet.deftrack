@@ -34,6 +34,12 @@ const STAKER_WINDOW = 200;
 const app = express();
 
 app.disable('x-powered-by');
+// nginx terminates TLS on the same host and forwards X-Forwarded-For. Without
+// this the rate limiter throws on every proxied request and, when it does not,
+// keys every visitor to nginx's own address -- one bucket for the whole world.
+// 'loopback' and not `true`: only the local proxy may claim to speak for a
+// client, or anyone could set the header and pick their own bucket.
+app.set('trust proxy', 'loopback');
 app.use(helmet());
 app.use(compression());
 app.use(cors({ origin: config.corsOrigins }));
