@@ -56,18 +56,31 @@ export class DdShell extends LitElement {
         text-transform: uppercase;
       }
       /* Live counters share the banner strip rather than taking a row of their
-         own: they are status, not content. */
+         own: they are status, not content. Each is its own pill: at banner
+         size, run together in one faint line, they were operationally
+         important numbers nobody could read. */
       .monitor {
         display: flex;
-        gap: 16px;
+        gap: 6px;
         flex-wrap: wrap;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.06em;
+        text-transform: none;
+        font-size: 11.5px;
+      }
+      .monitor > span {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 5px;
+        padding: 3px 8px;
+        border: 1px solid var(--line-strong);
+        background: var(--bg-raised);
         color: var(--ink-2);
         font-weight: 500;
       }
       .monitor b {
         color: var(--ink);
         font-weight: 700;
+        font-size: 12px;
       }
       .monitor .ok {
         color: var(--accent);
@@ -176,8 +189,11 @@ export class DdShell extends LitElement {
           ? html`
               <div class="chainline">
                 <span>chain <b>${h.devnet}</b></span>
-                <span>height <b>${num(h.chainTip)}</b></span>
-                <span>indexed <b>${num(h.indexedBlocks)}</b></span>
+                <span>tip <b>${num(h.chainTip)}</b></span>
+                <!-- "indexed through" and not a bare count: a height and a
+                     block count differ by one, and side by side that read as
+                     an off-by-one bug rather than as two different things. -->
+                <span>indexed through <b>${num(h.indexedHeight)}</b></span>
                 ${h.behind > 0
                   ? html`<span class="lag">behind <b>${num(h.behind)}</b></span>`
                   : nothing}

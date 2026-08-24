@@ -4,8 +4,9 @@ import type {
   MasternodeTimelinePoint,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
-import { api } from '../lib/api.js';
+import { api, type HealthSnapshot } from '../lib/api.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
+import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 import './dd-health-chart.js';
@@ -19,6 +20,7 @@ export class DdPageOverview extends LitElement {
     _rounds: { state: true },
     _total: { state: true },
     _mn: { state: true },
+    _health: { state: true },
     _error: { state: true },
     _loading: { state: true },
   };
@@ -27,6 +29,7 @@ export class DdPageOverview extends LitElement {
   private _rounds: QuorumRoundListItem[] = [];
   private _total = 0;
   private _mn: MasternodeTimelinePoint | null = null;
+  private _health: HealthSnapshot | null = null;
   private _error = '';
   private _loading = true;
   private _timer: number | null = null;
@@ -42,6 +45,112 @@ export class DdPageOverview extends LitElement {
         border-top: 1px solid var(--line-soft);
         font-family: var(--font-mono);
         font-size: 11.5px;
+      }
+
+      /* State bar. One colour per situation, so "cannot form yet" never looks
+         like "failed unexpectedly". */
+      .state {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-left-width: 3px;
+        background: var(--surface);
+      }
+      .state.bootstrap {
+        border-left-color: var(--ink-3);
+      }
+      .state.healthy {
+        border-left-color: var(--good);
+      }
+      .state.investigate {
+        border-left-color: var(--crit);
+        background: var(--surface-2);
+      }
+      .state-chip {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        padding: 4px 9px;
+        border: 1px solid currentColor;
+        white-space: nowrap;
+      }
+      .state.bootstrap .state-chip {
+        color: var(--ink-2);
+      }
+      .state.healthy .state-chip {
+        color: var(--good);
+      }
+      .state.investigate .state-chip {
+        color: var(--crit);
+      }
+      .state-body {
+        flex: 1;
+        min-width: 0;
+      }
+      .state-headline {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.4;
+      }
+      .state-detail {
+        color: var(--ink-2);
+        font-size: 12.5px;
+        margin-top: 3px;
+        line-height: 1.5;
+      }
+
+      /* Bootstrap progress: how far off a quorum still is, as a quantity
+         rather than as a red percentage. */
+      .bar {
+        margin-top: 9px;
+        height: 6px;
+        background: var(--surface-3);
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        background: var(--accent-dim);
+      }
+
+      /* Compact round timeline, shown while a health-ratio chart would be an
+         empty grid with nothing plotted on it. */
+      .timeline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 14px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .timeline .step {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 4px 8px;
+        border: 1px solid var(--line-strong);
+        background: var(--surface-2);
+      }
+      .timeline .step b {
+        font-variant-numeric: tabular-nums;
+      }
+      .timeline .step .failed {
+        color: var(--crit);
+      }
+      .timeline .step .pending {
+        color: var(--ink-3);
+      }
+      .timeline .step .formed {
+        color: var(--good);
+      }
+      .timeline .arrow {
+        color: var(--ink-3);
       }
     `,
   ];
@@ -59,15 +168,17 @@ export class DdPageOverview extends LitElement {
 
   private async _load(): Promise<void> {
     try {
-      const [timeline, rounds, mn] = await Promise.all([
+      const [timeline, rounds, mn, health] = await Promise.all([
         api.healthTimeline(24 * 7),
         api.rounds({ limit: RECENT }),
         api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
+        api.health().catch(() => null),
       ]);
       this._timeline = timeline;
       this._rounds = rounds.items;
       this._total = rounds.total;
       this._mn = mn.points.at(-1) ?? null;
+      this._health = health;
       this._error = '';
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
@@ -76,8 +187,20 @@ export class DdPageOverview extends LitElement {
     }
   }
 
+  private _status(): NetworkStatus {
+    const s = this._timeline?.summary;
+    return classifyNetwork({
+      enabledMasternodes: this._mn?.enabled ?? this._health?.masternodes.enabled ?? null,
+      minSize: this._rounds[0]?.minSize ?? null,
+      rounds: this._rounds,
+      formedRounds: s?.formed ?? 0,
+      failedRounds: s?.failed ?? 0,
+    });
+  }
+
   override render(): TemplateResult {
     const s = this._timeline?.summary;
+    const status = this._status();
     return html`
       <div class="page-head">
         <div>
@@ -91,12 +214,67 @@ export class DdPageOverview extends LitElement {
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
       ${this._loading && !s ? html`<div class="note">Loading…</div>` : nothing}
-      ${s ? this._tiles(s) : nothing} ${this._noQuorumNote()} ${this._chart()} ${this._recent()}
+      ${s ? this._stateBar(status) : nothing} ${s ? this._tiles(s, status) : nothing}
+      ${this._rounds.length > 0 ? this._chartOrTimeline() : nothing} ${this._recent(status)}
     `;
   }
 
-  private _tiles(s: NonNullable<HealthTimeline['summary']>): TemplateResult {
+  private _stateBar(status: NetworkStatus): TemplateResult {
+    return html`
+      <section class="state ${status.state}">
+        <span class="state-chip">${status.label}</span>
+        <div class="state-body">
+          <div class="state-headline">${status.headline}</div>
+          <div class="state-detail">${status.detail}</div>
+          ${status.state === 'bootstrap' && status.minSize > 0
+            ? html`<div class="bar"><i style="width:${(status.progress * 100).toFixed(1)}%"></i></div>`
+            : nothing}
+        </div>
+      </section>
+    `;
+  }
+
+  /**
+   * The four figures worth reading right now.
+   *
+   * During bootstrap, formation rate and median health have no content -- 0.0%
+   * and a dash say nothing except that nothing has happened yet -- so the tiles
+   * answer the questions that do have answers: how far off a quorum is, when
+   * the next round is due, and whether the chain is still moving at all.
+   */
+  private _tiles(s: NonNullable<HealthTimeline['summary']>, status: NetworkStatus): TemplateResult {
     const mn = this._mn;
+    const stakers = this._health?.stakers.active ?? null;
+
+    if (status.state === 'bootstrap') {
+      return html`
+        <section class="tiles">
+          <dd-stat
+            label="Quorum capacity"
+            value="${num(status.enabledMasternodes)} / ${num(status.minSize)}"
+            sub="enabled masternodes vs profile minimum"
+            tone=${status.enabledMasternodes >= status.minSize ? 'good' : ''}
+          ></dd-stat>
+          <dd-stat
+            label="Next DKG"
+            value=${status.nextRoundHeight === null ? '—' : `H ${num(status.nextRoundHeight)}`}
+            sub=${status.nextRoundHeight === null ? 'none scheduled in window' : 'scheduled height'}
+          ></dd-stat>
+          <dd-stat
+            label="Enabled masternodes"
+            value=${mn ? num(mn.enabled) : num(this._health?.masternodes.enabled ?? 0)}
+            sub=${mn ? `${num(mn.banned)} banned · ${num(mn.penalised)} penalised` : 'none registered'}
+          ></dd-stat>
+          <dd-stat
+            label="Chain is staking"
+            value=${stakers === null ? '—' : stakers > 0 ? 'yes' : 'no'}
+            sub=${stakers === null ? 'no sample' : `${num(stakers)} staker(s) producing blocks`}
+            tone=${stakers === null ? '' : stakers > 0 ? 'good' : 'crit'}
+          ></dd-stat>
+        </section>
+      `;
+    }
+
     return html`
       <section class="tiles">
         <dd-stat
@@ -132,33 +310,42 @@ export class DdPageOverview extends LitElement {
   }
 
   /**
-   * With no masternodes registered, every round legitimately fails. Say so,
-   * rather than letting a wall of red read as a broken site.
+   * A health-ratio chart needs health ratios. Until at least one round has
+   * formed there is nothing to plot, and a full-height empty grid reads as a
+   * broken chart rather than as an absence of data.
    */
-  private _noQuorumNote(): TemplateResult | typeof nothing {
-    const s = this._timeline?.summary;
-    if (!s || s.formed > 0) return nothing;
-    if ((this._rounds[0]?.effectiveSize ?? 0) > 0) return nothing;
+  private _chartOrTimeline(): TemplateResult {
+    const points = this._timeline?.points ?? [];
+    const hasSeries = points.some((p) => p.healthRatio !== null);
 
-    return html`
-      <section>
-        <div class="note">
-          <strong>No masternodes are registered yet</strong>, so no quorum can form and every
-          scheduled round is recorded as <em>did not form</em>. That is the expected state, not a
-          fault: a failed DKG mines no commitment, so <strong>nobody is PoSe-punished</strong> —
-          every row shows <span class="mono">punished = 0</span>.
-        </div>
-      </section>
-    `;
-  }
+    if (!hasSeries) {
+      // Oldest first: the eye should read the sequence in the direction time runs.
+      const steps = [...this._rounds].reverse();
+      return html`
+        <section class="card">
+          <div class="card-head"><div class="card-title">DKG rounds so far</div></div>
+          <div class="card-body flush">
+            <div class="timeline">
+              ${steps.map(
+                (r, i) => html`
+                  ${i > 0 ? html`<span class="arrow">→</span>` : nothing}
+                  <span class="step"><b>${num(r.expectedHeight)}</b
+                    ><span class=${r.status}>${r.status}</span></span
+                  >
+                `
+              )}
+            </div>
+          </div>
+        </section>
+      `;
+    }
 
-  private _chart(): TemplateResult {
     return html`
       <section class="card">
         <div class="card-head"><div class="card-title">Health ratio per round</div></div>
         <div class="card-body flush">
           <dd-health-chart
-            .points=${this._timeline?.points ?? []}
+            .points=${points}
             .minSize=${this._rounds[0]?.minSize ?? null}
           ></dd-health-chart>
         </div>
@@ -166,7 +353,27 @@ export class DdPageOverview extends LitElement {
     `;
   }
 
-  private _recent(): TemplateResult {
+  /**
+   * What the round proves, not who is to blame.
+   *
+   * With no commitment mined there is no member list, so naming anyone would be
+   * an accusation the data cannot support -- during bootstrap the honest answer
+   * is that a quorum was arithmetically impossible.
+   */
+  private _evidence(r: QuorumRoundListItem, status: NetworkStatus): string {
+    if (r.failuresByOperator.length > 0) {
+      return r.failuresByOperator
+        .map((f) => `${f.operatorLabel ?? 'unattributed'} (${f.count})`)
+        .join(', ');
+    }
+    if (r.status === 'formed') return 'all members valid';
+    if (r.status === 'pending') return 'still inside its mining window';
+    return status.state === 'bootstrap' && status.minSize > 0
+      ? `no quorum possible: ${status.enabledMasternodes}/${status.minSize} MN`
+      : 'no commitment mined';
+  }
+
+  private _recent(status: NetworkStatus): TemplateResult {
     return html`
       <section class="card">
         <div class="card-head">
@@ -184,7 +391,7 @@ export class DdPageOverview extends LitElement {
                   <th class="r">Valid members</th>
                   <th class="r">Health</th>
                   <th class="r">Punished</th>
-                  <th>Who failed</th>
+                  <th>Evidence</th>
                   <th>Quorum hash</th>
                   <th class="r">Seen</th>
                 </tr>
@@ -205,15 +412,7 @@ export class DdPageOverview extends LitElement {
                           </td>
                           <td class="r mono">${ratio(r.healthRatio)}</td>
                           <td class="r mono">${num(r.punishedCount)}</td>
-                          <td>
-                            ${r.failuresByOperator.length === 0
-                              ? r.status === 'failed'
-                                ? 'no commitment mined'
-                                : '—'
-                              : r.failuresByOperator
-                                  .map((f) => `${f.operatorLabel ?? 'unattributed'} (${f.count})`)
-                                  .join(', ')}
-                          </td>
+                          <td>${this._evidence(r, status)}</td>
                           <td class="mono">${shortHash(r.quorumHash)}</td>
                           <td class="r mono">${ago(r.detectedAt)}</td>
                         </tr>

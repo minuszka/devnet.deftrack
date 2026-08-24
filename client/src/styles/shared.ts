@@ -138,6 +138,18 @@ export const pageStyles = css`
   h1 .dim { color: var(--ink-3); font-weight: 400; }
   .page-sub { color: var(--ink-2); font-size: 13px; }
   .grid { display: grid; gap: 14px; }
+
+  /* Stat tiles read as a row of figures to compare, not as a stack of cards to
+     scroll past. auto-fit rather than a fixed count so a page with three or
+     five tiles lays out on the same rule. */
+  .tiles {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  }
+  @media (max-width: 520px) {
+    .tiles { grid-template-columns: 1fr; }
+  }
   .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
