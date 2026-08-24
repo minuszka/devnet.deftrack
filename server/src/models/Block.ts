@@ -123,6 +123,12 @@ blockSchema.index({ time: -1, height: -1 });
 // height entry and filtered afterwards. Equality + sort serves it directly.
 blockSchema.index({ isProofOfStake: 1, height: -1 });
 
+// The payee backfill filters on payeeCheckedAt and sorts by height. Measured,
+// not guessed: without this the plan sorted in memory, which costs nothing at
+// one candidate and a great deal after a cold start or a reorg -- exactly when
+// the candidate set is largest and the system is already busy.
+blockSchema.index({ payeeCheckedAt: 1, height: -1 });
+
 // No TTL. Chain history is the record the whole project is built to preserve.
 
 export const Block = mongoose.model<BlockDocument>('Block', blockSchema);
