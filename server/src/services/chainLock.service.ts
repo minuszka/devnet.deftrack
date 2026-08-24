@@ -4,17 +4,18 @@ import { rpc } from './rpc.service.js';
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { NodeObservation } from '../models/NodeObservation.js';
+import { zmqService } from './zmq.service.js';
+import { metricsService } from './metrics.service.js';
+import { chainLockRpcIntervalMs } from '../domain/collectorPolicy.js';
 
 /**
  * ChainLock observation.
  *
- * The node reports whether a block is chainlocked, never when the CLSIG
- * arrived, so latency has to be measured by watching. The cost of that is
- * honest and bounded: resolution equals the poll interval, and a lock that
- * landed while the collector was down is recorded as locked with no latency
- * rather than with a fabricated one.
+ * ZMQ timestamps block and CLSIG arrival on the same host clock, giving a
+ * precise event latency without repeatedly asking the node. RPC polling stays
+ * as reconciliation for subscriber gaps, and as the fallback when ZMQ is off.
  *
- * Only recent blocks are examined. A ChainLock arrives within seconds of a
+ * Only recent blocks are reconciled. A ChainLock arrives within seconds of a
  * block or not at all, so scanning deeper would burn RPC calls to re-confirm
  * settled history.
  */
@@ -29,8 +30,11 @@ const OBSERVATION_BATCH = 500;
 const ORPHAN_AFTER_MS = 60 * 60_000;
 
 export class ChainLockService {
-  private running = false;
+  private reconciling = false;
+  private applying = false;
+  private deferredObservations = false;
   private timer: NodeJS.Timeout | null = null;
+  private unsubscribeZmq: (() => void) | null = null;
   /**
    * Latency is only meaningful for blocks mined after the watcher was
    * running. For anything older, the gap between block time and first sight
@@ -40,25 +44,70 @@ export class ChainLockService {
 
   start(): void {
     this.startedAtSec = Math.floor(Date.now() / 1000);
+    this.unsubscribeZmq = zmqService.onObservation((topic) => {
+      if (topic !== 'hashblock' && topic !== 'hashchainlock') return;
+      this.deferredObservations = true;
+      void this.applyPendingObservations();
+    });
+
+    const intervalMs = chainLockRpcIntervalMs(
+      zmqService.enabled,
+      config.chainlock.intervalMs,
+      config.chainlock.reconcileIntervalMs
+    );
     void this.tick();
-    this.timer = setInterval(() => void this.tick(), config.chainlock.intervalMs);
-    logger.info(`ChainLock watcher started (every ${config.chainlock.intervalMs} ms, last ${WINDOW} blocks)`);
+    this.timer = setInterval(() => void this.tick(), intervalMs);
+    logger.info(
+      `ChainLock watcher started (${zmqService.enabled ? 'ZMQ + reconciliation' : 'poll fallback'}, ` +
+        `RPC every ${intervalMs} ms, last ${WINDOW} blocks)`
+    );
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.unsubscribeZmq?.();
+    this.unsubscribeZmq = null;
   }
 
   async tick(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
+    if (this.reconciling) return;
+    this.reconciling = true;
     try {
+      await this.applyPendingObservations();
       await this.collect();
     } catch (error) {
       logger.error(`ChainLock watch failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      this.running = false;
+      this.reconciling = false;
+    }
+  }
+
+  /**
+   * Called by the block indexer after a block becomes queryable in Mongo. A
+   * ZMQ notification normally beats indexing, so this closes that short race
+   * without adding a permanent database polling loop.
+   */
+  notifyBlockIndexed(): void {
+    if (this.deferredObservations) void this.applyPendingObservations();
+  }
+
+  private async applyPendingObservations(): Promise<void> {
+    if (this.applying) return;
+    this.applying = true;
+    // Preserve a notification that arrives while the current batch is being
+    // consumed. Missing blocks set this flag again via the return value.
+    this.deferredObservations = false;
+    try {
+      const deferred = await this.applyObservations();
+      this.deferredObservations = this.deferredObservations || deferred;
+    } catch (error) {
+      this.deferredObservations = true;
+      logger.error(
+        `ChainLock ZMQ derivation failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      this.applying = false;
     }
   }
 
@@ -69,7 +118,7 @@ export class ChainLockService {
    * are never rewritten, so if this arithmetic turns out to be wrong it can be
    * corrected and re-run over the same evidence.
    */
-  private async applyObservations(): Promise<void> {
+  private async applyObservations(): Promise<boolean> {
     const pending = await NodeObservation.find({
       topic: { $in: ['hashblock', 'hashchainlock'] },
       appliedAt: null,
@@ -77,14 +126,18 @@ export class ChainLockService {
       .sort({ receivedAt: 1 })
       .limit(OBSERVATION_BATCH)
       .lean();
-    if (pending.length === 0) return;
+    if (pending.length === 0) return false;
 
     const now = new Date();
     const applied: string[] = [];
     let locks = 0;
+    let deferred = false;
 
     for (const obs of pending) {
-      if (!obs.hash) continue;
+      if (!obs.hash) {
+        applied.push(obs.observationKey);
+        continue;
+      }
       const block = await Block.findOne({ hash: obs.hash })
         .select('hash time firstSeenAt chainLockedAt')
         .lean();
@@ -95,6 +148,8 @@ export class ChainLockService {
         // a stale-tip or reorg artefact, not something to retry forever.
         if (now.getTime() - new Date(obs.receivedAt).getTime() > ORPHAN_AFTER_MS) {
           applied.push(obs.observationKey);
+        } else {
+          deferred = true;
         }
         continue;
       }
@@ -143,13 +198,13 @@ export class ChainLockService {
       );
     }
     if (locks > 0) {
+      metricsService.observeChainLocks('zmq', locks, true);
       logger.info(`ChainLock event time applied to ${locks} block(s) from ZMQ`);
     }
+    return deferred;
   }
 
   private async collect(): Promise<void> {
-    await this.applyObservations();
-
     const tip = await rpc.getBlockCount();
     const from = Math.max(1, tip - WINDOW + 1);
 
@@ -204,6 +259,7 @@ export class ChainLockService {
         { $set: { hasChainLock: true } }
       );
       const timed = ops.filter((o) => o.updateOne.update.$set.chainLockLatencySec !== null).length;
+      metricsService.observeChainLocks('poll', ops.length, zmqService.enabled);
       logger.info(
         `ChainLock observed on ${ops.length} block(s) up to ${tip}; ${timed} with measurable latency`
       );

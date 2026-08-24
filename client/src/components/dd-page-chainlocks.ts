@@ -87,6 +87,9 @@ export class DdPageChainLocks extends LitElement {
 
   private _tiles(d: ChainLockReport): TemplateResult {
     const cov = d.coverage;
+    const fmtLatency = (ms: number | null): string =>
+      ms === null ? '—' : ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(2)}s`;
+    const exact = d.eventLatencyMs.p50 !== null;
     return html`
       <section class="tiles">
         <dd-stat
@@ -103,8 +106,10 @@ export class DdPageChainLocks extends LitElement {
         ></dd-stat>
         <dd-stat
           label="Median latency"
-          value=${d.latencySec.p50 === null ? '—' : `${d.latencySec.p50}s`}
-          sub="p90 ${d.latencySec.p90 ?? '—'}s · max ${d.latencySec.max ?? '—'}s"
+          value=${exact ? fmtLatency(d.eventLatencyMs.p50) : d.latencySec.p50 === null ? '—' : `${d.latencySec.p50}s`}
+          sub=${exact
+            ? `ZMQ p90 ${fmtLatency(d.eventLatencyMs.p90)} · max ${fmtLatency(d.eventLatencyMs.max)}`
+            : `poll estimate · p90 ${d.latencySec.p90 ?? '—'}s`}
         ></dd-stat>
         <dd-stat
           label="Locking began"
@@ -114,12 +119,14 @@ export class DdPageChainLocks extends LitElement {
       </section>
 
       <div class="note caveat">
-        Latency is an observation, not a chain fact: the node reports whether a block is locked,
-        never when the CLSIG arrived. Resolution is the poll interval,
-        <span class="mono">${d.resolutionSec}s</span>. Only
-        <strong>${num(d.latencyMeasured)}</strong> of ${num(d.locked)} locks were watched from the
-        block onward; the rest count as covered but are left out of the timings rather than given
-        an invented one.
+        ${exact
+          ? html`Latency is measured from the ZMQ block arrival to the ZMQ CLSIG arrival on the
+              same host clock. <strong>${num(d.eventLatencyMeasured)}</strong> locks have exact timing;
+              <strong>${num(d.sourceCounts.poll)}</strong> were recovered by polling. RPC reconciliation
+              runs every <span class="mono">${d.reconciliationIntervalSec}s</span>.`
+          : html`ZMQ event timing is not available yet. The displayed latency is a polling estimate
+              with <span class="mono">${d.resolutionSec}s</span> resolution. Covered-but-unwatched locks
+              are excluded rather than given an invented latency.`}
       </div>
     `;
   }
@@ -143,8 +150,8 @@ export class DdPageChainLocks extends LitElement {
           ${pts.map((p, i) =>
             svg`<rect
               x=${(i * w).toFixed(2)} y="10" width=${Math.max(1, w - 0.6).toFixed(2)} height="34"
-              fill=${p.locked ? (p.latencySec === null ? 'var(--accent-dim)' : 'var(--accent)') : 'var(--crit)'}
-            ><title>${p.height}${p.locked ? (p.latencySec === null ? ' · locked (untimed)' : ` · ${p.latencySec}s`) : ' · no lock'}</title></rect>`
+              fill=${p.locked ? (p.latencyMs === null ? 'var(--accent-dim)' : 'var(--accent)') : 'var(--crit)'}
+            ><title>${p.height}${p.locked ? (p.latencyMs === null ? ` · locked (${p.source ?? 'untimed'})` : ` · ${p.latencyMs}ms · ZMQ`) : ' · no lock'}</title></rect>`
           )}
         </svg>
         <div class="legend">

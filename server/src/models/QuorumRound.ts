@@ -72,6 +72,12 @@ export interface QuorumRoundDocument extends Document {
   resolvedAt: Date | null;
   /** Last observation, not an event time. */
   detectedAt: Date;
+  /**
+   * True once every detail available for the final outcome was captured.
+   * A missing field on an older document is treated as incomplete so one
+   * deployment pass can repair it, after which it becomes immutable.
+   */
+  detailsComplete: boolean;
 }
 
 const memberSchema = new Schema<RoundMember>(
@@ -118,6 +124,7 @@ const quorumRoundSchema = new Schema<QuorumRoundDocument>(
     firstSeenAt: { type: Date, default: () => new Date() },
     resolvedAt: { type: Date, default: null, index: true },
     detectedAt: { type: Date, default: () => new Date() },
+    detailsComplete: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -68,7 +68,7 @@ export class MnListDiffService {
   private async walk(): Promise<void> {
     // Never run past the indexer: an event whose height is not indexed yet
     // would point at a block the API cannot show.
-    const blocks = await SyncState.findOne({ key: 'blocks' }).lean();
+    const blocks = await SyncState.findOne({ key: 'blocks' }).select('lastSyncedHeight').lean();
     const target = blocks?.lastSyncedHeight ?? -1;
     if (target < 1) return;
 

@@ -3,6 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { metricsService } from './metrics.service.js';
 
 /**
  * Per-method cache TTL in milliseconds. Methods absent from this table are
@@ -88,6 +89,8 @@ export class RpcService {
 
   private async doCall<T>(method: string, params: unknown[]): Promise<T> {
     const id = ++this.requestId;
+    const startedAt = performance.now();
+    let failed = true;
     try {
       const response = await this.client.post('', { jsonrpc: '1.0', id, method, params });
       const data = response.data;
@@ -99,6 +102,7 @@ export class RpcService {
       if (!data || !('result' in data)) {
         throw new Error(`RPC ${method}: response missing 'result'`);
       }
+      failed = false;
       return data.result as T;
     } catch (error: unknown) {
       if (error instanceof Error && error.message.startsWith(`RPC ${method}:`)) throw error;
@@ -117,6 +121,8 @@ export class RpcService {
 
       logger.error(`RPC ${method} failed: ${sanitised}`);
       throw new Error(`RPC ${method}: ${sanitised}`);
+    } finally {
+      metricsService.observeRpc(method, performance.now() - startedAt, failed);
     }
   }
 
@@ -142,6 +148,18 @@ export class RpcService {
    */
   getBlock(hash: string): Promise<RpcBlock> {
     return this.call<RpcBlock>('getblock', [hash, 1]);
+  }
+
+  /**
+   * A block with every transaction expanded, in one call.
+   *
+   * Verbosity 2 used to abort on every proof-of-stake block -- a coinstake
+   * mints its reward, so inputs minus outputs is negative and `MoneyRange(fee)`
+   * rejected it -- which is why indexing fetched each transaction separately.
+   * Upstream #55 fixed that, so one call now replaces one per transaction.
+   */
+  getBlockVerbose(hash: string): Promise<RpcBlockVerbose> {
+    return this.call<RpcBlockVerbose>('getblock', [hash, 2]);
   }
 
   getRawTransaction(txid: string): Promise<RpcTransaction> {
@@ -233,6 +251,11 @@ export interface RpcMasternodePayment {
   blockhash: string;
   amount: number;
   masternodes?: Array<{ proTxHash: string; amount: number }>;
+}
+
+/** Same as RpcBlock, but `tx` carries whole transactions rather than txids. */
+export interface RpcBlockVerbose extends Omit<RpcBlock, 'tx'> {
+  tx: RpcTransaction[];
 }
 
 export interface RpcBlockchainInfo {

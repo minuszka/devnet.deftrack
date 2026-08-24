@@ -1,7 +1,12 @@
 import mongoose from 'mongoose';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { rpc, type RpcBlock, type RpcTransaction } from './rpc.service.js';
+import {
+  rpc,
+  type RpcBlock,
+  type RpcBlockVerbose,
+  type RpcTransaction,
+} from './rpc.service.js';
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { QuorumRound } from '../models/QuorumRound.js';
@@ -9,6 +14,10 @@ import { quorumReorgReset } from '../domain/reorg.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { DIFF_CURSOR_KEY, mnListDiffService } from './mnListDiff.service.js';
 import { SyncState } from '../models/SyncState.js';
+import { chainLockService } from './chainLock.service.js';
+import { mapConcurrent } from '../utils/concurrency.js';
+import { metricsService } from './metrics.service.js';
+import { payeeRetryDelayMs } from '../domain/collectorPolicy.js';
 
 const SYNC_KEY = 'blocks';
 
@@ -53,13 +62,21 @@ function looksLikeCoinstake(tx: RpcTransaction, indexInBlock: number): boolean {
  * on this devnet shares one payout address, so the address in the block cannot
  * distinguish them.
  */
-async function payeeOf(blockhash: string): Promise<string | null> {
+type PayeeLookup =
+  | { ok: true; paidProTxHash: string | null }
+  | { ok: false };
+
+async function lookupPayee(blockhash: string): Promise<PayeeLookup> {
   try {
     const payments = await rpc.masternodePayments(blockhash);
-    return payments[0]?.masternodes?.[0]?.proTxHash ?? null;
+    return { ok: true, paidProTxHash: payments[0]?.masternodes?.[0]?.proTxHash ?? null };
   } catch {
-    return null;
+    return { ok: false };
   }
+}
+
+function payeeRetryAt(attempt: number, nowMs = Date.now()): Date {
+  return new Date(nowMs + payeeRetryDelayMs(attempt));
 }
 
 export class SyncService {
@@ -88,22 +105,63 @@ export class SyncService {
    * tip, and idempotent: it only ever looks at blocks still missing a value.
    */
   private async backfillPayees(limit = 300): Promise<void> {
-    const pending = await Block.find({ paidProTxHash: null, height: { $gt: 0 } })
+    const now = new Date();
+    const pending = await Block.find({
+      paidProTxHash: null,
+      payeeCheckedAt: null,
+      height: { $gt: 0 },
+      $or: [{ payeeRetryAt: null }, { payeeRetryAt: { $lte: now } }],
+    })
       .sort({ height: -1 })
       .limit(limit)
-      .select('hash height')
+      .select('hash height payeeCheckAttempts')
       .lean();
     if (pending.length === 0) return;
 
     const ops = [];
-    for (const b of pending) {
-      const paid = await payeeOf(b.hash);
-      if (paid) ops.push({ updateOne: { filter: { hash: b.hash }, update: { $set: { paidProTxHash: paid } } } });
+    const results = await mapConcurrent(
+      pending,
+      Math.min(4, config.sync.txConcurrency),
+      async (block) => ({ block, lookup: await lookupPayee(block.hash) })
+    );
+    let found = 0;
+    let none = 0;
+    let failed = 0;
+
+    for (const { block, lookup } of results) {
+      if (lookup.ok) {
+        if (lookup.paidProTxHash) found++;
+        else none++;
+        ops.push({
+          updateOne: {
+            filter: { hash: block.hash, payeeCheckedAt: null },
+            update: {
+              $set: {
+                paidProTxHash: lookup.paidProTxHash,
+                payeeCheckedAt: now,
+                payeeRetryAt: null,
+                payeeCheckAttempts: 0,
+              },
+            },
+          },
+        });
+      } else {
+        failed++;
+        const attempt = (block.payeeCheckAttempts ?? 0) + 1;
+        ops.push({
+          updateOne: {
+            filter: { hash: block.hash, payeeCheckedAt: null },
+            update: {
+              $set: { payeeRetryAt: payeeRetryAt(attempt) },
+              $inc: { payeeCheckAttempts: 1 },
+            },
+          },
+        });
+      }
     }
-    if (ops.length > 0) {
-      await Block.bulkWrite(ops, { ordered: false });
-      logger.info(`Backfilled payee for ${ops.length} block(s); ${pending.length - ops.length} paid nobody`);
-    }
+
+    await Block.bulkWrite(ops, { ordered: false });
+    logger.info(`Payee backfill checked ${pending.length} block(s): ${found} found, ${none} none, ${failed} retry`);
   }
 
   /** One pass. Overlapping timer ticks are dropped rather than queued. */
@@ -111,8 +169,8 @@ export class SyncService {
     if (this.running) return;
     this.running = true;
     try {
-      await this.syncOnce();
-      await this.backfillPayees();
+      const caughtUp = await this.syncOnce();
+      if (caughtUp) await this.backfillPayees();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Block sync failed: ${message}`);
@@ -122,7 +180,7 @@ export class SyncService {
     }
   }
 
-  private async syncOnce(): Promise<void> {
+  private async syncOnce(): Promise<boolean> {
     const state =
       (await SyncState.findOne({ key: SYNC_KEY })) ??
       (await SyncState.create({ key: SYNC_KEY }));
@@ -137,7 +195,8 @@ export class SyncService {
 
     if (from > tip) {
       await SyncState.updateOne({ key: SYNC_KEY }, { $set: { heartbeatAt: new Date(), error: null } });
-      return;
+      metricsService.setSyncPosition(tip, state.lastSyncedHeight);
+      return true;
     }
 
     const to = Math.min(tip, from + config.sync.batchSize - 1);
@@ -156,10 +215,13 @@ export class SyncService {
 
     await this.saveProgress(to, lastHash);
 
+    const durationMs = Date.now() - startedAt;
+    metricsService.observeSync(to - from + 1, durationMs, tip, to);
     logger.info(
-      `Indexed blocks ${from}..${to} of ${tip} in ${Date.now() - startedAt} ms` +
+      `Indexed blocks ${from}..${to} of ${tip} in ${durationMs} ms` +
         (to < tip ? ` (${tip - to} behind)` : '')
     );
+    return to >= tip;
   }
 
   private async saveProgress(height: number, hash: string): Promise<void> {
@@ -234,19 +296,30 @@ export class SyncService {
 
   private async indexBlock(height: number): Promise<string> {
     const hash = await rpc.getBlockHash(height);
-    const block: RpcBlock = await rpc.getBlock(hash);
-    const paidProTxHash = await payeeOf(hash);
+
+    // The genesis coinbase is not in the transaction index and the node refuses
+    // to serve it ("not considered an ordinary transaction"), so genesis is
+    // fetched without its transactions. The block itself is still recorded;
+    // only its single unspendable coinbase is absent.
+    //
+    // Everything else comes back whole in one call. Verbosity 2 used to abort
+    // on every proof-of-stake block -- a coinstake mints its reward, so inputs
+    // minus outputs is negative and MoneyRange(fee) rejected it -- which is why
+    // this used to fetch each transaction separately. Upstream #55 fixed that,
+    // and one call per block now replaces one per transaction.
+    const [block, payeeLookup]: [RpcBlock | RpcBlockVerbose, PayeeLookup] = await Promise.all([
+      height === 0 ? rpc.getBlock(hash) : rpc.getBlockVerbose(hash),
+      lookupPayee(hash),
+    ]);
 
     let blockTotalSat = 0n;
     const txOps = [];
 
-    // The genesis coinbase is not in the transaction index and the node refuses
-    // to serve it ("not considered an ordinary transaction"). The block itself
-    // is still recorded; only its single unspendable coinbase is absent.
-    const txids = block.height === 0 ? [] : block.tx;
+    const transactions: RpcTransaction[] =
+      height === 0 ? [] : (block as RpcBlockVerbose).tx;
+    const txids = transactions.map((tx) => tx.txid);
 
-    for (const [index, txid] of txids.entries()) {
-      const tx = await rpc.getRawTransaction(txid);
+    for (const [index, tx] of transactions.entries()) {
       const valueOutSat = sumOutputsSat(tx);
       blockTotalSat += BigInt(valueOutSat);
 
@@ -263,7 +336,9 @@ export class SyncService {
               size: tx.size,
               isCoinbase: index === 0,
               isCoinstake: looksLikeCoinstake(tx, index),
-              hasChainLock: tx.chainlock === true,
+              // Expanded transactions carry no chainlock flag of their own,
+              // and a transaction in a locked block is locked.
+              hasChainLock: block.chainlock === true,
               vin: tx.vin.map((vin) => ({
                 txid: vin.txid ?? null,
                 vout: vin.vout ?? null,
@@ -312,11 +387,19 @@ export class SyncService {
           cbTxHeight: block.cbTx?.height ?? null,
           merkleRootMNList: block.cbTx?.merkleRootMNList ?? null,
           merkleRootQuorums: block.cbTx?.merkleRootQuorums ?? null,
-          txids: block.tx,
+          txids,
           totalOutSat: dec(blockTotalSat.toString()),
-          paidProTxHash,
+          ...(payeeLookup.ok
+            ? {
+                paidProTxHash: payeeLookup.paidProTxHash,
+                payeeCheckedAt: new Date(),
+                payeeCheckAttempts: 0,
+                payeeRetryAt: null,
+              }
+            : { payeeRetryAt: payeeRetryAt(1) }),
         },
         $setOnInsert: { hash: block.hash },
+        ...(payeeLookup.ok ? {} : { $inc: { payeeCheckAttempts: 1 } }),
       },
       { upsert: true }
     );
@@ -331,6 +414,10 @@ export class SyncService {
         { $set: { nextblockhash: block.hash } }
       );
     }
+
+    // hashblock/hashchainlock usually reaches us before this Mongo row exists.
+    // Wake the derivation now instead of polling the observation collection.
+    chainLockService.notifyBlockIndexed();
 
     return block.hash;
   }

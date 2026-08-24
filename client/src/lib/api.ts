@@ -67,9 +67,21 @@ export interface ChainLockReport {
   gaps: Array<{ from: number; to: number; blocks: number }>;
   latencyMeasured: number;
   latencySec: { p50: number | null; p90: number | null; max: number | null };
-  /** Poll interval of the watcher; the latency figures are no finer than this. */
+  /** Same-host ZMQ block-arrival -> CLSIG-arrival measurements. */
+  eventLatencyMeasured: number;
+  eventLatencyMs: { p50: number | null; p90: number | null; max: number | null };
+  sourceCounts: { zmq: number; poll: number; unknown: number };
+  /** Fast polling interval used only when ZMQ is disabled. */
   resolutionSec: number;
-  points: Array<{ height: number; time: number; locked: boolean; latencySec: number | null }>;
+  reconciliationIntervalSec: number;
+  points: Array<{
+    height: number;
+    time: number;
+    locked: boolean;
+    latencySec: number | null;
+    latencyMs: number | null;
+    source: 'zmq' | 'poll' | null;
+  }>;
 }
 
 export interface HealthSnapshot {

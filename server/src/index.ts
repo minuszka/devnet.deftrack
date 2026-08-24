@@ -28,6 +28,7 @@ import { MasternodeState } from './models/MasternodeState.js';
 import v1Routes from './routes/v1/index.js';
 import { sendError } from './utils/http.js';
 import { evaluateReadiness } from './domain/readiness.js';
+import { metricsService } from './services/metrics.service.js';
 
 /** Blocks looked at when counting who is actually producing them. */
 const STAKER_WINDOW = 200;
@@ -140,6 +141,7 @@ app.use('/api', (_req, res) => sendError(res, 404, 'not found'));
 
 async function main(): Promise<void> {
   await connectDatabase();
+  metricsService.start();
 
   const info = await rpc.getBlockchainInfo();
   logger.info(`Node reachable: chain=${info.chain} tip=${info.blocks}`);
@@ -166,6 +168,7 @@ async function main(): Promise<void> {
     mnListDiffService.stop();
     chainLockService.stop();
     await zmqService.stop();
+    metricsService.stop();
     server.close();
     await disconnectDatabase();
     process.exit(0);

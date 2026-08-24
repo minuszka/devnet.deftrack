@@ -90,6 +90,9 @@ const transactionSchema = new Schema<TransactionDocument>(
 );
 
 transactionSchema.index({ height: -1, txid: 1 });
+// Measured with executionStats: the paged transaction view otherwise did a
+// COLLSCAN plus in-memory sort. _id is its stable same-height tiebreaker.
+transactionSchema.index({ height: -1, _id: -1 });
 transactionSchema.index({ 'vout.address': 1, height: -1 });
 // Counting distinct block producers scans coinstakes by script.
 transactionSchema.index({ isCoinstake: 1, height: -1 });

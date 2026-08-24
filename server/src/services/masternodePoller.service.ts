@@ -8,6 +8,7 @@ import { MasternodeSnapshot } from '../models/MasternodeSnapshot.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
 import { OperatorIndex, hostOf } from '../domain/operatorIndex.js';
 import { findRemoved } from '../domain/masternodeDiff.js';
+import { shouldCollectMasternodes } from '../domain/collectorPolicy.js';
 
 interface ProTxState {
   service?: string;
@@ -30,7 +31,7 @@ interface ProTxEntry {
   state?: ProTxState;
 }
 
-/** A snapshot is written at least this often even when nothing changes. */
+/** Re-read the full list and write a snapshot at least this often. */
 const HEARTBEAT_MS = 5 * 60_000;
 
 export class MasternodePollerService {
@@ -38,11 +39,16 @@ export class MasternodePollerService {
   private timer: NodeJS.Timeout | null = null;
   private lastSnapshotAt = 0;
   private lastCounts = '';
+  private lastCollectedHeight: number | null = null;
+  private lastCollectedAt = 0;
 
   start(): void {
     void this.tick();
     this.timer = setInterval(() => void this.tick(), config.masternode.intervalMs);
-    logger.info(`Masternode poller started (every ${config.masternode.intervalMs} ms)`);
+    logger.info(
+      `Masternode poller started (height check every ${config.masternode.intervalMs} ms, ` +
+        `full heartbeat every ${HEARTBEAT_MS} ms)`
+    );
   }
 
   stop(): void {
@@ -65,14 +71,32 @@ export class MasternodePollerService {
   }
 
   async collect(): Promise<void> {
-    const [height, list, operators] = await Promise.all([
-      rpc.getBlockCount(),
+    // PoSe state is committed by blocks. Avoid the expensive protx + Mongo
+    // scans while the chain is at the same height; the heartbeat still
+    // catches operator metadata changes and validates the complete state.
+    const height = await rpc.getBlockCount();
+    const nowMs = Date.now();
+    if (!shouldCollectMasternodes({
+      height,
+      lastHeight: this.lastCollectedHeight,
+      nowMs,
+      lastCollectedAtMs: this.lastCollectedAt,
+      heartbeatMs: HEARTBEAT_MS,
+    })) {
+      return;
+    }
+
+    const [list, operators] = await Promise.all([
       rpc.call<ProTxEntry[]>('protx', ['list', 'registered', 1]),
       this.operatorIndex(),
     ]);
 
     const previous = new Map(
-      (await MasternodeState.find().lean()).map((s) => [s.proTxHash, s])
+      (
+        await MasternodeState.find()
+          .select('proTxHash active banned poSePenalty service operatorLabel hostIp lastSeenAt')
+          .lean()
+      ).map((s) => [s.proTxHash, s])
     );
 
     const stateOps: Parameters<typeof MasternodeState.bulkWrite>[0] = [];
@@ -257,6 +281,11 @@ export class MasternodePollerService {
           `${penalised} penalised (max ${penaltyMax}); ${eventOps.length} transition(s)`
       );
     }
+
+    // Advance only after every write succeeded; a failed pass must be retried
+    // on the next cheap height check rather than suppressed for five minutes.
+    this.lastCollectedHeight = height;
+    this.lastCollectedAt = Date.now();
   }
 
   private async operatorIndex(): Promise<OperatorIndex> {

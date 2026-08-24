@@ -5,6 +5,8 @@ import { NodeObservation } from '../models/NodeObservation.js';
 import { ObservationGap } from '../models/ObservationGap.js';
 import { ZMQ_TOPICS, detectGap, parseMessage, type ZmqTopic } from '../domain/zmqTopics.js';
 
+export type ZmqObservationListener = (topic: ZmqTopic) => void | Promise<void>;
+
 /**
  * Event-time observation from the node's ZMQ socket.
  *
@@ -24,6 +26,7 @@ export class ZmqService {
   private lastSeq = new Map<ZmqTopic, number>();
   private received = 0;
   private missed = 0;
+  private readonly observationListeners = new Set<ZmqObservationListener>();
 
   get enabled(): boolean {
     return config.zmq.endpoint.length > 0;
@@ -32,6 +35,16 @@ export class ZmqService {
   /** What the data-quality view needs: how much arrived, how much was lost. */
   stats(): { enabled: boolean; connected: boolean; received: number; missed: number } {
     return { enabled: this.enabled, connected: this.sock !== null, received: this.received, missed: this.missed };
+  }
+
+  /**
+   * Signals consumers after an observation is durably stored. The listener is
+   * deliberately fire-and-forget: a slow Mongo derivation must never hold up
+   * the ZMQ receive loop and cause the very gaps we are trying to measure.
+   */
+  onObservation(listener: ZmqObservationListener): () => void {
+    this.observationListeners.add(listener);
+    return () => this.observationListeners.delete(listener);
   }
 
   start(): void {
@@ -110,6 +123,14 @@ export class ZmqService {
       },
       { upsert: true }
     );
+
+    for (const listener of this.observationListeners) {
+      Promise.resolve().then(() => listener(msg.topic)).catch((error: unknown) => {
+        logger.error(
+          `ZMQ observation listener failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
+    }
   }
 }
 

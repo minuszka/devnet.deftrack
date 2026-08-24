@@ -15,7 +15,35 @@ const listQuery = z.object({
 });
 type ListQuery = z.infer<typeof listQuery>;
 
-function view(r: ExperimentRunDocument) {
+type ExperimentViewSource = Pick<
+  ExperimentRunDocument,
+  | 'runKey'
+  | 'title'
+  | 'hypothesis'
+  | 'expected'
+  | 'status'
+  | 'startedAt'
+  | 'endedAt'
+  | 'startHeight'
+  | 'endHeight'
+  | 'nodeVersion'
+  | 'nodeGitSha'
+  | 'llmqName'
+  | 'llmqSize'
+  | 'llmqMinSize'
+  | 'llmqThreshold'
+  | 'dkgInterval'
+  | 'participants'
+  | 'intervention'
+  | 'baselineRunKey'
+  | 'outcome'
+  | 'notes'
+>;
+
+const EXPERIMENT_VIEW_FIELDS =
+  'runKey title hypothesis expected status startedAt endedAt startHeight endHeight nodeVersion nodeGitSha llmqName llmqSize llmqMinSize llmqThreshold dkgInterval participants intervention baselineRunKey outcome notes';
+
+function view(r: ExperimentViewSource) {
   return {
     runKey: r.runKey,
     title: r.title,
@@ -54,7 +82,12 @@ router.get(
     if (q.status) filter.status = q.status;
 
     const [runs, total] = await Promise.all([
-      ExperimentRun.find(filter).sort({ startedAt: -1 }).skip(q.offset).limit(q.limit),
+      ExperimentRun.find(filter)
+        .sort({ startedAt: -1 })
+        .skip(q.offset)
+        .limit(q.limit)
+        .select(EXPERIMENT_VIEW_FIELDS)
+        .lean(),
       ExperimentRun.countDocuments(filter),
     ]);
 
@@ -80,7 +113,7 @@ router.get(
       return;
     }
 
-    const run = await ExperimentRun.findOne({ runKey });
+    const run = await ExperimentRun.findOne({ runKey }).select(EXPERIMENT_VIEW_FIELDS).lean();
     if (!run) {
       sendError(res, 404, 'experiment not found');
       return;
@@ -91,7 +124,9 @@ router.get(
 
     let comparison = null;
     if (run.baselineRunKey && live) {
-      const baseline = await ExperimentRun.findOne({ runKey: run.baselineRunKey });
+      const baseline = await ExperimentRun.findOne({ runKey: run.baselineRunKey })
+        .select('status outcome startHeight endHeight llmqName')
+        .lean();
       const baselineOutcome =
         baseline && (baseline.status === 'closed'
           ? baseline.outcome

@@ -32,7 +32,34 @@ const timelineQuery = z.object({
 });
 type TimelineQuery = z.infer<typeof timelineQuery>;
 
-function baseView(r: QuorumRoundDocument) {
+type RoundBaseSource = Pick<
+  QuorumRoundDocument,
+  | 'roundKey'
+  | 'llmqName'
+  | 'llmqType'
+  | 'quorumIndex'
+  | 'expectedHeight'
+  | 'status'
+  | 'formed'
+  | 'quorumHash'
+  | 'minedBlockHash'
+  | 'size'
+  | 'minSize'
+  | 'threshold'
+  | 'dkgInterval'
+  | 'effectiveSize'
+  | 'numValidMembers'
+  | 'healthRatio'
+  | 'punishedCount'
+  | 'maxPossibleBan'
+  | 'consecutiveFailures'
+  | 'detectedAt'
+>;
+
+const ROUND_BASE_FIELDS =
+  'roundKey llmqName llmqType quorumIndex expectedHeight status formed quorumHash minedBlockHash size minSize threshold dkgInterval effectiveSize numValidMembers healthRatio punishedCount maxPossibleBan consecutiveFailures detectedAt';
+
+function baseView(r: RoundBaseSource) {
   return {
     roundKey: r.roundKey,
     llmqName: r.llmqName,
@@ -58,7 +85,9 @@ function baseView(r: QuorumRoundDocument) {
 }
 
 /** Who the invalid members belonged to -- the question the table has to answer. */
-function failuresByOperator(r: QuorumRoundDocument): Array<{ operatorLabel: string | null; count: number }> {
+function failuresByOperator(
+  r: Pick<QuorumRoundDocument, 'members'>
+): Array<{ operatorLabel: string | null; count: number }> {
   const counts = new Map<string | null, number>();
   for (const m of r.members) {
     if (m.valid) continue;
@@ -83,7 +112,12 @@ router.get(
     if (q.formed !== undefined) filter.formed = q.formed;
 
     const [rounds, total] = await Promise.all([
-      QuorumRound.find(filter).sort({ expectedHeight: -1 }).skip(q.offset).limit(q.limit),
+      QuorumRound.find(filter)
+        .sort({ expectedHeight: -1 })
+        .skip(q.offset)
+        .limit(q.limit)
+        .select(`${ROUND_BASE_FIELDS} invalidMembers members`)
+        .lean(),
       QuorumRound.countDocuments(filter),
     ]);
 
@@ -116,7 +150,12 @@ router.get(
     const filter: Record<string, unknown> = { resolvedAt: { $gte: since } };
     if (q.llmqName) filter.llmqName = q.llmqName;
 
-    const rounds = await QuorumRound.find(filter).sort({ expectedHeight: 1 });
+    const rounds = await QuorumRound.find(filter)
+      .sort({ expectedHeight: 1 })
+      .select(
+        'llmqName expectedHeight resolvedAt detectedAt status healthRatio numValidMembers effectiveSize punishedCount'
+      )
+      .lean();
 
     const points: HealthTimelinePoint[] = rounds.map((r) => ({
       expectedHeight: r.expectedHeight,
@@ -186,8 +225,9 @@ router.get(
       return;
     }
 
-    const round =
-      (await QuorumRound.findOne({ roundKey: id })) ?? (await QuorumRound.findOne({ quorumHash: id }));
+    const round = await QuorumRound.findOne({ $or: [{ roundKey: id }, { quorumHash: id }] })
+      .select(`${ROUND_BASE_FIELDS} invalidMembers members`)
+      .lean();
 
     if (!round) {
       sendError(res, 404, 'round not found');

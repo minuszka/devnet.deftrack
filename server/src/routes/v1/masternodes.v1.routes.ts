@@ -59,6 +59,9 @@ router.get(
         .sort({ banned: -1, poSePenalty: -1, registeredHeight: 1 })
         .skip(q.offset)
         .limit(q.limit)
+        .select(
+          'proTxHash service hostIp operatorLabel banned poSePenalty poSeBanHeight poSeRevivedHeight registeredHeight lastPaidHeight payoutAddress lastSeenAt'
+        )
         .lean(),
       MasternodeState.countDocuments(filter),
     ]);
@@ -96,7 +99,10 @@ router.get(
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<z.infer<typeof hoursQuery>>(res);
     const since = new Date(Date.now() - q.hours * 3600_000);
-    const points = await MasternodeSnapshot.find({ at: { $gte: since } }).sort({ at: 1 }).lean();
+    const points = await MasternodeSnapshot.find({ at: { $gte: since } })
+      .sort({ at: 1 })
+      .select('at height total enabled banned penalised penaltyMax effectiveQuorumSize maxPossibleBan')
+      .lean();
 
     sendData(res, {
       hours: q.hours,
@@ -126,7 +132,14 @@ router.get(
     if (q.type) filter.type = q.type;
 
     const [rows, total] = await Promise.all([
-      MasternodeEvent.find(filter).sort({ detectedAt: -1, _id: -1 }).skip(q.offset).limit(q.limit).lean(),
+      MasternodeEvent.find(filter)
+        .sort({ detectedAt: -1, _id: -1 })
+        .skip(q.offset)
+        .limit(q.limit)
+        .select(
+          'eventKey proTxHash type height penaltyBefore penaltyAfter serviceBefore serviceAfter hostIp operatorLabel detectedAt'
+        )
+        .lean(),
       MasternodeEvent.countDocuments(filter),
     ]);
 
@@ -172,8 +185,14 @@ router.get(
     const since = new Date(Date.now() - q.hours * 3600_000);
 
     const [bans, snapshots] = await Promise.all([
-      MasternodeEvent.find({ type: 'banned', detectedAt: { $gte: since } }).sort({ detectedAt: 1 }).lean(),
-      MasternodeSnapshot.find({ at: { $gte: since } }).sort({ at: 1 }).lean(),
+      MasternodeEvent.find({ type: 'banned', detectedAt: { $gte: since } })
+        .sort({ detectedAt: 1 })
+        .select('detectedAt height hostIp operatorLabel')
+        .lean(),
+      MasternodeSnapshot.find({ at: { $gte: since } })
+        .sort({ at: 1 })
+        .select('at maxPossibleBan')
+        .lean(),
     ]);
 
     const gapMs = q.gapMinutes * 60_000;

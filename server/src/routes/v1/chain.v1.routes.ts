@@ -62,7 +62,12 @@ router.get(
     const q = parsedQuery<z.infer<typeof pageQuery>>(res);
 
     const [blocks, total] = await Promise.all([
-      Block.find().sort({ height: -1 }).skip(q.offset).limit(q.limit).lean(),
+      Block.find()
+        .sort({ height: -1 })
+        .skip(q.offset)
+        .limit(q.limit)
+        .select('height hash time nTx size isProofOfStake hasChainLock totalOutSat txids')
+        .lean(),
       Block.estimatedDocumentCount(),
     ]);
 
@@ -70,7 +75,7 @@ router.get(
     // fetched in a single lookup.
     const coinbaseIds = blocks.map((b) => b.txids[0]).filter((x): x is string => Boolean(x));
     const coinbases = new Map<string, CoinbaseLike>(
-      (await Transaction.find({ txid: { $in: coinbaseIds } }).lean()).map((t) => [t.txid, t])
+      (await Transaction.find({ txid: { $in: coinbaseIds } }).select('txid vout').lean()).map((t) => [t.txid, t])
     );
 
     const items = blocks.map((b) => {
@@ -102,15 +107,25 @@ router.get(
 
     const block =
       asHeight !== null
-        ? await Block.findOne({ height: asHeight }).lean()
-        : await Block.findOne({ hash: id }).lean();
+        ? await Block.findOne({ height: asHeight })
+            .select(
+              'height hash previousblockhash nextblockhash time mediantime size version merkleroot bits nonce difficulty chainwork nTx isProofOfStake hasChainLock totalOutSat paidProTxHash txids'
+            )
+            .lean()
+        : await Block.findOne({ hash: id })
+            .select(
+              'height hash previousblockhash nextblockhash time mediantime size version merkleroot bits nonce difficulty chainwork nTx isProofOfStake hasChainLock totalOutSat paidProTxHash txids'
+            )
+            .lean();
 
     if (!block) {
       sendError(res, 404, 'block not found');
       return;
     }
 
-    const txs = await Transaction.find({ blockhash: block.hash }).lean();
+    const txs = await Transaction.find({ blockhash: block.hash })
+      .select('txid isCoinbase isCoinstake size valueOutSat vout vin')
+      .lean();
     const byId = new Map(txs.map((t) => [t.txid, t]));
     const ordered = block.txids
       .map((id) => byId.get(id))
@@ -186,7 +201,7 @@ router.get(
     const recent = await Block.find({ isProofOfStake: true })
       .sort({ height: -1 })
       .limit(q.blocks)
-      .select('height time hasChainLock chainLockedAt chainLockLatencySec')
+      .select('height time hasChainLock chainLockedAt chainLockLatencySec chainLockLatencyMs chainLockSource')
       .lean();
 
     const eligible = first ? recent.filter((b) => b.height >= first.height) : [];
@@ -212,6 +227,24 @@ router.get(
     const pct = (p: number): number | null =>
       measured.length === 0 ? null : measured[Math.min(measured.length - 1, Math.floor(measured.length * p))]!;
 
+    // Precise measurement: block arrival -> CLSIG arrival, both over ZMQ and
+    // on this process's clock. Keep it separate from block-time -> poll-time;
+    // averaging those two different quantities would be misleading.
+    const eventMeasured = locked
+      .filter((b) => b.chainLockSource === 'zmq')
+      .map((b) => b.chainLockLatencyMs)
+      .filter((v): v is number => typeof v === 'number')
+      .sort((a, b) => a - b);
+    const eventPct = (p: number): number | null =>
+      eventMeasured.length === 0
+        ? null
+        : eventMeasured[Math.min(eventMeasured.length - 1, Math.floor(eventMeasured.length * p))]!;
+    const sourceCounts = {
+      zmq: locked.filter((b) => b.chainLockSource === 'zmq').length,
+      poll: locked.filter((b) => b.chainLockSource === 'poll').length,
+      unknown: locked.filter((b) => b.chainLockSource !== 'zmq' && b.chainLockSource !== 'poll').length,
+    };
+
     sendData(res, {
       firstLockedHeight: first?.height ?? null,
       blocksConsidered: recent.length,
@@ -224,7 +257,11 @@ router.get(
       // measurable latency; they are excluded from the timings, not guessed at.
       latencyMeasured: measured.length,
       latencySec: { p50: pct(0.5), p90: pct(0.9), max: measured.at(-1) ?? null },
+      eventLatencyMeasured: eventMeasured.length,
+      eventLatencyMs: { p50: eventPct(0.5), p90: eventPct(0.9), max: eventMeasured.at(-1) ?? null },
+      sourceCounts,
       resolutionSec: Math.round(config.chainlock.intervalMs / 1000),
+      reconciliationIntervalSec: Math.round(config.chainlock.reconcileIntervalMs / 1000),
       points: eligible
         .slice(0, 150)
         .map((b) => ({
@@ -232,6 +269,8 @@ router.get(
           time: b.time,
           locked: b.hasChainLock,
           latencySec: b.chainLockLatencySec,
+          latencyMs: b.chainLockLatencyMs ?? null,
+          source: b.chainLockSource ?? null,
         }))
         .reverse(),
     });
@@ -246,7 +285,12 @@ router.get(
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<z.infer<typeof pageQuery>>(res);
     const [txs, total] = await Promise.all([
-      Transaction.find().sort({ height: -1, _id: -1 }).skip(q.offset).limit(q.limit).lean(),
+      Transaction.find()
+        .sort({ height: -1, _id: -1 })
+        .skip(q.offset)
+        .limit(q.limit)
+        .select('txid height time size isCoinbase isCoinstake hasChainLock valueOutSat vout.n vin.txid')
+        .lean(),
       Transaction.estimatedDocumentCount(),
     ]);
 
@@ -279,7 +323,11 @@ router.get(
   withCachePolicy('long'),
   asyncRoute(async (req, res) => {
     const txid = String(req.params.txid ?? '');
-    const tx = await Transaction.findOne({ txid }).lean();
+    const tx = await Transaction.findOne({ txid })
+      .select(
+        'txid blockhash height time version type size isCoinbase isCoinstake hasChainLock valueOutSat vin.txid vin.vout vin.coinbase vout.n vout.valueSat vout.scriptType vout.address'
+      )
+      .lean();
     if (!tx) {
       sendError(res, 404, 'transaction not found');
       return;

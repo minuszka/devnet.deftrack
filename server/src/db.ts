@@ -1,12 +1,25 @@
 import mongoose from 'mongoose';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
+import { metricsService } from './services/metrics.service.js';
 
 // Defense-in-depth: pin the strict modes explicitly so a future upgrade, or a
 // stray `mongoose.set('strict', false)`, cannot silently persist or query
 // unknown fields.
 mongoose.set('strict', true);
 mongoose.set('strictQuery', true);
+
+const MEASURED_COMMANDS = new Set([
+  'find',
+  'aggregate',
+  'count',
+  'distinct',
+  'insert',
+  'update',
+  'delete',
+  'findAndModify',
+  'bulkWrite',
+]);
 
 export async function connectDatabase(): Promise<void> {
   const maxRetries = 5;
@@ -18,6 +31,18 @@ export async function connectDatabase(): Promise<void> {
         maxPoolSize: config.env === 'production' ? 30 : 10,
         minPoolSize: 2,
         socketTimeoutMS: 45_000,
+        monitorCommands: true,
+      });
+      const client = mongoose.connection.getClient();
+      client.on('commandSucceeded', (event) => {
+        if (MEASURED_COMMANDS.has(event.commandName)) {
+          metricsService.observeMongo(event.commandName, event.duration, false);
+        }
+      });
+      client.on('commandFailed', (event) => {
+        if (MEASURED_COMMANDS.has(event.commandName)) {
+          metricsService.observeMongo(event.commandName, event.duration, true);
+        }
       });
       logger.info(`MongoDB connected (${mongoose.connection.db?.databaseName})`);
       break;

@@ -40,13 +40,19 @@ export interface BlockDocument extends Document {
    * each node's most recent payment -- 76 blocks out of two thousand.
    */
   paidProTxHash: string | null;
+  /** Last successful `masternode payments` lookup, including "no payee". */
+  payeeCheckedAt: Date | null;
+  /** Failed lookup count used for exponential retry backoff. */
+  payeeCheckAttempts: number;
+  /** Earliest time a transient lookup failure may be retried. */
+  payeeRetryAt: Date | null;
 
   /**
    * When a ChainLock was first *observed* on this block.
    *
-   * The node exposes no timestamp for when a CLSIG arrived, only whether one
-   * exists now, so this is an observation and carries the poll interval as its
-   * resolution. Recorded rather than inferred, and never revised once set.
+   * With ZMQ this is the local receipt timestamp. With the RPC fallback it is
+   * a coarser sighting timestamp. `chainLockSource` distinguishes the two.
+   * Recorded rather than inferred, and never revised once set.
    */
   chainLockedAt: Date | null;
   /** chainLockedAt - block time, in seconds. Same resolution caveat. */
@@ -99,6 +105,9 @@ const blockSchema = new Schema<BlockDocument>(
     txids: [{ type: String }],
     totalOutSat: { type: Schema.Types.Decimal128, default: '0' },
     paidProTxHash: { type: String, default: null, index: true },
+    payeeCheckedAt: { type: Date, default: null },
+    payeeCheckAttempts: { type: Number, default: 0 },
+    payeeRetryAt: { type: Date, default: null },
     chainLockedAt: { type: Date, default: null },
     chainLockLatencySec: { type: Number, default: null, index: true },
     chainLockSource: { type: String, enum: ['zmq', 'poll', null], default: null },
@@ -110,6 +119,9 @@ const blockSchema = new Schema<BlockDocument>(
 
 // Blocks list: newest first, with a stable tiebreak.
 blockSchema.index({ time: -1, height: -1 });
+// Measured with executionStats: the ChainLock view scanned every pre-PoS
+// height entry and filtered afterwards. Equality + sort serves it directly.
+blockSchema.index({ isProofOfStake: 1, height: -1 });
 
 // No TTL. Chain history is the record the whole project is built to preserve.
 

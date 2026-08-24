@@ -37,7 +37,7 @@ router.get(
 
     const [rounds, operators] = await Promise.all([
       QuorumRound.find(filter).select('members').lean(),
-      DevnetOperator.find().lean(),
+      DevnetOperator.find().select('operatorLabel vpsProvider country proTxHashes').lean(),
     ]);
 
     type Acc = { memberSlots: number; invalidSlots: number; rounds: Set<string> };

@@ -20,6 +20,14 @@ function optionalBool(name: string, fallback: boolean): boolean {
   return raw === '1' || raw.toLowerCase() === 'true';
 }
 
+function optionalInteger(name: string, fallback: number, min: number, max: number): number {
+  const value = optionalNumber(name, fallback);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`Environment variable ${name} must be an integer between ${min} and ${max}: ${value}`);
+  }
+  return value;
+}
+
 /**
  * Nothing here has a default that points anywhere real. A missing variable is
  * a startup error, not a silent fallback to a production host.
@@ -50,6 +58,9 @@ export const config = {
     // How many blocks one pass may ingest. Bounded so a cold start cannot hold
     // the event loop for minutes on end.
     batchSize: optionalNumber('SYNC_BATCH_SIZE', 200),
+    // Enough parallelism to hide RPC latency without flooding the node. The
+    // HTTP agent is capped at 16 sockets, so this can never grow unbounded.
+    txConcurrency: optionalInteger('SYNC_TX_CONCURRENCY', 6, 1, 16),
   },
 
   masternode: {
@@ -65,9 +76,12 @@ export const config = {
   },
 
   chainlock: {
-    // Resolution of the measured latency. A ChainLock lands within seconds of
-    // a block, so a coarse poll would report the poll interval, not the lock.
+    // Fast fallback when ZMQ is disabled. This is a sighting interval, not the
+    // precision of ZMQ event timestamps.
     intervalMs: optionalNumber('CHAINLOCK_POLL_INTERVAL_MS', 10_000),
+    // With ZMQ enabled this is only a safety net for subscriber downtime or a
+    // sequence gap. Event-time processing itself is triggered immediately.
+    reconcileIntervalMs: optionalNumber('CHAINLOCK_RECONCILE_INTERVAL_MS', 5 * 60_000),
   },
 
   quorum: {

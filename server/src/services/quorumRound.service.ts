@@ -6,6 +6,7 @@ import { QuorumRound, type RoundMember, type RoundStatus } from '../models/Quoru
 import { classifyRound, currentRoundHeight, expectedRoundHeights, roundKeyFor } from '../domain/dkgSchedule.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
 import { OperatorIndex, hostOf } from '../domain/operatorIndex.js';
+import { shouldRefreshRound } from '../domain/collectorPolicy.js';
 
 /**
  * `quorum listextended` shape (rpc/quorums.cpp:138-166):
@@ -81,22 +82,34 @@ export class QuorumRoundService {
     const tip = await rpc.getBlockCount();
 
     const observed = await this.observedQuorums();
-    const operators = await this.operatorIndex();
-    const effectiveSize = await this.effectiveSize();
 
     // Rounds still open plus every round the observation window can still
     // speak about. Anything older is already resolved and immutable.
     const windowSpan = p.dkgInterval * p.signingActiveQuorumCount;
     const oldest = Math.max(0, currentRoundHeight(tip, p.dkgInterval) - windowSpan);
 
-    const unresolved = await QuorumRound.find({ llmqName: p.llmqName, status: 'pending' })
-      .select('expectedHeight')
+    const existing = await QuorumRound.find({
+      llmqName: p.llmqName,
+      $or: [{ expectedHeight: { $gte: oldest } }, { status: 'pending' }],
+    })
+      .select('expectedHeight status detailsComplete')
       .lean();
 
-    const heights = new Set<number>(unresolved.map((r) => r.expectedHeight));
-    for (const h of expectedRoundHeights(tip, p.dkgInterval)) {
-      if (h >= oldest) heights.add(h);
+    const byHeight = new Map(existing.map((r) => [r.expectedHeight, r]));
+    const heights = new Set<number>();
+    for (const round of existing) {
+      if (shouldRefreshRound(round)) heights.add(round.expectedHeight);
     }
+    for (const h of expectedRoundHeights(tip, p.dkgInterval)) {
+      // New scheduled rounds must be created. Resolved, complete rounds are
+      // facts about the past and are deliberately never refreshed.
+      if (h >= oldest && shouldRefreshRound(byHeight.get(h))) heights.add(h);
+    }
+
+    const [operators, effectiveSize] =
+      heights.size > 0
+        ? await Promise.all([this.operatorIndex(), this.effectiveSize()])
+        : [new OperatorIndex([]), null];
 
     let formed = 0;
     let failed = 0;
@@ -181,6 +194,7 @@ export class QuorumRoundService {
     let members: RoundMember[] = [];
     let invalidMembers: string[] = [];
     let observedSize: number | null = effectiveSize;
+    let detailsComplete = status === 'failed';
 
     if (entry) {
       const info = await rpc
@@ -195,6 +209,9 @@ export class QuorumRoundService {
       }));
       invalidMembers = members.filter((m) => !m.valid).map((m) => m.proTxHash);
       if (members.length > 0) observedSize = members.length;
+      // A null response is transient and must remain retryable. A successful
+      // response with zero members is still a complete observation.
+      detailsComplete = info !== null;
     }
 
     // A failed DKG mines no commitment, and the node's punishment loop is
@@ -234,6 +251,7 @@ export class QuorumRoundService {
           punishedCount,
           maxPossibleBan: observedSize !== null ? maxPossibleBan(observedSize, p.minSize) : null,
           detectedAt: new Date(),
+          detailsComplete,
         },
       },
       { upsert: true }
