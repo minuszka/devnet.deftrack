@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 import requests
 
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.1.0"
 
 DATADIR = os.environ.get("OBSERVER_DATADIR", "/opt/defcon-devnet/mn11")
 CLI = os.environ.get("OBSERVER_CLI", "/opt/defcon-devnet/bin/defcon-cli")
@@ -121,13 +121,30 @@ def main():
             raise SystemExit(f"{name} is required")
 
     queue = []
-    last_block = None
+
+    # Prime from the node without reporting: whatever the tip is when this
+    # process starts was not *first seen* now, it was seen before this agent
+    # existed. Reporting it produced a 97-second spread across hosts on the
+    # first rollout -- purely an artefact of the agents starting at different
+    # moments, and indistinguishable from a real propagation failure.
+    last_block = cli("getbestblockhash")
     last_chainlock = None
+    primed_lock = cli("getbestchainlock")
+    if primed_lock:
+        try:
+            last_chainlock = json.loads(primed_lock).get("blockhash")
+        except Exception:
+            last_chainlock = None
+
     offset = clock_offset_ms()
     last_clock = time.monotonic()
     last_push = time.monotonic()
 
-    print(f"observer {AGENT_VERSION} on {HOST}: poll {POLL_SECONDS}s, push {PUSH_SECONDS}s", flush=True)
+    print(
+        f"observer {AGENT_VERSION} on {HOST}: poll {POLL_SECONDS}s, push {PUSH_SECONDS}s, "
+        f"primed at {last_block[:12] if last_block else 'unknown'}",
+        flush=True,
+    )
 
     while True:
         loop_started = time.monotonic()
