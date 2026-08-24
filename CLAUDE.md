@@ -340,6 +340,15 @@ paused" from "quorum punished the network" is the whole purpose of this tool.
 - No market/price integrations, no migration hot-wallet tracking, no DNS-seeder
   feed — meaningless on a test chain.
 
+## Deploying
+
+Use `ops/deploy.sh` on the VPS. **Building is not deploying:** `npm run build`
+writes the client to `client/dist`, but nginx serves `/var/www/devnet.deftrack`.
+A deploy that stops after the build leaves the site on whatever bundle was last
+copied there by hand -- which happened for two days, during which every client
+change appeared to have silently failed to take effect. The script rsyncs and
+re-checks which bundle the webroot actually serves.
+
 ## Gotchas
 
 - `.env` with CRLF breaks `set -a; . ./.env` on Linux (`$'\r': command not
