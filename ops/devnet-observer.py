@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 import requests
 
-AGENT_VERSION = "1.1.0"
+AGENT_VERSION = "1.2.0"
 
 DATADIR = os.environ.get("OBSERVER_DATADIR", "/opt/defcon-devnet/mn11")
 CLI = os.environ.get("OBSERVER_CLI", "/opt/defcon-devnet/bin/defcon-cli")
@@ -38,6 +38,9 @@ POLL_SECONDS = float(os.environ.get("OBSERVER_POLL_SECONDS", "0.1"))
 # the only thing here that has to stay on time.
 PUSH_SECONDS = float(os.environ.get("OBSERVER_PUSH_SECONDS", "5"))
 CLOCK_REFRESH_SECONDS = 300
+# Connectivity changes slowly compared with block arrival, and getpeerinfo is
+# the expensive call here, so it runs on its own much slower cadence.
+STATUS_SECONDS = float(os.environ.get("OBSERVER_STATUS_SECONDS", "60"))
 MAX_QUEUE = 2000
 
 
@@ -83,12 +86,55 @@ def clock_offset_ms():
     return None
 
 
+def peer_status():
+    """
+    What this host can see of the network right now.
+
+    A DKG that fails on a host with four peers and succeeds on one with thirty
+    is not the same finding twice; without this the explorer can only say a
+    round failed, never that one machine was isolated when it did.
+    """
+    raw = cli("getpeerinfo")
+    if raw is None:
+        return None
+    try:
+        peers = json.loads(raw)
+    except Exception:
+        return None
+
+    pings = sorted(p["pingtime"] * 1000.0 for p in peers if isinstance(p.get("pingtime"), (int, float)))
+    median_ping = None
+    if pings:
+        mid = len(pings) // 2
+        median_ping = pings[mid] if len(pings) % 2 else (pings[mid - 1] + pings[mid]) / 2
+
+    height = None
+    raw_count = cli("getblockcount")
+    if raw_count:
+        try:
+            height = int(raw_count)
+        except Exception:
+            height = None
+
+    return {
+        "peers": len(peers),
+        "inbound": sum(1 for p in peers if p.get("inbound")),
+        # MNAUTH-verified peers: the masternode mesh, as distinct from ordinary
+        # connections. A quorum member with none of these is isolated from the
+        # very peers a DKG needs.
+        "verifiedMasternodes": sum(1 for p in peers if p.get("verified_proregtx_hash")),
+        "medianPingMs": median_ping,
+        "maxPingWaitMs": max((p.get("pingwait", 0) or 0) * 1000.0 for p in peers) if peers else 0,
+        "height": height,
+    }
+
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def push(queue, offset):
-    if not queue:
+def push(queue, offset, status=None):
+    if not queue and status is None:
         return True
     body = {
         "host": HOST,
@@ -99,6 +145,8 @@ def push(queue, offset):
         "resolutionMs": POLL_SECONDS * 1000.0,
         "observations": queue[:500],
     }
+    if status is not None:
+        body["status"] = status
     try:
         r = requests.post(
             f"{API}/api/v1/peers/observations",
@@ -139,6 +187,8 @@ def main():
     offset = clock_offset_ms()
     last_clock = time.monotonic()
     last_push = time.monotonic()
+    last_status = 0.0
+    pending_status = None
 
     print(
         f"observer {AGENT_VERSION} on {HOST}: poll {POLL_SECONDS}s, push {PUSH_SECONDS}s, "
@@ -189,8 +239,13 @@ def main():
             offset = clock_offset_ms()
             last_clock = time.monotonic()
 
-        if queue and time.monotonic() - last_push >= PUSH_SECONDS:
-            push(queue, offset)
+        if time.monotonic() - last_status >= STATUS_SECONDS:
+            pending_status = peer_status()
+            last_status = time.monotonic()
+
+        if (queue or pending_status) and time.monotonic() - last_push >= PUSH_SECONDS:
+            if push(queue, offset, pending_status):
+                pending_status = None
             last_push = time.monotonic()
 
         elapsed = time.monotonic() - loop_started

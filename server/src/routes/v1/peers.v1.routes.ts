@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { PeerObservation } from '../../models/PeerObservation.js';
+import { HostStatus } from '../../models/HostStatus.js';
 import { propagationSpread, laggards, type HostSighting } from '../../domain/propagation.js';
 import { requireIngestToken } from '../../middleware/requireIngestToken.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
@@ -14,6 +15,17 @@ const ingestSchema = z.object({
   /** The agent's own NTP offset. Recorded, never used to correct a timestamp. */
   clockOffsetMs: z.number().finite().nullable().default(null),
   resolutionMs: z.number().finite().min(0).max(60_000).default(0),
+  /** Connectivity, reported far less often than sightings. */
+  status: z
+    .object({
+      peers: z.number().int().min(0).max(10_000),
+      inbound: z.number().int().min(0).max(10_000).default(0),
+      verifiedMasternodes: z.number().int().min(0).max(10_000).default(0),
+      medianPingMs: z.number().finite().nullable().default(null),
+      maxPingWaitMs: z.number().finite().nullable().default(null),
+      height: z.number().int().min(0).nullable().default(null),
+    })
+    .optional(),
   observations: z
     .array(
       z.object({
@@ -23,8 +35,8 @@ const ingestSchema = z.object({
         receivedAt: z.string().datetime(),
       })
     )
-    .min(1)
-    .max(500),
+    .max(500)
+    .default([]),
 });
 
 /**
@@ -71,8 +83,25 @@ router.post(
       };
     });
 
-    const result = await PeerObservation.bulkWrite(ops, { ordered: false });
-    sendData(res, { accepted: body.observations.length, stored: result.upsertedCount });
+    const stored = ops.length > 0 ? (await PeerObservation.bulkWrite(ops, { ordered: false })).upsertedCount : 0;
+
+    if (body.status) {
+      await HostStatus.updateOne(
+        { host: body.host },
+        {
+          $set: {
+            ...body.status,
+            host: body.host,
+            clockOffsetMs: body.clockOffsetMs,
+            agentVersion: body.agentVersion,
+            reportedAt: ingestedAt,
+          },
+        },
+        { upsert: true }
+      );
+    }
+
+    sendData(res, { accepted: body.observations.length, stored });
   })
 );
 
@@ -123,11 +152,24 @@ router.get(
       .sort((a, b) => (b.height ?? 0) - (a.height ?? 0))
       .slice(0, q.events);
 
+    const statuses = await HostStatus.find().sort({ host: 1 }).lean();
+
     sendData(res, {
       topic: q.topic,
       hostsReporting: expected,
       events,
       laggards: laggards(events),
+      hosts: statuses.map((h) => ({
+        host: h.host,
+        peers: h.peers,
+        inbound: h.inbound,
+        verifiedMasternodes: h.verifiedMasternodes,
+        medianPingMs: h.medianPingMs,
+        height: h.height,
+        clockOffsetMs: h.clockOffsetMs,
+        agentVersion: h.agentVersion,
+        reportedAt: h.reportedAt.toISOString(),
+      })),
     });
   })
 );

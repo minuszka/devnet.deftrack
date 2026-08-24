@@ -90,3 +90,27 @@ describe('finding a consistently late host', () => {
     expect(out).toEqual([]);
   });
 });
+
+describe('a host that cannot read its own clock', () => {
+  it('names it and marks the error bar as a floor, not a bound', () => {
+    // Treating an unknown offset as zero would quietly assume the very thing
+    // the error bar exists to question.
+    const s = propagationSpread([
+      { host: 'fn-1', receivedAtMs: 1_000_000, clockOffsetMs: null, resolutionMs: 100 },
+      { host: 'fn-4', receivedAtMs: 1_000_050, clockOffsetMs: 3, resolutionMs: 100 },
+    ]);
+    expect(s.clockUnknownHosts).toEqual(['fn-1']);
+    expect(s.uncertaintyIsLowerBound).toBe(true);
+    // Still computed from what is known, so the figure stays usable.
+    expect(s.uncertaintyMs).toBe(103);
+  });
+
+  it('says the bound is firm when every host reported its offset', () => {
+    const s = propagationSpread([
+      { host: 'fn-1', receivedAtMs: 1_000_000, clockOffsetMs: 2, resolutionMs: 0 },
+      { host: 'fn-4', receivedAtMs: 1_000_050, clockOffsetMs: 3, resolutionMs: 0 },
+    ]);
+    expect(s.uncertaintyIsLowerBound).toBe(false);
+    expect(s.clockUnknownHosts).toEqual([]);
+  });
+});

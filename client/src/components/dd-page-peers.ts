@@ -1,0 +1,293 @@
+import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
+import { api, type PeerPropagation } from '../lib/api.js';
+import { ago, num } from '../lib/format.js';
+import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
+import './dd-stat.js';
+
+const REFRESH_MS = 30_000;
+
+const ms = (v: number | null): string => (v === null ? '—' : `${Math.round(v)} ms`);
+
+export class DdPagePeers extends LitElement {
+  static override properties = {
+    _d: { state: true },
+    _topic: { state: true },
+    _error: { state: true },
+  };
+
+  private _d: PeerPropagation | null = null;
+  private _topic: 'block' | 'chainlock' = 'block';
+  private _error = '';
+  private _timer: number | null = null;
+
+  static override styles = [
+    baseStyles,
+    cardStyles,
+    tableStyles,
+    controlStyles,
+    pageStyles,
+    css`
+      .noise {
+        color: var(--ink-3);
+      }
+      .real {
+        color: var(--warn);
+        font-weight: 600;
+      }
+      .miss {
+        color: var(--crit);
+        font-weight: 600;
+      }
+      .caveat {
+        padding: 10px 14px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--ink-3);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+    `,
+  ];
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    void this._load();
+    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (this._timer !== null) clearInterval(this._timer);
+  }
+
+  private async _load(): Promise<void> {
+    try {
+      this._d = await api.peerPropagation(this._topic, 30);
+      this._error = '';
+    } catch (error) {
+      this._error = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private _setTopic(t: 'block' | 'chainlock'): void {
+    this._topic = t;
+    void this._load();
+  }
+
+  override render(): TemplateResult {
+    const d = this._d;
+    return html`
+      <div class="page-head">
+        <div>
+          <div class="page-title">Vantage points</div>
+          <div class="page-sub">
+            The same event, seen from every host. One node cannot tell a network problem from its
+            own — this is what makes that difference visible.
+          </div>
+        </div>
+        <div class="seg">
+          <button class=${this._topic === 'block' ? 'on' : ''} @click=${() => this._setTopic('block')}>
+            Blocks
+          </button>
+          <button
+            class=${this._topic === 'chainlock' ? 'on' : ''}
+            @click=${() => this._setTopic('chainlock')}
+          >
+            ChainLocks
+          </button>
+        </div>
+      </div>
+
+      ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
+      ${!d
+        ? html`<div class="note">Loading…</div>`
+        : html`${this._tiles(d)} ${this._hosts(d)} ${this._laggards(d)} ${this._events(d)}`}
+    `;
+  }
+
+  private _tiles(d: PeerPropagation): TemplateResult {
+    const real = d.events.filter((e) => !e.withinNoise);
+    const spreads = real.map((e) => e.spreadMs ?? 0).sort((a, b) => a - b);
+    const median = spreads.length ? spreads[Math.floor(spreads.length / 2)]! : null;
+    const incomplete = d.events.filter((e) => e.missingHosts.length > 0).length;
+
+    return html`
+      <section class="tiles">
+        <dd-stat
+          label="Reporting hosts"
+          value=${num(d.hostsReporting.length)}
+          sub="vantage points comparing the same events"
+          tone=${d.hostsReporting.length > 1 ? 'good' : 'warn'}
+        ></dd-stat>
+        <dd-stat
+          label="Median spread"
+          value=${median === null ? '—' : ms(median)}
+          sub="${num(real.length)} of ${num(d.events.length)} above the error bar"
+        ></dd-stat>
+        <dd-stat
+          label="Incomplete events"
+          value=${num(incomplete)}
+          sub="some host never reported them"
+          tone=${incomplete > 0 ? 'crit' : 'good'}
+        ></dd-stat>
+        <dd-stat
+          label="Consistently late"
+          value=${d.laggards.length === 0 ? '—' : (d.laggards[0]?.host ?? '—')}
+          sub=${d.laggards.length === 0
+            ? 'not enough samples yet'
+            : `mean ${ms(d.laggards[0]!.meanDelayMs)} behind`}
+          tone=${d.laggards.length > 0 && d.laggards[0]!.lastPlaceShare > 0.5 ? 'warn' : ''}
+        ></dd-stat>
+      </section>
+    `;
+  }
+
+  private _hosts(d: PeerPropagation): TemplateResult {
+    return html`
+      <section class="card">
+        <div class="card-head"><div class="card-title">Host connectivity</div></div>
+        <div class="card-body flush">
+          <div class="twrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Host</th>
+                  <th class="r">Peers</th>
+                  <th class="r">Inbound</th>
+                  <th class="r">MNAUTH</th>
+                  <th class="r">Median ping</th>
+                  <th class="r">Height</th>
+                  <th class="r">Clock</th>
+                  <th class="r">Reported</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${d.hosts.length === 0
+                  ? html`<tr><td class="empty" colspan="8">No host has reported connectivity yet.</td></tr>`
+                  : d.hosts.map(
+                      (h) => html`
+                        <tr>
+                          <td class="mono">${h.host}</td>
+                          <td class="r mono">${num(h.peers)}</td>
+                          <td class="r mono">${num(h.inbound)}</td>
+                          <td class="r mono">${num(h.verifiedMasternodes)}</td>
+                          <td class="r mono">${ms(h.medianPingMs)}</td>
+                          <td class="r mono">${h.height === null ? '—' : num(h.height)}</td>
+                          <td class="r mono">${h.clockOffsetMs === null ? 'unknown' : ms(h.clockOffsetMs)}</td>
+                          <td class="r mono">${ago(h.reportedAt)}</td>
+                        </tr>
+                      `
+                    )}
+              </tbody>
+            </table>
+          </div>
+          <div class="caveat">
+            <strong>MNAUTH</strong> counts peers authenticated as masternodes — the quorum mesh, as
+            distinct from ordinary connections. A quorum member with none of these is isolated from
+            exactly the peers a DKG needs.
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  private _laggards(d: PeerPropagation): TemplateResult | typeof nothing {
+    if (d.laggards.length === 0) return nothing;
+    return html`
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Consistently behind</div>
+          <div class="page-sub mono">min 5 samples</div>
+        </div>
+        <div class="card-body flush">
+          <div class="twrap">
+            <table>
+              <thead>
+                <tr><th>Host</th><th class="r">Samples</th><th class="r">Mean delay</th><th class="r">Last place</th></tr>
+              </thead>
+              <tbody>
+                ${d.laggards.map(
+                  (l) => html`
+                    <tr>
+                      <td class="mono">${l.host}</td>
+                      <td class="r mono">${num(l.samples)}</td>
+                      <td class="r mono">${ms(l.meanDelayMs)}</td>
+                      <td class="r mono ${l.lastPlaceShare > 0.5 ? 'real' : ''}">
+                        ${Math.round(l.lastPlaceShare * 100)}%
+                      </td>
+                    </tr>
+                  `
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div class="caveat">
+            One late event is weather. The same host last on most of them is the finding — and it is
+            invisible from a single vantage point.
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  private _events(d: PeerPropagation): TemplateResult {
+    return html`
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Recent ${this._topic === 'block' ? 'blocks' : 'ChainLocks'}</div>
+          <div class="page-sub mono">${num(d.events.length)} compared</div>
+        </div>
+        <div class="card-body flush">
+          <div class="twrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="r">Height</th>
+                  <th class="r">Hosts</th>
+                  <th class="r">Spread</th>
+                  <th class="r">Median delay</th>
+                  <th class="r">Error bar</th>
+                  <th>First</th>
+                  <th>Last</th>
+                  <th>Missing</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${d.events.length === 0
+                  ? html`<tr><td class="empty" colspan="8">Nothing compared yet.</td></tr>`
+                  : d.events.map(
+                      (e) => html`
+                        <tr>
+                          <td class="r mono">${e.height === null ? '—' : num(e.height)}</td>
+                          <td class="r mono">${num(e.hosts)}/${num(d.hostsReporting.length)}</td>
+                          <td class="r mono ${e.withinNoise ? 'noise' : 'real'}">
+                            ${ms(e.spreadMs)}${e.withinNoise ? ' (noise)' : ''}
+                          </td>
+                          <td class="r mono">${ms(e.medianDelayMs)}</td>
+                          <td class="r mono">
+                            ${e.uncertaintyIsLowerBound ? '≥' : '±'}${ms(e.uncertaintyMs)}
+                          </td>
+                          <td class="mono">${e.firstHost ?? '—'}</td>
+                          <td class="mono">${e.lastHost ?? '—'}</td>
+                          <td class="mono ${e.missingHosts.length > 0 ? 'miss' : ''}">
+                            ${e.missingHosts.length === 0 ? '—' : e.missingHosts.join(', ')}
+                          </td>
+                        </tr>
+                      `
+                    )}
+              </tbody>
+            </table>
+          </div>
+          <div class="caveat">
+            A spread below the error bar is reported as <em>noise</em>, not as a result: it cannot be
+            told apart from clock offset and poll resolution. Clock offsets are recorded, never
+            subtracted — correcting for them would claim a precision NTP does not guarantee, and
+            <span class="mono">≥</span> marks an event where some host could not read its own clock
+            at all.
+          </div>
+        </div>
+      </section>
+    `;
+  }
+}
+
+customElements.define('dd-page-peers', DdPagePeers);

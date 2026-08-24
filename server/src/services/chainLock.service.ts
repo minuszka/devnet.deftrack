@@ -7,6 +7,8 @@ import { NodeObservation } from '../models/NodeObservation.js';
 import { zmqService } from './zmq.service.js';
 import { metricsService } from './metrics.service.js';
 import { chainLockRpcIntervalMs } from '../domain/collectorPolicy.js';
+import { PeerObservation } from '../models/PeerObservation.js';
+import { localClockService } from './localClock.service.js';
 
 /**
  * ChainLock observation.
@@ -118,6 +120,35 @@ export class ChainLockService {
     if (this.deferredObservations) void this.applyPendingObservations();
   }
 
+  private async recordSeedSighting(
+    topic: string,
+    hash: string,
+    block: { height?: number },
+    receivedAt: Date
+  ): Promise<void> {
+    const peerTopic = topic === 'hashblock' ? 'block' : 'chainlock';
+    const observationKey = `seed:${peerTopic}:${hash}`;
+    await PeerObservation.updateOne(
+      { observationKey },
+      {
+        $setOnInsert: {
+          observationKey,
+          host: 'seed',
+          topic: peerTopic,
+          hash,
+          height: block.height ?? null,
+          receivedAt,
+          clockOffsetMs: await localClockService.current(),
+          // ZMQ is an event feed: the notification is the moment, not a window.
+          resolutionMs: 0,
+          agentVersion: 'explorer',
+          ingestedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    ).catch(() => undefined);
+  }
+
   /**
    * Turns raw ZMQ arrivals into the fields the views read.
    *
@@ -146,7 +177,7 @@ export class ChainLockService {
         continue;
       }
       const block = await Block.findOne({ hash: obs.hash })
-        .select('hash time firstSeenAt chainLockedAt')
+        .select('hash height time firstSeenAt chainLockedAt')
         .lean();
 
       if (!block) {
@@ -160,6 +191,12 @@ export class ChainLockService {
         }
         continue;
       }
+
+      // The seed is a vantage point like any other, and the one the explorer
+      // measures with the sharpest instrument -- an event feed rather than a
+      // poll, so resolution 0. Recording it here puts the reference into the
+      // same comparison as the fleet instead of leaving it implicit.
+      await this.recordSeedSighting(obs.topic, obs.hash, block, new Date(obs.receivedAt));
 
       if (obs.topic === 'hashblock') {
         if (!block.firstSeenAt) {

@@ -41,6 +41,17 @@ export interface PropagationSpread {
    * this is not a measurement of anything.
    */
   uncertaintyMs: number;
+  /**
+   * True when some host could not report its clock offset.
+   *
+   * An unknown offset is not a zero offset. Treating it as zero would quietly
+   * assume the very thing the error bar exists to question, so the number above
+   * becomes a floor rather than a bound, and a spread that clears it is only
+   * *probably* real.
+   */
+  uncertaintyIsLowerBound: boolean;
+  /** Hosts whose clock offset was unknown at the time they measured. */
+  clockUnknownHosts: string[];
   /** True when the spread cannot be distinguished from clock and poll error. */
   withinNoise: boolean;
   /** Hosts that never reported this hash at all. */
@@ -64,6 +75,8 @@ export function propagationSpread(
       medianDelayMs: null,
       delays: [],
       uncertaintyMs: 0,
+      uncertaintyIsLowerBound: false,
+      clockUnknownHosts: [],
       withinNoise: true,
       missingHosts,
     };
@@ -82,8 +95,11 @@ export function propagationSpread(
       : (sortedDelays[mid - 1]! + sortedDelays[mid]!) / 2;
 
   // Worst offset plus worst resolution: the comparison is only as sharp as its
-  // blurriest participant.
-  const worstOffset = Math.max(...ordered.map((s) => Math.abs(s.clockOffsetMs ?? 0)));
+  // blurriest participant. A host that could not read its own clock contributes
+  // nothing to the number but is named, so the bound is known to be a floor.
+  const clockUnknownHosts = ordered.filter((s) => s.clockOffsetMs === null).map((s) => s.host).sort();
+  const known = ordered.filter((s) => s.clockOffsetMs !== null);
+  const worstOffset = known.length > 0 ? Math.max(...known.map((s) => Math.abs(s.clockOffsetMs!))) : 0;
   const worstResolution = Math.max(...ordered.map((s) => s.resolutionMs));
   const uncertaintyMs = worstOffset + worstResolution;
 
@@ -98,6 +114,8 @@ export function propagationSpread(
     medianDelayMs,
     delays,
     uncertaintyMs,
+    uncertaintyIsLowerBound: clockUnknownHosts.length > 0,
+    clockUnknownHosts,
     withinNoise: spreadMs <= uncertaintyMs,
     missingHosts,
   };

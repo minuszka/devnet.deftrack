@@ -29,6 +29,7 @@ export const ROUTES: Route[] = [
   { path: '/masternodes', tag: 'dd-page-masternodes', label: 'Masternodes' },
   { path: '/chainlocks', tag: 'dd-page-chainlocks', label: 'ChainLocks' },
   { path: '/staking', tag: 'dd-page-staking', label: 'Staking' },
+  { path: '/peers', tag: 'dd-page-peers', label: 'Vantage Points' },
   { path: '/experiments', tag: 'dd-page-experiments', label: 'Experiments' },
   { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks' },
   { path: '/txs', tag: 'dd-page-txs', label: 'Transactions' },

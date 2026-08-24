@@ -172,10 +172,45 @@ export interface ExperimentDetail extends ExperimentRow {
   } | null;
 }
 
+export interface PeerPropagation {
+  topic: 'block' | 'chainlock';
+  hostsReporting: string[];
+  events: Array<{
+    hash: string;
+    height: number | null;
+    hosts: number;
+    firstHost: string | null;
+    lastHost: string | null;
+    spreadMs: number | null;
+    medianDelayMs: number | null;
+    uncertaintyMs: number;
+    uncertaintyIsLowerBound: boolean;
+    clockUnknownHosts: string[];
+    withinNoise: boolean;
+    missingHosts: string[];
+    delays: Array<{ host: string; delayMs: number }>;
+  }>;
+  laggards: Array<{ host: string; samples: number; meanDelayMs: number; lastPlaceShare: number }>;
+  hosts: Array<{
+    host: string;
+    peers: number;
+    inbound: number;
+    verifiedMasternodes: number;
+    medianPingMs: number | null;
+    height: number | null;
+    clockOffsetMs: number | null;
+    agentVersion: string;
+    reportedAt: string;
+  }>;
+}
+
 export const api = {
   health: () => get<HealthSnapshot>('/health'),
 
   stakingHealth: (blocks: number) => get<StakingHealth>('/staking/health', { blocks }),
+
+  peerPropagation: (topic: 'block' | 'chainlock', events: number) =>
+    get<PeerPropagation>('/peers/propagation', { topic, events }),
 
   experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
     get<Page<ExperimentRow>>('/experiments', params),
