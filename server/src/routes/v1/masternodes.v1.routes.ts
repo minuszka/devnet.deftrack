@@ -21,7 +21,9 @@ const hoursQuery = z.object({
 const eventsQuery = hoursQuery.extend({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
-  type: z.enum(['registered', 'banned', 'revived', 'penalty_up', 'penalty_down', 'service_changed']).optional(),
+  type: z
+    .enum(['registered', 'banned', 'revived', 'penalty_up', 'penalty_down', 'service_changed', 'removed'])
+    .optional(),
 });
 /** Bans this far apart belong to different waves. */
 const waveQuery = hoursQuery.extend({
@@ -35,7 +37,9 @@ router.get(
   validateQuery(listQuery),
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<z.infer<typeof listQuery>>(res);
-    const filter: Record<string, unknown> = {};
+    // Rows dropped from `protx list registered` are kept for history but are
+    // not part of "what the network looks like now".
+    const filter: Record<string, unknown> = { active: { $ne: false } };
     if (q.banned !== undefined) filter.banned = q.banned;
     if (q.hostIp) filter.hostIp = q.hostIp;
     if (q.operatorLabel) filter.operatorLabel = q.operatorLabel;

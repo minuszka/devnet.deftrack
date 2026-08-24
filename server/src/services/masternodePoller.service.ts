@@ -7,6 +7,7 @@ import { MasternodeEvent, type MasternodeEventType } from '../models/MasternodeE
 import { MasternodeSnapshot } from '../models/MasternodeSnapshot.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
 import { OperatorIndex, hostOf } from '../domain/operatorIndex.js';
+import { findRemoved } from '../domain/masternodeDiff.js';
 
 interface ProTxState {
   service?: string;
@@ -176,10 +177,49 @@ export class MasternodePollerService {
               pubKeyOperator: st.pubKeyOperator ?? null,
               operatorLabel,
               hostIp,
+              // Reasserted every poll, so a masternode that comes back after
+              // being dropped from the list is live again without a special case.
+              active: true,
+              removedAt: null,
               lastSeenAt: now,
             },
           },
           upsert: true,
+        },
+      });
+    }
+
+    // A masternode can leave `protx list registered` -- collateral spent, or a
+    // ProUpRevTx. Nothing in the loop above would ever touch its row again, so
+    // it would stay in the current-state view forever and keep being counted as
+    // live. The row is kept for history and marked instead of deleted.
+    const listed = new Set(list.map((e) => e.proTxHash));
+    for (const prev of findRemoved(previous.values(), listed)) {
+      const proTxHash = prev.proTxHash;
+      eventOps.push({
+        updateOne: {
+          filter: { eventKey: `${proTxHash}:removed:${height}` },
+          update: {
+            $setOnInsert: {
+              eventKey: `${proTxHash}:removed:${height}`,
+              proTxHash,
+              type: 'removed' as MasternodeEventType,
+              height,
+              operatorLabel: prev.operatorLabel ?? null,
+              hostIp: prev.hostIp ?? null,
+              serviceBefore: prev.service ?? null,
+              penaltyBefore: prev.poSePenalty,
+              detectedAt: now,
+            },
+          },
+          upsert: true,
+        },
+      });
+
+      stateOps.push({
+        updateOne: {
+          filter: { proTxHash },
+          update: { $set: { active: false, removedAt: now, lastSeenAt: prev.lastSeenAt } },
         },
       });
     }

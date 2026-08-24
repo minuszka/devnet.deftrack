@@ -30,7 +30,9 @@ router.get(
     const q = parsedQuery<ReliabilityQuery>(res);
     const since = new Date(Date.now() - q.hours * 3600_000);
 
-    const filter: Record<string, unknown> = { status: 'formed', detectedAt: { $gte: since } };
+    // Windowed on resolvedAt so the set of rounds considered does not shift
+    // just because the collector looked at them again.
+    const filter: Record<string, unknown> = { status: 'formed', resolvedAt: { $gte: since } };
     if (q.llmqName) filter.llmqName = q.llmqName;
 
     const [rounds, operators] = await Promise.all([

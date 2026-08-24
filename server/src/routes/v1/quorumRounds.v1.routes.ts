@@ -111,14 +111,16 @@ router.get(
     const q = parsedQuery<TimelineQuery>(res);
     const since = new Date(Date.now() - q.hours * 3600_000);
 
-    const filter: Record<string, unknown> = { detectedAt: { $gte: since } };
+    // resolvedAt, not detectedAt: the latter is refreshed on every poll and
+    // would drag recent rounds around the time axis.
+    const filter: Record<string, unknown> = { resolvedAt: { $gte: since } };
     if (q.llmqName) filter.llmqName = q.llmqName;
 
     const rounds = await QuorumRound.find(filter).sort({ expectedHeight: 1 });
 
     const points: HealthTimelinePoint[] = rounds.map((r) => ({
       expectedHeight: r.expectedHeight,
-      detectedAt: r.detectedAt.toISOString(),
+      detectedAt: (r.resolvedAt ?? r.detectedAt).toISOString(),
       status: r.status,
       // Deliberately null, not 0: a round that never formed has no health
       // ratio, and plotting it as zero would invent a data point.

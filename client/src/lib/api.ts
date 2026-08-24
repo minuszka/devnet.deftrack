@@ -73,7 +73,10 @@ export interface ChainLockReport {
 }
 
 export interface HealthSnapshot {
+  /** 'ok' | 'degraded' | 'down' -- the endpoint answers 503 for the last two. */
   status: string;
+  /** Which readiness probes failed; empty when status is 'ok'. */
+  failing: string[];
   devnet: string;
   uptimeSeconds: number;
   mongo: string;

@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rpc } from './rpc.service.js';
 import { Block } from '../models/Block.js';
+import { Transaction } from '../models/Transaction.js';
 
 /**
  * ChainLock observation.
@@ -67,6 +68,7 @@ export class ChainLockService {
 
     const now = new Date();
     const ops = [];
+    const lockedHashes: string[] = [];
 
     for (const b of candidates) {
       const block = await rpc.getBlock(b.hash).catch(() => null);
@@ -77,6 +79,7 @@ export class ChainLockService {
       const observable = b.time >= this.startedAtSec;
       const latency = observable ? Math.max(0, Math.round(now.getTime() / 1000 - b.time)) : null;
 
+      lockedHashes.push(b.hash);
       ops.push({
         updateOne: {
           filter: { hash: b.hash, chainLockedAt: null },
@@ -87,6 +90,14 @@ export class ChainLockService {
 
     if (ops.length > 0) {
       await Block.bulkWrite(ops, { ordered: false });
+      // A transaction is indexed with the lock state its block had at index
+      // time, which is almost always "not locked yet". Without this the
+      // per-transaction flag stayed false on a chain where every block is
+      // locked, and the two views contradicted each other.
+      await Transaction.updateMany(
+        { blockhash: { $in: lockedHashes }, hasChainLock: false },
+        { $set: { hasChainLock: true } }
+      );
       const timed = ops.filter((o) => o.updateOne.update.$set.chainLockLatencySec !== null).length;
       logger.info(
         `ChainLock observed on ${ops.length} block(s) up to ${tip}; ${timed} with measurable latency`

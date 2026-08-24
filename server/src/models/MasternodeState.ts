@@ -40,6 +40,16 @@ export interface MasternodeStateDocument extends Document {
   /** Derived from `service`, so a whole host can be spotted failing at once. */
   hostIp: string | null;
 
+  /**
+   * Still present in `protx list registered`.
+   *
+   * A masternode can leave the list -- collateral spent, ProUpRevTx -- and the
+   * stored row would otherwise linger forever, counted as live by every health
+   * figure. The row is kept for history and marked instead of deleted.
+   */
+  active: boolean;
+  removedAt: Date | null;
+
   firstSeenAt: Date;
   lastSeenAt: Date;
 }
@@ -69,6 +79,9 @@ const masternodeStateSchema = new Schema<MasternodeStateDocument>(
 
     operatorLabel: { type: String, default: null, index: true },
     hostIp: { type: String, default: null, index: true },
+
+    active: { type: Boolean, default: true, index: true },
+    removedAt: { type: Date, default: null },
 
     firstSeenAt: { type: Date, default: () => new Date() },
     lastSeenAt: { type: Date, default: () => new Date() },

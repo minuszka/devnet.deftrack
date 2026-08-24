@@ -6,7 +6,8 @@ export type MasternodeEventType =
   | 'revived'
   | 'penalty_up'
   | 'penalty_down'
-  | 'service_changed';
+  | 'service_changed'
+  | 'removed';
 
 /**
  * Append-only log of every masternode state transition.

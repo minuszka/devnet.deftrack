@@ -220,6 +220,9 @@ export class DdShell extends LitElement {
           </b>
         </span>
         <span>staking <b>${num(h.stakers.active)}</b></span>
+        ${h.failing?.length
+          ? html`<span>status <b class="bad">${h.status}: ${h.failing.join(', ')}</b></span>`
+          : nothing}
       </span>
     `;
   }

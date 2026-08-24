@@ -61,6 +61,16 @@ export interface QuorumRoundDocument extends Document {
   consecutiveFailures: number;
 
   firstSeenAt: Date;
+  /**
+   * When the round stopped being pending, written once and never revised.
+   *
+   * `detectedAt` is refreshed on every poll, so it says when the collector last
+   * looked -- not when the round happened. Windowed queries and the health
+   * timeline use this instead, or the chart's x-axis stretches whichever rounds
+   * happen to still be inside the observation window.
+   */
+  resolvedAt: Date | null;
+  /** Last observation, not an event time. */
   detectedAt: Date;
 }
 
@@ -106,6 +116,7 @@ const quorumRoundSchema = new Schema<QuorumRoundDocument>(
     consecutiveFailures: { type: Number, default: 0 },
 
     firstSeenAt: { type: Date, default: () => new Date() },
+    resolvedAt: { type: Date, default: null, index: true },
     detectedAt: { type: Date, default: () => new Date() },
   },
   { timestamps: true }
@@ -115,7 +126,7 @@ const quorumRoundSchema = new Schema<QuorumRoundDocument>(
 quorumRoundSchema.index({ llmqName: 1, expectedHeight: -1 });
 quorumRoundSchema.index({ status: 1, expectedHeight: -1 });
 // Health-ratio timeline over a time window.
-quorumRoundSchema.index({ detectedAt: -1 });
+quorumRoundSchema.index({ resolvedAt: -1 });
 
 // No TTL. The production noise TTL was shorter than the ban window, which made
 // a real mainnet fork impossible to correlate after the fact.

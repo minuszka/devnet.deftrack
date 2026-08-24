@@ -4,6 +4,8 @@ import { logger } from '../utils/logger.js';
 import { rpc, type RpcBlock, type RpcTransaction } from './rpc.service.js';
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
+import { QuorumRound } from '../models/QuorumRound.js';
+import { quorumReorgReset } from '../domain/reorg.js';
 import { SyncState } from '../models/SyncState.js';
 
 const SYNC_KEY = 'blocks';
@@ -194,7 +196,20 @@ export class SyncService {
 
     const deleted = await Block.deleteMany({ height: { $gt: cursor } });
     await Transaction.deleteMany({ height: { $gt: cursor } });
-    logger.warn(`Rewound to height ${cursor}, dropped ${deleted.deletedCount} block(s)`);
+
+    // The blocks are gone; anything derived from them must go with them, or the
+    // quorum record keeps describing a chain that no longer exists.
+    const reset = quorumReorgReset(cursor);
+    const rounds = await QuorumRound.updateMany(reset.filter, reset.update);
+
+    // The predecessor of the first rewound block now has a successor that was
+    // just deleted.
+    await Block.updateOne({ height: cursor }, { $set: { nextblockhash: null } });
+
+    logger.warn(
+      `Rewound to height ${cursor}, dropped ${deleted.deletedCount} block(s), ` +
+        `reset ${rounds.modifiedCount} quorum round(s)`
+    );
     return cursor;
   }
 
@@ -286,6 +301,17 @@ export class SyncService {
       },
       { upsert: true }
     );
+
+    // A block is indexed as soon as it arrives, when the node does not yet know
+    // its successor, so `nextblockhash` was null forever and next-block
+    // navigation dead-ended on every block. Fill it in on the predecessor now
+    // that the answer exists.
+    if (block.previousblockhash) {
+      await Block.updateOne(
+        { hash: block.previousblockhash, nextblockhash: { $ne: block.hash } },
+        { $set: { nextblockhash: block.hash } }
+      );
+    }
 
     return block.hash;
   }

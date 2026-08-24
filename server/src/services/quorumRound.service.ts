@@ -118,6 +118,13 @@ export class QuorumRoundService {
       await this.upsertRound(expectedHeight, status, entry, effectiveSize, operators);
     }
 
+    // Stamp the moment a round stopped being pending, once. Conditional on the
+    // field still being null, so a later poll cannot move it.
+    await QuorumRound.updateMany(
+      { llmqName: p.llmqName, status: { $ne: 'pending' }, resolvedAt: null },
+      { $set: { resolvedAt: new Date() } }
+    );
+
     await this.recomputeConsecutiveFailures(oldest);
 
     logger.info(

@@ -25,6 +25,7 @@ import { Transaction } from './models/Transaction.js';
 import { MasternodeState } from './models/MasternodeState.js';
 import v1Routes from './routes/v1/index.js';
 import { sendError } from './utils/http.js';
+import { evaluateReadiness } from './domain/readiness.js';
 
 /** Blocks looked at when counting who is actually producing them. */
 const STAKER_WINDOW = 200;
@@ -49,8 +50,10 @@ app.get('/api/v1/health', async (_req, res) => {
       QuorumRound.countDocuments({ status: 'failed' }).catch(() => -1),
       QuorumRound.countDocuments({ status: 'pending' }).catch(() => -1),
       rpc.getNetworkInfo().catch(() => null),
-      MasternodeState.estimatedDocumentCount().catch(() => -1),
-      MasternodeState.countDocuments({ banned: false }).catch(() => -1),
+      // active only: a row that left `protx list registered` is history, not
+      // part of the current network size.
+      MasternodeState.countDocuments({ active: { $ne: false } }).catch(() => -1),
+      MasternodeState.countDocuments({ active: { $ne: false }, banned: false }).catch(() => -1),
     ]);
 
   // How many wallets actually produced a block recently. There is no RPC for
@@ -71,8 +74,19 @@ app.get('/api/v1/health', async (_req, res) => {
           .catch(() => -1)
       : -1;
 
+  const readiness = evaluateReadiness({
+    mongoConnected: mongoose.connection.readyState === 1,
+    chainTip: tip,
+    indexedHeight: state?.lastSyncedHeight ?? -1,
+    syncError: state?.error ?? null,
+    lastSyncedAtMs: state?.lastSyncedAt ? new Date(state.lastSyncedAt).getTime() : null,
+    nowMs: Date.now(),
+    syncIntervalMs: config.sync.intervalMs,
+  });
+
   const body: ApiEnvelope<{
     status: string;
+    failing: string[];
     devnet: string;
     uptimeSeconds: number;
     mongo: string;
@@ -85,9 +99,12 @@ app.get('/api/v1/health', async (_req, res) => {
     masternodes: { total: number; enabled: number };
     stakers: { active: number; windowBlocks: number };
   }> = {
+    // success reports whether the request was served, readiness whether the
+    // service can be trusted -- they are different questions.
     success: true,
     data: {
-      status: 'ok',
+      status: readiness.status,
+      failing: readiness.failing,
       devnet: DEVNET_NAME,
       uptimeSeconds: Math.round(process.uptime()),
       mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
@@ -102,7 +119,7 @@ app.get('/api/v1/health', async (_req, res) => {
       stakers: { active: stakers, windowBlocks: STAKER_WINDOW },
     },
   };
-  res.json(body);
+  res.status(readiness.httpStatus).json(body);
 });
 
 // Anything unmatched under /api gets the same envelope as everything else,
