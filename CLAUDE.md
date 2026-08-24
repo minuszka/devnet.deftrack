@@ -253,10 +253,13 @@ questions the project must answer.
 `quorum info` does **not** return `numValidMembers` or `healthRatio`; those come
 from `listextended`.
 
-### Devnet masternode collateral is 1,000 DFCN
+### Devnet masternode collateral is 1,000,000 DFCN — since the parity change
 
-`src/chainparams.cpp:575` — `regularMnCollateral = 1000 * COIN`, against
-`1000000 * COIN` on mainnet (`:232`). The test round has no financial exposure.
+`src/chainparams.cpp:575` — `regularMnCollateral = 1000000 * COIN`, identical to
+mainnet (`:232`). It was `1000 * COIN` before #56 made devnet match mainnet
+consensus in full; funding 80 masternodes therefore costs **80,000,000 DFCN**,
+not 80,000. Re-check this line before any funding run: the old figure is the
+kind of number that silently under-funds every collateral in the batch.
 
 ## Event-time observation (ZMQ) and block-exact history (`protx listdiff`)
 
