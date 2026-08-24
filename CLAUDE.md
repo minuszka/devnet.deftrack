@@ -156,6 +156,15 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   1.09 billion to 380 million; `rescanblockchain 0` rebuilt it exactly. The
   chain is the record -- the wallet is a cache of it.
 
+- **A stakeable output has to be inside `stakeValueRange`.**
+  `chainparams.cpp:572` sets `{ 10000, 12500000 }` DFCN on this devnet since the
+  parity change, and `SelectCoinsForStaking` filters `AvailableCoins` by it. An
+  output of 50,000,000 is therefore invisible to staking however long it
+  matures, and `getstakinginfo` reports `weight: 0` with a full balance and no
+  error. The seed only stakes because its coins are 11,000,000 PoW rewards --
+  inside the range by accident. Fund a staker in outputs of about 10,000,000,
+  and never in one lump.
+
 - **Check the firewall on every host, not one.** Two of the eight fullnodes run
   `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
   from the first host cost 20 unreachable masternodes and a PoSe ban wave that
