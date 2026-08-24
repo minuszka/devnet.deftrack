@@ -93,8 +93,26 @@ export interface HealthSnapshot {
   };
 }
 
+export interface StakingHealth {
+  blocks: number;
+  windowBlocks: number;
+  fromHeight: number;
+  toHeight: number;
+  medianIntervalSec: number | null;
+  meanIntervalSec: number | null;
+  longestGapSec: number | null;
+  stallCount: number;
+  distinctStakers: number;
+  hhi: number | null;
+  gini: number | null;
+  topStakerShare: number | null;
+  stakers: Array<{ payee: string; blocks: number; share: number }>;
+}
+
 export const api = {
   health: () => get<HealthSnapshot>('/health'),
+
+  stakingHealth: (blocks: number) => get<StakingHealth>('/staking/health', { blocks }),
 
   rounds: (params?: { limit?: number; offset?: number; status?: string; llmqName?: string }) =>
     get<Page<QuorumRoundListItem>>('/quorum-rounds', params),

@@ -12,6 +12,7 @@ import './dd-page-operators.js';
 import './dd-page-blocks.js';
 import './dd-page-txs.js';
 import './dd-page-chainlocks.js';
+import './dd-page-staking.js';
 
 const HEALTH_REFRESH_MS = 30_000;
 
@@ -256,6 +257,8 @@ export class DdShell extends LitElement {
         return html`<dd-page-operators></dd-page-operators>`;
       case 'dd-page-chainlocks':
         return html`<dd-page-chainlocks></dd-page-chainlocks>`;
+      case 'dd-page-staking':
+        return html`<dd-page-staking></dd-page-staking>`;
       case 'dd-page-blocks':
         return html`<dd-page-blocks></dd-page-blocks>`;
       case 'dd-page-txs':
