@@ -258,6 +258,49 @@ from `listextended`.
 `src/chainparams.cpp:575` — `regularMnCollateral = 1000 * COIN`, against
 `1000000 * COIN` on mainnet (`:232`). The test round has no financial exposure.
 
+## Event-time observation (ZMQ) and block-exact history (`protx listdiff`)
+
+Both are additions to, not replacements of, the pollers. The pollers reconcile.
+
+- **ZMQ is enabled on the seed node only, bound to `127.0.0.1:28332`** with
+  `hashblock`, `hashchainlock`, `hashtx`, `sequence`. The PUB socket has no
+  authentication of any kind. `sequence` is not optional: the socket drops
+  silently at the high-water mark, and the per-topic sequence numbers are what
+  make a lost message detectable instead of merely suspected. Gaps are stored
+  as data (`ObservationGap`), never swallowed.
+
+- **The hash frames arrive in RPC display order — do not reverse them.**
+  Reversing (the usual internal-vs-display convention) was tried first and
+  produced hashes that matched no indexed block. Verified against blocks
+  1382-1385 on the live devnet.
+
+- **Notifications are stored raw and immutable** (`NodeObservation`), and the
+  fields the views read are derived in a separate step. When the byte order
+  turned out to be wrong, the 23 stored rows were corrected by re-deriving the
+  hash from `payloadHex` — the reason to keep raw evidence at all.
+
+- **`protx listdiff <baseHeight> <targetHeight>` takes heights, not hashes**
+  (`src/rpc/evo.cpp:1604`), and reports only changed fields, with their *new*
+  values. That is enough to name a transition without holding previous state:
+  `PoSeBanHeight` with a height means the ban just landed, `-1` means revival.
+
+- **PoSe penalty decay is not an event.** It falls by one per block, so every
+  penalised node appears in every single diff; logging that would bury one ban
+  wave under thousands of rows. Only an increase — a missed duty — is recorded.
+  The walker seeds its penalty baseline from one diff against the start of the
+  chain, or a restart reads each node's first change as an increase and invents
+  a missed duty.
+
+- **ChainLock event times cannot be validated with no masternodes registered.**
+  No quorum, no CLSIG, so `hashchainlock` never fires. What is verified so far
+  is block first-sight; the lock path waits on the fleet.
+
+- **`quorum dkgsimerror` is NOT gated to regtest** (`src/rpc/quorums.cpp:749`) —
+  only the help text warns. It sets a global error rate on the node it is called
+  on and does not reset itself, so a forgotten call keeps that masternode
+  misbehaving into later rounds. Use it only from a script that sets, runs and
+  resets, and never expose it through the explorer API.
+
 ## Derived values to store
 
 - `punishedCount = size - numValidMembers`
