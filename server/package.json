@@ -23,6 +23,7 @@
     "mongoose": "^8.9.5",
     "winston": "^3.17.0",
     "ws": "^8.18.0",
+    "zeromq": "^6.6.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

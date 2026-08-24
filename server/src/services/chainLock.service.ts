@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { rpc } from './rpc.service.js';
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
+import { NodeObservation } from '../models/NodeObservation.js';
 
 /**
  * ChainLock observation.
@@ -18,6 +19,14 @@ import { Transaction } from '../models/Transaction.js';
  * settled history.
  */
 const WINDOW = 40;
+
+/** Observations derived per tick; bounded so a backlog cannot stall the loop. */
+const OBSERVATION_BATCH = 500;
+/**
+ * How long a notification waits for its block to be indexed before it is given
+ * up on. A hash that never gets indexed belonged to a block that lost a race.
+ */
+const ORPHAN_AFTER_MS = 60 * 60_000;
 
 export class ChainLockService {
   private running = false;
@@ -53,7 +62,94 @@ export class ChainLockService {
     }
   }
 
+  /**
+   * Turns raw ZMQ arrivals into the fields the views read.
+   *
+   * Derivation is deliberately separate from collection: the observation rows
+   * are never rewritten, so if this arithmetic turns out to be wrong it can be
+   * corrected and re-run over the same evidence.
+   */
+  private async applyObservations(): Promise<void> {
+    const pending = await NodeObservation.find({
+      topic: { $in: ['hashblock', 'hashchainlock'] },
+      appliedAt: null,
+    })
+      .sort({ receivedAt: 1 })
+      .limit(OBSERVATION_BATCH)
+      .lean();
+    if (pending.length === 0) return;
+
+    const now = new Date();
+    const applied: string[] = [];
+    let locks = 0;
+
+    for (const obs of pending) {
+      if (!obs.hash) continue;
+      const block = await Block.findOne({ hash: obs.hash })
+        .select('hash time firstSeenAt chainLockedAt')
+        .lean();
+
+      if (!block) {
+        // The notification beat the indexer to it, which is the normal order.
+        // Leave it pending unless it has aged out -- a hash we never index is
+        // a stale-tip or reorg artefact, not something to retry forever.
+        if (now.getTime() - new Date(obs.receivedAt).getTime() > ORPHAN_AFTER_MS) {
+          applied.push(obs.observationKey);
+        }
+        continue;
+      }
+
+      if (obs.topic === 'hashblock') {
+        if (!block.firstSeenAt) {
+          await Block.updateOne({ hash: obs.hash, firstSeenAt: null }, { $set: { firstSeenAt: obs.receivedAt } });
+        }
+      } else if (!block.chainLockedAt) {
+        // Measured on one clock, block arrival to lock arrival. The seconds
+        // field keeps its old meaning -- against the block's own timestamp --
+        // so the two are never silently mixed.
+        const latencyMs = block.firstSeenAt
+          ? Math.max(0, new Date(obs.receivedAt).getTime() - new Date(block.firstSeenAt).getTime())
+          : null;
+
+        await Block.updateOne(
+          { hash: obs.hash, chainLockedAt: null },
+          {
+            $set: {
+              hasChainLock: true,
+              chainLockedAt: obs.receivedAt,
+              chainLockLatencySec: Math.max(
+                0,
+                Math.round(new Date(obs.receivedAt).getTime() / 1000 - block.time)
+              ),
+              chainLockLatencyMs: latencyMs,
+              chainLockSource: 'zmq',
+            },
+          }
+        );
+        await Transaction.updateMany(
+          { blockhash: obs.hash, hasChainLock: false },
+          { $set: { hasChainLock: true } }
+        );
+        locks++;
+      }
+
+      applied.push(obs.observationKey);
+    }
+
+    if (applied.length > 0) {
+      await NodeObservation.updateMany(
+        { observationKey: { $in: applied } },
+        { $set: { appliedAt: now } }
+      );
+    }
+    if (locks > 0) {
+      logger.info(`ChainLock event time applied to ${locks} block(s) from ZMQ`);
+    }
+  }
+
   private async collect(): Promise<void> {
+    await this.applyObservations();
+
     const tip = await rpc.getBlockCount();
     const from = Math.max(1, tip - WINDOW + 1);
 
@@ -83,7 +179,16 @@ export class ChainLockService {
       ops.push({
         updateOne: {
           filter: { hash: b.hash, chainLockedAt: null },
-          update: { $set: { hasChainLock: true, chainLockedAt: now, chainLockLatencySec: latency } },
+          update: {
+            $set: {
+              hasChainLock: true,
+              chainLockedAt: now,
+              chainLockLatencySec: latency,
+              // Poll resolution, not an event time -- recorded so the two are
+              // never averaged together as if they were the same measurement.
+              chainLockSource: 'poll' as const,
+            },
+          },
         },
       });
     }

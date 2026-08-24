@@ -88,6 +88,9 @@ export interface HealthSnapshot {
   nodeVersion: string;
   masternodes: { total: number; enabled: number };
   stakers: { active: number; windowBlocks: number };
+  observation?: {
+    zmq: { enabled: boolean; connected: boolean; received: number; missed: number };
+  };
 }
 
 export const api = {

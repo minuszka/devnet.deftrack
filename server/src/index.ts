@@ -18,6 +18,7 @@ import { syncService } from './services/sync.service.js';
 import { quorumRoundService } from './services/quorumRound.service.js';
 import { masternodePollerService } from './services/masternodePoller.service.js';
 import { chainLockService } from './services/chainLock.service.js';
+import { zmqService } from './services/zmq.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
@@ -98,6 +99,7 @@ app.get('/api/v1/health', async (_req, res) => {
     nodeVersion: string;
     masternodes: { total: number; enabled: number };
     stakers: { active: number; windowBlocks: number };
+    observation: { zmq: ReturnType<typeof zmqService.stats> };
   }> = {
     // success reports whether the request was served, readiness whether the
     // service can be trusted -- they are different questions.
@@ -117,6 +119,9 @@ app.get('/api/v1/health', async (_req, res) => {
       nodeVersion: net?.subversion?.match(/:([0-9.]+)/)?.[1] ?? 'unknown',
       masternodes: { total: mnTotal, enabled: mnEnabled },
       stakers: { active: stakers, windowBlocks: STAKER_WINDOW },
+      // Where the timings came from and how much of the stream was lost --
+      // a number is only as good as the collection behind it.
+      observation: { zmq: zmqService.stats() },
     },
   };
   res.status(readiness.httpStatus).json(body);
@@ -139,6 +144,7 @@ async function main(): Promise<void> {
   quorumRoundService.start();
   masternodePollerService.start();
   chainLockService.start();
+  zmqService.start();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);
@@ -150,6 +156,7 @@ async function main(): Promise<void> {
     quorumRoundService.stop();
     masternodePollerService.stop();
     chainLockService.stop();
+    await zmqService.stop();
     server.close();
     await disconnectDatabase();
     process.exit(0);

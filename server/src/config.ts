@@ -58,6 +58,12 @@ export const config = {
     intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),
   },
 
+  zmq: {
+    // Empty disables the listener entirely; the poller then carries the
+    // measurement on its own, at its own coarser resolution.
+    endpoint: process.env.ZMQ_ENDPOINT ?? '',
+  },
+
   chainlock: {
     // Resolution of the measured latency. A ChainLock lands within seconds of
     // a block, so a coarse poll would report the poll interval, not the lock.

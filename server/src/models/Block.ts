@@ -51,6 +51,25 @@ export interface BlockDocument extends Document {
   chainLockedAt: Date | null;
   /** chainLockedAt - block time, in seconds. Same resolution caveat. */
   chainLockLatencySec: number | null;
+
+  /**
+   * Which observation the lock time came from.
+   *
+   * 'zmq' is an event time reported by the node the moment the CLSIG was
+   * processed; 'poll' is a sighting whose resolution is the poll interval. They
+   * are not the same measurement and must not be averaged together silently.
+   */
+  chainLockSource: 'zmq' | 'poll' | null;
+  /**
+   * ChainLock arrival minus block arrival, both measured on this host's clock.
+   *
+   * Independent of the block's own timestamp, which the staking node writes and
+   * which can drift. Null unless both events were observed over ZMQ.
+   */
+  chainLockLatencyMs: number | null;
+
+  /** When this node first announced the block to us over ZMQ. */
+  firstSeenAt: Date | null;
 }
 
 const blockSchema = new Schema<BlockDocument>(
@@ -82,6 +101,9 @@ const blockSchema = new Schema<BlockDocument>(
     paidProTxHash: { type: String, default: null, index: true },
     chainLockedAt: { type: Date, default: null },
     chainLockLatencySec: { type: Number, default: null, index: true },
+    chainLockSource: { type: String, enum: ['zmq', 'poll', null], default: null },
+    chainLockLatencyMs: { type: Number, default: null },
+    firstSeenAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
