@@ -116,6 +116,13 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   `pos/minter.cpp:164` refuses to stake until `mn_sync.IsSynced()`. With one
   peer it completes on its own; without one the chain stops after a restart.
 
+- **The fleet binary is a separate artefact and drifts.** After the
+  mainnet-parity change the 80 masternodes still ran the pre-parity build:
+  identical `-version` string, different consensus, so they synced headers to
+  999 -- exactly `lastPowBlock` -- and downloaded no blocks at all. It looked
+  like a network fault. Compare `md5sum`, not the version string, and ship the
+  binary with any consensus change.
+
 - **Check the firewall on every host, not one.** Two of the eight fullnodes run
   `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
   from the first host cost 20 unreachable masternodes and a PoSe ban wave that

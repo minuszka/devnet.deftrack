@@ -43,9 +43,11 @@ for i in $(seq 1 "$COUNT"); do
     continue
   fi
 
-  # -datadir= as the unit itself declares it. Never guessed.
-  datadir=$(systemctl cat "$unit" 2>/dev/null |
-    grep -oP '(?<=-datadir=)[^ ]+' | head -1 || true)
+  # -datadir= as the unit itself declares it, never guessed -- and read from
+  # `systemctl show`, not `systemctl cat`, because the unit is templated and
+  # the file still holds the literal %i rather than the instance number.
+  datadir=$(systemctl show -p ExecStart --value "$unit" 2>/dev/null |
+    tr ' ' '\012' | grep -oP '(?<=^-datadir=).+' | head -1 || true)
 
   if [ -z "$datadir" ] || [ "$datadir" = "/" ] || [ ! -d "$datadir" ]; then
     say "  $unit: could not resolve a datadir from the unit -- skipped"
@@ -68,9 +70,16 @@ for i in $(seq 1 "$COUNT"); do
 
   systemctl stop "$unit" || true
   # Only the chain data. defcon.conf, and with it the operator key, stays.
-  rm -rf "$chaindir"
+  # Often already absent -- an instance stopped before the chain was rebuilt has
+  # nothing stale to remove, and then this is simply a start.
+  if [ -d "$chaindir" ]; then
+    rm -rf "$chaindir"
+    action="wiped and started"
+  else
+    action="started (no stale chain data)"
+  fi
   systemctl start "$unit"
-  say "  $unit: wiped $chaindir and restarted"
+  say "  $unit: $action"
   wiped=$((wiped + 1))
 done
 
