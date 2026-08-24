@@ -7,6 +7,11 @@ import { requireAdminApiKey } from '../../middleware/requireAdminApiKey.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, sendData, sendError } from '../../utils/http.js';
 import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
+import { ExperimentRun } from '../../models/ExperimentRun.js';
+import { Transaction } from '../../models/Transaction.js';
+import { computeOutcome } from '../../services/experiment.service.js';
+import { chainlockProfile } from '../../config/llmq.js';
+import { rpc } from '../../services/rpc.service.js';
 
 const router = Router();
 
@@ -137,6 +142,108 @@ router.delete(
     }
     await MasternodeState.updateMany({ operatorLabel: label }, { $set: { operatorLabel: null } });
     sendData(res, { deleted: label });
+  })
+);
+
+
+/**
+ * Experiment runs.
+ *
+ * Declared, never inferred. The point of the record is that what was intended
+ * and what was done are stated before the result is known -- a hypothesis
+ * written after the fact is not a hypothesis.
+ */
+const experimentSchema = z.object({
+  runKey: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/i),
+  title: z.string().min(1).max(200),
+  hypothesis: z.string().max(2000).default(''),
+  expected: z.string().max(2000).default(''),
+  baselineRunKey: z.string().max(80).nullable().default(null),
+  notes: z.string().max(2000).nullable().default(null),
+  nodeGitSha: z.string().max(64).nullable().default(null),
+  intervention: z
+    .object({
+      kind: z.string().min(1).max(80),
+      description: z.string().max(1000).default(''),
+      targets: z.array(z.string().max(120)).max(500).default([]),
+    })
+    .nullable()
+    .default(null),
+});
+
+/** POST /api/v1/admin/experiments -- opens a run at the current tip. */
+router.post(
+  '/experiments',
+  asyncRoute(async (req, res) => {
+    const parsed = experimentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, 400, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+      return;
+    }
+    const body = parsed.data;
+
+    if (await ExperimentRun.exists({ runKey: body.runKey })) {
+      sendError(res, 409, `experiment "${body.runKey}" already exists`);
+      return;
+    }
+
+    const profile = chainlockProfile();
+    const [tip, net, masternodes] = await Promise.all([
+      rpc.getBlockCount(),
+      rpc.getNetworkInfo().catch(() => null),
+      MasternodeState.find({ active: { $ne: false } }).select('hostIp').lean(),
+    ]);
+
+    const hosts = new Set(masternodes.map((m) => m.hostIp).filter((h): h is string => Boolean(h)));
+    // Stakers are counted from who actually produced blocks recently, because
+    // no RPC reports staking wallets network-wide.
+    const stakers = await Transaction.distinct('vout.scriptHex', {
+      isCoinstake: true,
+      height: { $gt: tip - 200 },
+    }).then((a) => a.filter((h) => typeof h === 'string' && h.length > 0).length);
+
+    const run = await ExperimentRun.create({
+      ...body,
+      status: 'running',
+      startedAt: new Date(),
+      startHeight: tip,
+      nodeVersion: net?.subversion?.match(/:([0-9.]+)/)?.[1] ?? 'unknown',
+      llmqName: profile.llmqName,
+      llmqSize: profile.size,
+      llmqMinSize: profile.minSize,
+      llmqThreshold: profile.threshold,
+      dkgInterval: profile.dkgInterval,
+      participants: { masternodes: masternodes.length, hosts: hosts.size, stakers },
+    });
+
+    sendData(res, { runKey: run.runKey, startHeight: run.startHeight, status: run.status });
+  })
+);
+
+/** POST /api/v1/admin/experiments/:runKey/close -- freezes the outcome. */
+router.post(
+  '/experiments/:runKey/close',
+  asyncRoute(async (req, res) => {
+    const run = await ExperimentRun.findOne({ runKey: String(req.params.runKey ?? '') });
+    if (!run) {
+      sendError(res, 404, 'experiment not found');
+      return;
+    }
+    if (run.status === 'closed') {
+      sendError(res, 409, 'experiment already closed');
+      return;
+    }
+
+    const tip = await rpc.getBlockCount();
+    run.endHeight = tip;
+    run.endedAt = new Date();
+    // Snapshotted so a published result stays quotable -- not so it becomes the
+    // only copy. Everything here is recomputable from the rounds and events.
+    run.outcome = await computeOutcome(run, tip);
+    run.status = 'closed';
+    await run.save();
+
+    sendData(res, { runKey: run.runKey, endHeight: run.endHeight, outcome: run.outcome });
   })
 );
 

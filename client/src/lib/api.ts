@@ -109,10 +109,65 @@ export interface StakingHealth {
   stakers: Array<{ payee: string; blocks: number; share: number }>;
 }
 
+export interface ExperimentOutcome {
+  rounds: { formed: number; failed: number; pending: number };
+  formationRate: number | null;
+  medianHealthRatio: number | null;
+  worstHealthRatio: number | null;
+  longestFailureStreak: number;
+  banEvents: number;
+  revivalEvents: number;
+  penaltyIncreases: number;
+  masternodesPunished: number;
+  blocks: number;
+  medianBlockIntervalSec: number | null;
+  distinctStakers: number;
+  chainLockedBlocks: number;
+  chainLockCoverage: number | null;
+}
+
+export interface ExperimentRow {
+  runKey: string;
+  title: string;
+  hypothesis: string;
+  expected: string;
+  status: 'running' | 'closed';
+  startedAt: string;
+  endedAt: string | null;
+  startHeight: number;
+  endHeight: number | null;
+  nodeVersion: string;
+  nodeGitSha: string | null;
+  profile: { llmqName: string; size: number; minSize: number; threshold: number; dkgInterval: number };
+  participants: { masternodes: number; hosts: number; stakers: number };
+  intervention: { kind: string; description: string; targets: string[] } | null;
+  baselineRunKey: string | null;
+  outcome: ExperimentOutcome | null;
+  notes: string | null;
+}
+
+export interface ExperimentDetail extends ExperimentRow {
+  comparison: {
+    baselineRunKey: string;
+    baseline: ExperimentOutcome;
+    delta: {
+      formationRate: number | null;
+      medianHealthRatio: number | null;
+      masternodesPunished: number;
+      medianBlockIntervalSec: number | null;
+      chainLockCoverage: number | null;
+    };
+  } | null;
+}
+
 export const api = {
   health: () => get<HealthSnapshot>('/health'),
 
   stakingHealth: (blocks: number) => get<StakingHealth>('/staking/health', { blocks }),
+
+  experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
+    get<Page<ExperimentRow>>('/experiments', params),
+  experiment: (runKey: string) => get<ExperimentDetail>(`/experiments/${encodeURIComponent(runKey)}`),
 
   rounds: (params?: { limit?: number; offset?: number; status?: string; llmqName?: string }) =>
     get<Page<QuorumRoundListItem>>('/quorum-rounds', params),

@@ -6,6 +6,7 @@ import masternodeRoutes from './masternodes.v1.routes.js';
 import chainRoutes from './chain.v1.routes.js';
 import adminRoutes from './admin.v1.routes.js';
 import stakingRoutes from './staking.v1.routes.js';
+import experimentRoutes from './experiments.v1.routes.js';
 
 const router = Router();
 
@@ -36,6 +37,7 @@ router.use('/operators', operatorRoutes);
 router.use('/admin', adminRoutes);
 router.use('/masternodes', masternodeRoutes);
 router.use('/staking', stakingRoutes);
+router.use('/experiments', experimentRoutes);
 // Blocks and transactions mount at the router root: /blocks, /txs.
 router.use('/', chainRoutes);
 
