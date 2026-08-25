@@ -244,6 +244,18 @@ export interface RpcTransaction {
   blocktime?: number;
   chainlock?: boolean;
   instantlock?: boolean;
+  /** Present on a quorum commitment (type 6). */
+  qcTx?: {
+    version?: number;
+    height?: number;
+    commitment?: {
+      version?: number;
+      llmqType?: number;
+      quorumHash?: string;
+      validMembersCount?: number;
+      signersCount?: number;
+    };
+  };
 }
 
 export interface RpcMasternodePayment {

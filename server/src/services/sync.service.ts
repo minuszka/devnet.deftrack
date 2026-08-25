@@ -10,6 +10,8 @@ import {
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { QuorumRound } from '../models/QuorumRound.js';
+import { QuorumCommitment } from '../models/QuorumCommitment.js';
+import { LLMQ_PROFILES } from '../config/llmq.js';
 import { quorumReorgReset } from '../domain/reorg.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { DIFF_CURSOR_KEY, mnListDiffService } from './mnListDiff.service.js';
@@ -22,6 +24,9 @@ import { payeeRetryDelayMs } from '../domain/collectorPolicy.js';
 const SYNC_KEY = 'blocks';
 
 /** Persist indexing progress this often, in blocks. */
+/** Consensus TRANSACTION_QUORUM_COMMITMENT; the type a qfcommit carries. */
+const TRANSACTION_QUORUM_COMMITMENT = 6;
+
 const PROGRESS_EVERY = 25;
 
 const dec = (value: number | string): mongoose.Types.Decimal128 =>
@@ -359,6 +364,49 @@ export class SyncService {
           upsert: true,
         },
       });
+    }
+
+    // Quorum commitments, whatever their type. PoSe punishment comes from
+    // whichever quorum a masternode failed, and the explorer measures only one
+    // of them -- without this the punishment can never be traced to its cause.
+    const commitmentOps = [];
+    for (const tx of transactions) {
+      if (tx.type !== TRANSACTION_QUORUM_COMMITMENT || !tx.qcTx?.commitment) continue;
+      const c = tx.qcTx.commitment;
+      const llmqType = c.llmqType ?? -1;
+      const quorumHeight = tx.qcTx.height ?? block.height;
+      const quorumHash = c.quorumHash ?? null;
+      const commitmentKey = `${llmqType}:${quorumHeight}:${quorumHash ?? 'null'}`;
+      const valid = c.validMembersCount ?? 0;
+      const signers = c.signersCount ?? 0;
+
+      commitmentOps.push({
+        updateOne: {
+          filter: { commitmentKey },
+          update: {
+            $setOnInsert: {
+              commitmentKey,
+              llmqType,
+              // The chain runs types this deployment has no profile for; the
+              // number is still the truth, so a missing name is not a gap.
+              llmqName:
+                Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType)?.llmqName ?? null,
+              quorumHash,
+              quorumHeight,
+              minedHeight: block.height,
+              minedBlockHash: block.hash,
+              validMembersCount: valid,
+              signersCount: signers,
+              punishedCount: Math.max(0, signers - valid),
+              detectedAt: new Date(),
+            },
+          },
+          upsert: true,
+        },
+      });
+    }
+    if (commitmentOps.length > 0) {
+      await QuorumCommitment.bulkWrite(commitmentOps, { ordered: false });
     }
 
     if (txOps.length > 0) {
