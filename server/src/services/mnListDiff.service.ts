@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rpc } from './rpc.service.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
+import { MasternodeState } from '../models/MasternodeState.js';
 import { SyncState } from '../models/SyncState.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
 import { OperatorIndex, hostOf } from '../domain/operatorIndex.js';
@@ -88,6 +89,18 @@ export class MnListDiffService {
     }
 
     const operators = await this.operatorIndex();
+
+    // `listdiff` reports only the fields that changed, so a ban carries no
+    // service and hostOf(null) resolved to null -- every chain-derived ban
+    // arrived unattributed, which defeats the one question this project exists
+    // to answer. The host we already know is the right answer here: a ban does
+    // not move a masternode.
+    const knownHosts = new Map(
+      (await MasternodeState.find().select('proTxHash hostIp').lean()).map((m) => [
+        m.proTxHash,
+        m.hostIp,
+      ])
+    );
     const last = Math.min(target, cursor + BATCH);
     let events = 0;
 
@@ -98,7 +111,7 @@ export class MnListDiffService {
 
       if (changes.length > 0) {
         const ops = changes.map((c) => {
-          const hostIp = hostOf(c.serviceAfter);
+          const hostIp = hostOf(c.serviceAfter) ?? knownHosts.get(c.proTxHash) ?? null;
           const eventKey = `${c.proTxHash}:${c.type}:${c.height}`;
           return {
             updateOne: {

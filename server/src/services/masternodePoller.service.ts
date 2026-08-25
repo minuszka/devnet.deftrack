@@ -165,8 +165,13 @@ export class MasternodePollerService {
             penaltyAfter: penalty,
           });
         }
-        if (penalty !== prev.poSePenalty) {
-          push(penalty > prev.poSePenalty ? 'penalty_up' : 'penalty_down', `${height}:${penalty}`, {
+        // Only an increase. PoSe penalty decays by one per block, so a
+        // penalised node produces a row in every single poll: one ban wave
+        // arrived here as 11 bans buried under 247 decay events. The decay is
+        // the node serving its sentence, and the current value is already in
+        // MasternodeState -- nothing is lost by not logging each step of it.
+        if (penalty > prev.poSePenalty) {
+          push('penalty_up', `${height}:${penalty}`, {
             penaltyBefore: prev.poSePenalty,
             penaltyAfter: penalty,
           });
