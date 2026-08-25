@@ -170,16 +170,25 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   from the first host cost 20 unreachable masternodes and a PoSe ban wave that
   looked like real data.
 
-- **The staking thread dies the moment a descriptor wallet has a stakeable
-  coin.** All eight fleet stakers threw `Exception: <null>` from
-  `ThreadStakeMiner` within 48 seconds of each other, at exactly the height
-  their outputs reached `COINBASE_MATURITY + 1` -- and `threadstakeminer thread
-  exit` after it. The daemon keeps running and `getstakinginfo` keeps reporting
-  `staking: true` with a full weight, because those read wallet state, not the
-  thread: a dead minter is invisible from RPC. The seed, on a legacy BDB wallet,
-  has never crashed. Correlation with the wallet type is strong; the cause is
-  not yet proven, and the release build carries no debug info to decode
-  `-printcrashinfo` with.
+- **A descriptor wallet can never stake on this build, and RPC cannot see it.**
+  `CStakeWallet::CreateCoinStake` calls `EnsureLegacyScriptPubKeyMan(*wallet)`
+  (`src/pos/stake.cpp`), an **RPC helper** that throws
+  `JSONRPCError(RPC_WALLET_ERROR, "This type of wallet does not support this
+  command")` whenever the wallet has no legacy ScriptPubKeyMan
+  (`src/wallet/rpcwallet.cpp:132`) -- which is every descriptor wallet. A
+  `JSONRPCError` is a `UniValue`, not a `std::exception`, so `ThreadStakeMiner`
+  reports `Exception: <null>` and the thread exits on the first block it tries
+  to stake.
+
+  The daemon keeps running and `getstakinginfo` keeps reporting `staking: true`
+  with a full weight, because those read wallet state, not the thread: **a dead
+  minter is invisible from RPC.** Reproduced on Ubuntu 24.04 (node2) on the same
+  host where the seed's legacy BDB wallet stakes without trouble, and on all
+  eight Debian 13 fleet hosts, each within 48 seconds of its coins maturing.
+
+  Consequence: the fleet cannot stake at all, because Debian 13 has no
+  `libdb5.3++` and the `--without-bdb` build cannot create a legacy wallet.
+  Distributed block production is blocked on a node fix, not on configuration.
 
 - **Debian 13 has no `libdb5.3++`,** so a wallet build linked against Berkeley
   DB will not run there. The fleet uses a `--without-bdb` build with SQLite
