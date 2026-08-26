@@ -190,6 +190,22 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   `libdb5.3++` and the `--without-bdb` build cannot create a legacy wallet.
   Distributed block production is blocked on a node fix, not on configuration.
 
+- **A descriptor wallet cannot see its own staking rewards.** The coinstake
+  pays `vout[1]` to a **pay-to-pubkey** script built from the kernel key, and
+  consensus requires that: `CheckBlockSignature` (`node/miner.cpp:630`) reads
+  `vtx[1]->vout[1]`, and only its `PUBKEY` branch works -- the `PUBKEYHASH`
+  branch builds a `CPubKey` from a 20-byte hash and always fails `IsValid()`.
+  A descriptor wallet tracks only the scripts its descriptors produce, which are
+  `pkh(...)`, so it does not recognise the P2PK output as its own: it books its
+  own coinstake as an outgoing `send`, and the staked principal plus reward
+  leave its visible balance. Observed on fullnode-4: two wins, balance 50M to
+  30M, `listtransactions` showing `send -5,000,250.00` twice per win
+  (10,000,000 staked + 500 reward, split across two outputs).
+
+  The coins are not destroyed -- the key is still in the wallet -- but nothing
+  in the wallet can see or spend them until a matching `pk(...)` descriptor is
+  imported. This is separate from the throw fixed in #59 and is not fixed by it.
+
 - **Debian 13 has no `libdb5.3++`,** so a wallet build linked against Berkeley
   DB will not run there. The fleet uses a `--without-bdb` build with SQLite
   descriptor wallets, which does stake. The seed node keeps its BDB wallet and
