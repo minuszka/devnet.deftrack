@@ -116,7 +116,8 @@ export class QuorumRoundService {
     for (const plan of plans) {
       const counts = await this.applyPlan(plan, tip, observed, available, operators);
       summary.push(
-        `${plan.profile.llmqName} ${counts.formed}/${counts.failed}/${counts.pending}`
+        `${plan.profile.llmqName} ${counts.formed}/${counts.failed}/${counts.pending}` +
+          (counts.impossible > 0 ? `/${counts.impossible} below minSize` : '')
       );
     }
 
@@ -165,7 +166,7 @@ export class QuorumRoundService {
     observed: ObservedByProfile,
     available: number | null,
     operators: OperatorIndex
-  ): Promise<{ formed: number; failed: number; pending: number }> {
+  ): Promise<{ formed: number; failed: number; pending: number; impossible: number }> {
     const p = plan.profile;
     const seen = observed.get(p.llmqName) ?? new Map();
     // CalculateQuorum returns min(profile size, masternodes available), so the
@@ -178,6 +179,7 @@ export class QuorumRoundService {
     let formed = 0;
     let failed = 0;
     let pending = 0;
+    let impossible = 0;
     let unseeable = 0;
 
     for (const expectedHeight of plan.heights) {
@@ -187,6 +189,12 @@ export class QuorumRoundService {
         expectedHeight,
         dkgMiningWindowEnd: p.dkgMiningWindowEnd,
         commitmentSeen: entry !== undefined,
+        // A profile needing more members than the network has cannot form. That
+        // is not the same as failing, and llmq_400_85 -- minSize 350 against a
+        // devnet of at most 80 -- would otherwise report a failure at every one
+        // of its intervals for as long as the chain runs.
+        effectiveSize,
+        minSize: p.minSize,
       });
 
       // Write nothing rather than a verdict the observation cannot support.
@@ -199,6 +207,7 @@ export class QuorumRoundService {
 
       if (status === 'formed') formed++;
       else if (status === 'failed') failed++;
+      else if (status === 'impossible') impossible++;
       else pending++;
 
       await this.upsertRound(p, expectedHeight, status, entry, effectiveSize, operators);
@@ -220,7 +229,7 @@ export class QuorumRoundService {
 
     await this.recomputeConsecutiveFailures(p, plan.oldest);
 
-    return { formed, failed, pending };
+    return { formed, failed, pending, impossible };
   }
 
   /**

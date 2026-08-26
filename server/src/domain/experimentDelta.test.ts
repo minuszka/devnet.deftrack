@@ -3,7 +3,7 @@ import { compareOutcomes } from '../services/experiment.service.js';
 import type { ExperimentOutcome } from '../models/ExperimentRun.js';
 
 const outcome = (partial: Partial<ExperimentOutcome>): ExperimentOutcome => ({
-  rounds: { formed: 0, failed: 0, pending: 0 },
+  rounds: { formed: 0, failed: 0, pending: 0, impossible: 0 },
   formationRate: null,
   medianHealthRatio: null,
   worstHealthRatio: null,

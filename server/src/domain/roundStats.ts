@@ -6,7 +6,7 @@
  * tested without a database.
  */
 
-export type RoundStatus = 'formed' | 'failed' | 'pending';
+export type RoundStatus = 'formed' | 'failed' | 'pending' | 'impossible';
 
 export interface RoundLike {
   status: RoundStatus;
@@ -15,8 +15,13 @@ export interface RoundLike {
 }
 
 export interface RoundStats {
-  rounds: { formed: number; failed: number; pending: number };
-  /** Excludes pending: a round still inside its window has not failed. */
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
+  /**
+   * Excludes pending, which has not resolved, and impossible, which could not
+   * resolve: a profile needing more members than the network has cannot form
+   * however well every masternode behaves. Counting those as failures reports a
+   * fault where the arithmetic did not allow a result.
+   */
   formationRate: number | null;
   medianHealthRatio: number | null;
   worstHealthRatio: number | null;
@@ -35,6 +40,7 @@ export function roundStats(rounds: readonly RoundLike[]): RoundStats {
   const formed = rounds.filter((r) => r.status === 'formed');
   const failed = rounds.filter((r) => r.status === 'failed');
   const pending = rounds.filter((r) => r.status === 'pending');
+  const impossible = rounds.filter((r) => r.status === 'impossible');
 
   const ratios = formed
     .map((r) => r.healthRatio)
@@ -50,7 +56,8 @@ export function roundStats(rounds: readonly RoundLike[]): RoundStats {
   let longest = 0;
   for (const r of rounds) {
     if (r.status === 'failed') longest = Math.max(longest, ++streak);
-    // A pending round neither breaks nor extends the streak.
+    // Neither a pending round nor an impossible one breaks or extends the
+    // streak: one has not resolved, the other was never a chance to.
     else if (r.status === 'formed') streak = 0;
   }
 
@@ -60,7 +67,12 @@ export function roundStats(rounds: readonly RoundLike[]): RoundStats {
   const decided = formed.length + failed.length;
 
   return {
-    rounds: { formed: formed.length, failed: failed.length, pending: pending.length },
+    rounds: {
+      formed: formed.length,
+      failed: failed.length,
+      pending: pending.length,
+      impossible: impossible.length,
+    },
     formationRate: decided > 0 ? formed.length / decided : null,
     medianHealthRatio: median,
     worstHealthRatio: ratios.length ? ratios[0]! : null,

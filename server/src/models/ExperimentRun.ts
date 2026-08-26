@@ -26,7 +26,7 @@ import mongoose, { Schema, type Document } from 'mongoose';
 export interface ProfileOutcome {
   llmqName: string;
   dkgInterval: number;
-  rounds: { formed: number; failed: number; pending: number };
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
   formationRate: number | null;
   medianHealthRatio: number | null;
   worstHealthRatio: number | null;
@@ -36,7 +36,7 @@ export interface ProfileOutcome {
 }
 
 export interface ExperimentOutcome {
-  rounds: { formed: number; failed: number; pending: number };
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
   /** Excludes pending: a round still inside its window has not failed. */
   formationRate: number | null;
   medianHealthRatio: number | null;
@@ -121,6 +121,9 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
       formed: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
       pending: { type: Number, default: 0 },
+      // A round whose profile needed more members than the network had. Counted
+      // apart from failures so it cannot depress a formation rate.
+      impossible: { type: Number, default: 0 },
     },
     formationRate: { type: Number, default: null },
     medianHealthRatio: { type: Number, default: null },
@@ -149,6 +152,7 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
               formed: { type: Number, default: 0 },
               failed: { type: Number, default: 0 },
               pending: { type: Number, default: 0 },
+              impossible: { type: Number, default: 0 },
             },
             formationRate: { type: Number, default: null },
             medianHealthRatio: { type: Number, default: null },

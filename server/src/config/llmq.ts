@@ -147,11 +147,17 @@ export function chainlockProfile(): LlmqProfile {
  * llmq_400_60, llmq_400_85 and llmq_100_67 -- and all five are in the registry
  * above so that a commitment of any of them can be named.
  *
- * Four of them are tracked. llmq_100_67 is not: it is enabled but has produced
- * no commitment at any height, so reconstructing a schedule for it would record
- * a failed round at every interval for a type that is not being attempted.
- * Absence of evidence that it runs is not evidence that it failed. Add it here
- * the moment one of its commitments appears.
+ * Four of them are tracked. llmq_100_67 is not: it has produced no commitment
+ * of any kind at any height, so the node is not even attempting it, and
+ * reconstructing a schedule would invent rounds nobody ran. Add it the moment
+ * one of its commitments appears.
+ *
+ * llmq_400_85 is tracked, but read its rounds with its numbers in view. Every
+ * one of its 87 commitments on this chain is a *null* commitment -- the marker
+ * the node mines when a round produced nothing -- so it has never once formed
+ * here. That is arithmetic rather than misbehaviour: its minSize is 350 against
+ * a devnet of at most 80 masternodes. Those rounds are classified `impossible`
+ * rather than `failed` for exactly that reason; see classifyRound().
  *
  * llmq_devnet stays in the registry but is not tracked: the mainnet-parity
  * change retired it here.

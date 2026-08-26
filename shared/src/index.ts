@@ -35,7 +35,7 @@ export interface Page<T> {
 
 // ── quorum rounds ───────────────────────────────────────────────────────────
 
-export type RoundStatus = 'pending' | 'formed' | 'failed';
+export type RoundStatus = 'pending' | 'formed' | 'failed' | 'impossible';
 
 export interface RoundMemberView {
   proTxHash: string;

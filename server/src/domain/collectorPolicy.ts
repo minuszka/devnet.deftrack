@@ -17,7 +17,7 @@ export function shouldCollectMasternodes(input: {
 }
 
 export function shouldRefreshRound(
-  round: { status: 'pending' | 'formed' | 'failed'; detailsComplete?: boolean } | undefined
+  round: { status: 'pending' | 'formed' | 'failed' | 'impossible'; detailsComplete?: boolean } | undefined
 ): boolean {
   if (!round) return true;
   if (round.status === 'pending') return true;

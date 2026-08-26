@@ -1,6 +1,6 @@
 import mongoose, { Schema, type Document } from 'mongoose';
 
-export type RoundStatus = 'pending' | 'formed' | 'failed';
+export type RoundStatus = 'pending' | 'formed' | 'failed' | 'impossible';
 
 export interface RoundMember {
   proTxHash: string;
@@ -111,7 +111,7 @@ const quorumRoundSchema = new Schema<QuorumRoundDocument>(
 
     numValidMembers: { type: Number, default: null },
     healthRatio: { type: Number, default: null, index: true },
-    status: { type: String, enum: ['pending', 'formed', 'failed'], required: true, index: true },
+    status: { type: String, enum: ['pending', 'formed', 'failed', 'impossible'], required: true, index: true },
     formed: { type: Boolean, required: true, index: true },
 
     members: [memberSchema],

@@ -251,6 +251,7 @@ export class DdPageExperiments extends LitElement {
                   <th class="r">Formed</th>
                   <th class="r">Failed</th>
                   <th class="r">Pending</th>
+                  <th class="r">Impossible</th>
                   <th class="r">Formation</th>
                   <th class="r">Median health</th>
                   <th class="r">Worst</th>
@@ -268,6 +269,9 @@ export class DdPageExperiments extends LitElement {
                         ${num(p.rounds.failed)}
                       </td>
                       <td class="r mono">${num(p.rounds.pending)}</td>
+                      <td class="r mono ${p.rounds.impossible > 0 ? 'muted' : ''}">
+                        ${num(p.rounds.impossible)}
+                      </td>
                       <td class="r mono">
                         ${p.formationRate === null ? '—' : ratio(p.formationRate)}
                       </td>
@@ -291,6 +295,11 @@ export class DdPageExperiments extends LitElement {
             ever due — and that reconstruction runs per type. Rounds are counted separately
             because the intervals differ: one type can hold a perfect record while another
             degrades, and a single blended rate would report neither.
+            <br /><br />
+            <strong>Impossible</strong> is not a softer word for failed. A profile needing more
+            members than the network has cannot form however well every masternode behaves —
+            llmq_400_85 asks for 350 against a devnet of at most 80 — so those rounds are held
+            out of the formation rate rather than counted against it.
           </div>
         </div>
       </section>

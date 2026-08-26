@@ -74,14 +74,35 @@ export function absenceIsEvidence(
   return oldestObservedHeight === null || expectedHeight >= oldestObservedHeight;
 }
 
-export type RoundOutcome = 'pending' | 'formed' | 'failed';
+export type RoundOutcome = 'pending' | 'formed' | 'failed' | 'impossible';
 
+/**
+ * What a round's absence means.
+ *
+ * `impossible` is not a softer word for `failed`. A quorum whose profile needs
+ * more members than the network has cannot form however well every masternode
+ * behaves: CalculateQuorum returns min(size, available), and below minSize there
+ * is nothing to commit. Counting those as failures is the same error as counting
+ * the era before any masternode existed against ChainLock coverage -- it reports
+ * a fault where the arithmetic simply did not allow a result.
+ *
+ * Observation still outranks the arithmetic. A commitment means the round formed,
+ * whatever this deployment believed about the sizes.
+ */
 export function classifyRound(args: {
   tip: number;
   expectedHeight: number;
   dkgMiningWindowEnd: number;
   commitmentSeen: boolean;
+  /** min(profile size, masternodes available); null when it could not be read. */
+  effectiveSize?: number | null;
+  minSize?: number;
 }): RoundOutcome {
   if (args.commitmentSeen) return 'formed';
-  return args.tip < resolvedByHeight(args.expectedHeight, args.dkgMiningWindowEnd) ? 'pending' : 'failed';
+  if (args.tip < resolvedByHeight(args.expectedHeight, args.dkgMiningWindowEnd)) return 'pending';
+  const { effectiveSize, minSize } = args;
+  if (typeof effectiveSize === 'number' && typeof minSize === 'number' && effectiveSize < minSize) {
+    return 'impossible';
+  }
+  return 'failed';
 }

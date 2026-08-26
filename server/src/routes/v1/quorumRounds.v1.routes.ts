@@ -17,7 +17,7 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   llmqName: z.string().min(1).max(64).optional(),
-  status: z.enum(['pending', 'formed', 'failed']).optional(),
+  status: z.enum(['pending', 'formed', 'failed', 'impossible']).optional(),
   /** Kept for readability: ?formed=false is the failure view. */
   formed: z
     .enum(['true', 'false'])

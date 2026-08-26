@@ -54,7 +54,7 @@ app.use(express.json({ limit: '256kb' }));
 app.use('/api/v1', v1Routes);
 
 app.get('/api/v1/health', async (_req, res) => {
-  const [state, indexedBlocks, tip, roundsFormed, roundsFailed, roundsPending, net, mnTotal, mnEnabled] =
+  const [state, indexedBlocks, tip, roundsFormed, roundsFailed, roundsPending, roundsImpossible, net, mnTotal, mnEnabled] =
     await Promise.all([
       SyncState.findOne({ key: 'blocks' }).lean().catch(() => null),
       Block.estimatedDocumentCount().catch(() => -1),
@@ -62,6 +62,9 @@ app.get('/api/v1/health', async (_req, res) => {
       QuorumRound.countDocuments({ status: 'formed' }).catch(() => -1),
       QuorumRound.countDocuments({ status: 'failed' }).catch(() => -1),
       QuorumRound.countDocuments({ status: 'pending' }).catch(() => -1),
+      // Rounds of a profile needing more members than the network has. Reported
+      // apart from failures so the two are never read as one number.
+      QuorumRound.countDocuments({ status: 'impossible' }).catch(() => -1),
       rpc.getNetworkInfo().catch(() => null),
       // active only: a row that left `protx list registered` is history, not
       // part of the current network size.
@@ -100,7 +103,7 @@ app.get('/api/v1/health', async (_req, res) => {
     indexedHeight: number;
     indexedBlocks: number;
     behind: number;
-    rounds: { formed: number; failed: number; pending: number };
+    rounds: { formed: number; failed: number; pending: number; impossible: number };
     nodeVersion: string;
     masternodes: { total: number; enabled: number };
     stakers: { active: number; windowBlocks: number };
@@ -119,7 +122,12 @@ app.get('/api/v1/health', async (_req, res) => {
       indexedHeight: state?.lastSyncedHeight ?? -1,
       indexedBlocks,
       behind: tip >= 0 && state ? Math.max(0, tip - state.lastSyncedHeight) : -1,
-      rounds: { formed: roundsFormed, failed: roundsFailed, pending: roundsPending },
+      rounds: {
+        formed: roundsFormed,
+        failed: roundsFailed,
+        pending: roundsPending,
+        impossible: roundsImpossible,
+      },
       // "/DeFCoN:22.1.4(devnet.devnet-defcon-q60)/" -> "22.1.4"
       nodeVersion: net?.subversion?.match(/:([0-9.]+)/)?.[1] ?? 'unknown',
       masternodes: { total: mnTotal, enabled: mnEnabled },

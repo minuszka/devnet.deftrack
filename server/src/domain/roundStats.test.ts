@@ -12,8 +12,30 @@ describe('round statistics', () => {
     // A round still inside its mining window has not failed, and counting it
     // as one reports a failure the network never had.
     const s = roundStats([r('formed', 1), r('failed'), r('pending')]);
-    expect(s.rounds).toEqual({ formed: 1, failed: 1, pending: 1 });
+    expect(s.rounds).toEqual({ formed: 1, failed: 1, pending: 1, impossible: 0 });
     expect(s.formationRate).toBe(0.5);
+  });
+
+  it('excludes impossible rounds from the formation rate', () => {
+    // A quorum needing more members than the network has cannot form however
+    // well every masternode behaves. llmq_400_85 needs 350 against a devnet of
+    // at most 80, so counting its rounds as failures would report a permanent
+    // fault where the arithmetic never allowed a result -- the same error as
+    // counting the era before any masternode existed against ChainLock coverage.
+    const s = roundStats([r('formed', 1), r('impossible'), r('impossible')]);
+    expect(s.rounds).toEqual({ formed: 1, failed: 0, pending: 0, impossible: 2 });
+    expect(s.formationRate).toBe(1);
+  });
+
+  it('says nothing rather than zero when every round was impossible', () => {
+    const s = roundStats([r('impossible'), r('impossible')]);
+    expect(s.formationRate).toBeNull();
+  });
+
+  it('does not let an impossible round break a failure streak', () => {
+    // It was never a chance to succeed, so it is evidence of neither outcome.
+    const s = roundStats([r('failed'), r('impossible'), r('failed'), r('formed', 1)]);
+    expect(s.longestFailureStreak).toBe(2);
   });
 
   it('says nothing rather than zero when no round has decided', () => {

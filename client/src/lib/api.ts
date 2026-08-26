@@ -96,7 +96,7 @@ export interface HealthSnapshot {
   indexedHeight: number;
   indexedBlocks: number;
   behind: number;
-  rounds: { formed: number; failed: number; pending: number };
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
   nodeVersion: string;
   masternodes: { total: number; enabled: number };
   stakers: { active: number; windowBlocks: number };
@@ -124,7 +124,7 @@ export interface StakingHealth {
 export interface ProfileOutcome {
   llmqName: string;
   dkgInterval: number;
-  rounds: { formed: number; failed: number; pending: number };
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
   formationRate: number | null;
   medianHealthRatio: number | null;
   worstHealthRatio: number | null;
@@ -133,7 +133,7 @@ export interface ProfileOutcome {
 }
 
 export interface ExperimentOutcome {
-  rounds: { formed: number; failed: number; pending: number };
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
   formationRate: number | null;
   medianHealthRatio: number | null;
   worstHealthRatio: number | null;
