@@ -216,6 +216,40 @@ router.post(
   })
 );
 
+/**
+ * PATCH /api/v1/admin/experiments/:runKey -- records what the run concluded.
+ *
+ * Notes only, and deliberately writable after close: the numbers freeze at
+ * close, but what they turned out to mean is often only clear afterwards, and
+ * a finding kept outside the record is a finding that gets lost. Nothing the
+ * run declared beforehand can be edited here -- a hypothesis that can be
+ * rewritten once the answer is known is not a hypothesis.
+ */
+const notesSchema = z.object({ notes: z.string().max(2000).nullable() });
+
+router.patch(
+  '/experiments/:runKey',
+  asyncRoute(async (req, res) => {
+    const parsed = notesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, 400, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+      return;
+    }
+
+    const run = await ExperimentRun.findOneAndUpdate(
+      { runKey: String(req.params.runKey ?? '') },
+      { $set: { notes: parsed.data.notes } },
+      { new: true }
+    );
+    if (!run) {
+      sendError(res, 404, 'experiment not found');
+      return;
+    }
+
+    sendData(res, { runKey: run.runKey, notes: run.notes });
+  })
+);
+
 /** POST /api/v1/admin/experiments/:runKey/close -- freezes the outcome. */
 router.post(
   '/experiments/:runKey/close',

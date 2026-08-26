@@ -197,8 +197,30 @@ export class DdPageExperiments extends LitElement {
             </section>
           `
         : nothing}
-      ${this._byProfile(d)} ${this._declared(d)}
+      ${this._found(d)} ${this._byProfile(d)} ${this._declared(d)}
       ${d.comparison ? this._comparison(d) : nothing}
+    `;
+  }
+
+  /**
+   * What the run concluded, in prose.
+   *
+   * Placed above the declaration on purpose: a reader who scrolls no further
+   * should still get the finding rather than the intention, and the two must
+   * never be confused for one another.
+   */
+  private _found(d: ExperimentDetail): TemplateResult | typeof nothing {
+    if (!d.notes) return nothing;
+    return html`
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">What it found</div>
+          <div class="page-sub mono">recorded after the numbers froze</div>
+        </div>
+        <div class="card-body">
+          <div class="prose">${d.notes}</div>
+        </div>
+      </section>
     `;
   }
 
