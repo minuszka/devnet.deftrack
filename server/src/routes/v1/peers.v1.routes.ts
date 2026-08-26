@@ -25,6 +25,7 @@ const ingestSchema = z.object({
       maxPingWaitMs: z.number().finite().nullable().default(null),
       height: z.number().int().min(0).nullable().default(null),
       stakeScripts: z.array(z.string().regex(/^[0-9a-f]{2,140}$/i)).max(200).default([]),
+      nodeBuild: z.string().regex(/^[0-9a-f]{0,64}$/i).default(''),
     })
     .optional(),
   observations: z
@@ -176,6 +177,7 @@ router.get(
         height: h.height,
         clockOffsetMs: h.clockOffsetMs,
         agentVersion: h.agentVersion,
+        nodeBuild: h.nodeBuild ?? '',
         reportedAt: h.reportedAt.toISOString(),
       })),
     });

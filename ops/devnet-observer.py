@@ -16,6 +16,7 @@ declare its own error bar instead of implying a precision it does not have.
 The host's NTP offset is sent along for the same reason. It is never used to
 correct a timestamp: correcting would claim an accuracy NTP does not guarantee.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -25,7 +26,7 @@ from datetime import datetime, timezone
 
 import requests
 
-AGENT_VERSION = "1.4.0"
+AGENT_VERSION = "1.5.0"
 
 DATADIR = os.environ.get("OBSERVER_DATADIR", "/opt/defcon-devnet/mn11")
 CLI = os.environ.get("OBSERVER_CLI", "/opt/defcon-devnet/bin/defcon-cli")
@@ -86,6 +87,35 @@ def clock_offset_ms():
     return None
 
 
+DAEMON = os.environ.get("OBSERVER_DAEMON", "/opt/defcon-devnet/bin/defcond")
+
+_build_id = None
+
+
+def build_id():
+    """A fingerprint of the daemon actually running here.
+
+    `-version` cannot answer this: two builds carrying different consensus code
+    report the same string, which is how eight hosts once ran a binary three days
+    older than the seed's with nothing on any screen to say so. Hash the file
+    instead. Cached because it only changes when someone deploys, and reading 17MB
+    every poll to learn the same answer would be wasteful.
+    """
+    global _build_id
+    if _build_id is None:
+        try:
+            h = hashlib.sha256()
+            with open(DAEMON, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            _build_id = h.hexdigest()[:12]
+        except OSError:
+            # Not fatal and not guessed at: a host whose binary cannot be read
+            # reports nothing rather than something plausible.
+            _build_id = ""
+    return _build_id
+
+
 def peer_status():
     """
     What this host can see of the network right now.
@@ -127,6 +157,7 @@ def peer_status():
         "maxPingWaitMs": max((p.get("pingwait", 0) or 0) * 1000.0 for p in peers) if peers else 0,
         "height": height,
         "stakeScripts": stake_scripts() or [],
+        "nodeBuild": build_id(),
     }
 
 

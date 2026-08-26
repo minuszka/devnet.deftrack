@@ -224,6 +224,8 @@ export interface PeerPropagation {
     height: number | null;
     clockOffsetMs: number | null;
     agentVersion: string;
+    /** Fingerprint of the daemon binary; '' when the agent could not read it. */
+    nodeBuild: string;
     reportedAt: string;
   }>;
 }

@@ -27,6 +27,10 @@ export class DdPagePeers extends LitElement {
     controlStyles,
     pageStyles,
     css`
+      .bad {
+        color: var(--crit);
+        font-weight: 600;
+      }
       .noise {
         color: var(--ink-3);
       }
@@ -71,6 +75,20 @@ export class DdPagePeers extends LitElement {
   private _setTopic(t: 'block' | 'chainlock'): void {
     this._topic = t;
     void this._load();
+  }
+
+  /** The build most hosts agree on; anything else is drift worth seeing. */
+  private _commonBuild(d: PeerPropagation): string {
+    const counts = new Map<string, number>();
+    for (const h of d.hosts) {
+      if (h.nodeBuild) counts.set(h.nodeBuild, (counts.get(h.nodeBuild) ?? 0) + 1);
+    }
+    let best = '';
+    let bestCount = 0;
+    for (const [build, n] of counts) {
+      if (n > bestCount) [best, bestCount] = [build, n];
+    }
+    return best;
   }
 
   override render(): TemplateResult {
@@ -157,12 +175,13 @@ export class DdPagePeers extends LitElement {
                   <th class="r">Median ping</th>
                   <th class="r">Height</th>
                   <th class="r">Clock</th>
+                  <th>Build</th>
                   <th class="r">Reported</th>
                 </tr>
               </thead>
               <tbody>
                 ${d.hosts.length === 0
-                  ? html`<tr><td class="empty" colspan="8">No host has reported connectivity yet.</td></tr>`
+                  ? html`<tr><td class="empty" colspan="9">No host has reported connectivity yet.</td></tr>`
                   : d.hosts.map(
                       (h) => html`
                         <tr>
@@ -173,6 +192,9 @@ export class DdPagePeers extends LitElement {
                           <td class="r mono">${ms(h.medianPingMs)}</td>
                           <td class="r mono">${h.height === null ? '—' : num(h.height)}</td>
                           <td class="r mono">${h.clockOffsetMs === null ? 'unknown' : ms(h.clockOffsetMs)}</td>
+                          <td class="mono ${h.nodeBuild && h.nodeBuild !== this._commonBuild(d) ? 'bad' : ''}">
+                            ${h.nodeBuild || 'unknown'}
+                          </td>
                           <td class="r mono">${ago(h.reportedAt)}</td>
                         </tr>
                       `
@@ -181,6 +203,11 @@ export class DdPagePeers extends LitElement {
             </table>
           </div>
           <div class="caveat">
+            <strong>Build</strong> fingerprints the daemon binary each host is running. The version
+            string cannot answer that question — two builds carrying different consensus code report
+            the same one, which is how the fleet once ran a binary three days older than the seed's
+            with nothing on any screen to say so. A host disagreeing with the majority is marked.
+            <br /><br />
             <strong>MNAUTH</strong> counts peers authenticated as masternodes — the quorum mesh, as
             distinct from ordinary connections. A quorum member with none of these is isolated from
             exactly the peers a DKG needs.

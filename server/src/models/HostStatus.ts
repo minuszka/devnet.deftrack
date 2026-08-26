@@ -32,6 +32,15 @@ export interface HostStatusDocument extends Document {
    * concentration -- the two numbers this devnet exists to measure.
    */
   stakeScripts: string[];
+  /**
+   * Fingerprint of the daemon binary this host is actually running.
+   *
+   * The version string cannot answer this -- two builds carrying different
+   * consensus code report the same one, which is how eight hosts ran a binary
+   * three days older than the seed's with nothing on any screen to say so.
+   * Empty when the agent could not read the file: unknown, not guessed.
+   */
+  nodeBuild: string;
 
   clockOffsetMs: number | null;
   agentVersion: string;
@@ -49,6 +58,7 @@ const hostStatusSchema = new Schema<HostStatusDocument>({
   height: { type: Number, default: null },
 
   stakeScripts: [{ type: String }],
+  nodeBuild: { type: String, default: '' },
 
   clockOffsetMs: { type: Number, default: null },
   agentVersion: { type: String, default: 'unknown' },
