@@ -204,6 +204,32 @@ export interface PeerPropagation {
   }>;
 }
 
+export interface SelectionFairness {
+  roundsConsidered: number;
+  expectedSelectionRate: number | null;
+  minSamples: number;
+  llmqName: string | null;
+  heightRange: { from: number; to: number } | null;
+  nodes: Array<{
+    proTxHash: string;
+    operatorLabel: string | null;
+    host: string | null;
+    timesSelected: number;
+    timesInvalid: number;
+    selectionRate: number;
+    invalidRate: number | null;
+  }>;
+  hosts: Array<{
+    host: string;
+    nodes: number;
+    timesSelected: number;
+    timesInvalid: number;
+    invalidRate: number | null;
+  }>;
+  neverSelected: string[];
+  neverSelectedCount: number;
+}
+
 export const api = {
   health: () => get<HealthSnapshot>('/health'),
 
@@ -211,6 +237,9 @@ export const api = {
 
   peerPropagation: (topic: 'block' | 'chainlock', events: number) =>
     get<PeerPropagation>('/peers/propagation', { topic, events }),
+
+  selectionFairness: (rounds: number) =>
+    get<SelectionFairness>('/fairness/selection', { rounds }),
 
   experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
     get<Page<ExperimentRow>>('/experiments', params),

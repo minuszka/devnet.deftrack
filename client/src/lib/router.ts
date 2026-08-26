@@ -34,6 +34,7 @@ export const ROUTES: Route[] = [
   { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks' },
   { path: '/txs', tag: 'dd-page-txs', label: 'Transactions' },
   { path: '/operators', tag: 'dd-page-operators', label: 'Operators' },
+  { path: '/fairness', tag: 'dd-page-fairness', label: 'Fairness' },
   {
     path: '/experiments',
     tag: 'dd-page-experiments',

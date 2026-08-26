@@ -15,6 +15,7 @@ import './dd-page-chainlocks.js';
 import './dd-page-staking.js';
 import './dd-page-experiments.js';
 import './dd-page-peers.js';
+import './dd-page-fairness.js';
 
 const HEALTH_REFRESH_MS = 30_000;
 
@@ -261,6 +262,8 @@ export class DdShell extends LitElement {
         return html`<dd-page-chainlocks></dd-page-chainlocks>`;
       case 'dd-page-staking':
         return html`<dd-page-staking></dd-page-staking>`;
+      case 'dd-page-fairness':
+        return html`<dd-page-fairness></dd-page-fairness>`;
       case 'dd-page-peers':
         return html`<dd-page-peers></dd-page-peers>`;
       case 'dd-page-experiments':
