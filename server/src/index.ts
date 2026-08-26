@@ -20,6 +20,7 @@ import { masternodePollerService } from './services/masternodePoller.service.js'
 import { chainLockService } from './services/chainLock.service.js';
 import { zmqService } from './services/zmq.service.js';
 import { mnListDiffService } from './services/mnListDiff.service.js';
+import { seedStatusService } from './services/seedStatus.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
@@ -155,6 +156,7 @@ async function main(): Promise<void> {
   mnListDiffService.start();
   chainLockService.start();
   zmqService.start();
+  seedStatusService.start();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);
@@ -168,6 +170,7 @@ async function main(): Promise<void> {
     mnListDiffService.stop();
     chainLockService.stop();
     await zmqService.stop();
+    seedStatusService.stop();
     metricsService.stop();
     server.close();
     await disconnectDatabase();

@@ -69,6 +69,14 @@ export const config = {
     intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),
   },
 
+  stake: {
+    // consensus.stakeValueRange on this devnet (chainparams.cpp:572). An output
+    // outside it can never stake, whatever its age, so it is not a payout
+    // script and not worth a lookup.
+    minValue: optionalNumber('STAKE_MIN_VALUE', 10_000),
+    maxValue: optionalNumber('STAKE_MAX_VALUE', 12_500_000),
+  },
+
   ingest: {
     // Shared by every host agent, so it is the credential most likely to leak.
     // Empty disables the endpoint outright rather than leaving it open.

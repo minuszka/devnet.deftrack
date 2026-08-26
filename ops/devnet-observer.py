@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 import requests
 
-AGENT_VERSION = "1.3.0"
+AGENT_VERSION = "1.4.0"
 
 DATADIR = os.environ.get("OBSERVER_DATADIR", "/opt/defcon-devnet/mn11")
 CLI = os.environ.get("OBSERVER_CLI", "/opt/defcon-devnet/bin/defcon-cli")
@@ -151,6 +151,15 @@ def stake_scripts():
 
     scripts = set()
     for u in utxos:
+        # An output that has already staked is pay-to-pubkey and carries no
+        # address at all, so resolving through the address misses exactly the
+        # keys that have proven they produce blocks. Take the script directly
+        # when it is already the shape a coinstake pays to.
+        spk = (u.get("scriptPubKey") or "").lower()
+        if len(spk) == 70 and spk.startswith("21") and spk.endswith("ac"):
+            scripts.add(spk)
+            continue
+
         addr = u.get("address")
         if not addr:
             continue

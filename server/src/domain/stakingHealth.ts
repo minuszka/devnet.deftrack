@@ -134,14 +134,22 @@ export function stakingHealth(samples: BlockSample[], owners: ScriptOwners = new
       perHost.set(host, (perHost.get(host) ?? 0) + s.blocks);
     }
 
-    const attributed = [...perHost.values()].reduce((a, b) => a + b, 0);
+    // Shares are of every block produced, not just the attributed ones.
+    // Dividing by the attributed subset would let an unmapped producer vanish
+    // and make the remainder look evenly spread.
     const hosts = [...perHost.entries()]
-      .map(([host, n]) => ({ host, blocks: n, share: attributed > 0 ? n / attributed : 0 }))
+      .map(([host, n]) => ({ host, blocks: n, share: n / totalPaid }))
       .sort((a, b) => b.blocks - a.blocks);
 
     byHost = {
       distinctHosts: hosts.length,
-      hhi: hosts.length > 0 ? hosts.reduce((sum, h) => sum + h.share * h.share, 0) : null,
+      // Null while anything is unattributed: a concentration index computed
+      // over part of the producers is not a measurement of concentration, and
+      // it would read low precisely when the missing producer is the big one.
+      hhi:
+        unattributed === 0 && hosts.length > 0
+          ? hosts.reduce((sum, h) => sum + h.share * h.share, 0)
+          : null,
       topHostShare: hosts[0]?.share ?? null,
       unattributedBlocks: unattributed,
       hosts,
