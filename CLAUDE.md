@@ -91,6 +91,7 @@ would print the password in `claude mcp list` output.
 | Explorer + seed node | the devnet VPS; `deftrack-devnet.service`, `/opt/devnet-deftrack/app` |
 | Second devnet node | same host, `defcond-devnet2`, exists so the seed has a peer |
 | 80 masternodes | 8 DeFCoN fullnodes, 10 each, ports 19799-19808, `defcon-devnet-mn@N` |
+| 8 fleet stakers | **instance 11** of the same template on each host -- a masternode cannot stake, so block production needs its own daemon. 8 x 11 = 88 services in total |
 | Node binaries | `/usr/local/bin/defcond` (seed, BDB wallet) and a `--without-bdb` build for the fleet |
 
 Reach the fleet through the jump host; the per-node key lives there, not
@@ -164,6 +165,33 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   error. The seed only stakes because its coins are 11,000,000 PoW rewards --
   inside the range by accident. Fund a staker in outputs of about 10,000,000,
   and never in one lump.
+
+- **A binary that compiles is not a binary that runs.** A fleet build made in
+  WSL linked against the build host's `libminiupnpc` and `libnatpmp`, which the
+  targets do not have. It was installed on the seed host before anyone noticed;
+  the node it replaced would not start, and `defcond -version` on the target was
+  the first thing that said so. Nothing in the build log did -- the compile
+  succeeded and the exit code was 0. `ldd <binary> | grep "not found"` on a
+  **target** host, before installing anywhere, costs one second and would have
+  caught it. `ops/fleet-deploy.sh` now runs that check on a real fleet host and
+  refuses to continue without it. Configure the fleet build with
+  `--without-bdb --without-miniupnpc --without-natpmp`.
+
+- **`make` exiting 0 is not proof that anything was built.** Three times in one
+  day a build reported success while compiling nothing: once `make` had no rule
+  for the object name given, once a backgrounded build was killed by a stray
+  `&`, once the file simply was not rebuilt. Each time the exit code said 0.
+  What actually settles it is the **object or binary timestamp against the build
+  start**, and the count of `CXX`/`CXXLD` lines in the log.
+
+- **The evodb diffs on this devnet do not reproduce its snapshots, and the tool
+  cannot mend it.** `evodb verify` fails on every snapshot pair from height 1000
+  onward, including `ApplyDiff: can't find an updated masternode, id=0`. A repair
+  cannot fix it: rebuilding assigns different `internalId`s, and a diff built
+  from those references ids the stored snapshots do not have. Only a full reindex
+  would. **The node is unaffected** -- it builds its list from blocks, not from
+  these diffs, which is why 80 masternodes, `protx listdiff` and the payments all
+  work. Do not read a verification failure here as a node fault.
 
 - **Check the firewall on every host, not one.** Two of the eight fullnodes run
   `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
