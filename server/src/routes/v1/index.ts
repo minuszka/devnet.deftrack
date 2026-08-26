@@ -9,6 +9,7 @@ import stakingRoutes from './staking.v1.routes.js';
 import experimentRoutes from './experiments.v1.routes.js';
 import peerRoutes from './peers.v1.routes.js';
 import commitmentRoutes from './commitments.v1.routes.js';
+import fairnessRoutes from './fairness.v1.routes.js';
 import metricsRoutes from './metrics.v1.routes.js';
 
 const router = Router();
@@ -35,6 +36,7 @@ router.use('/operators/reliability', heavyLimiter);
 router.use('/masternodes/ban-waves', heavyLimiter);
 router.use('/staking/health', heavyLimiter);
 router.use('/peers/propagation', heavyLimiter);
+router.use('/fairness/selection', heavyLimiter);
 
 router.use('/quorum-rounds', quorumRoundRoutes);
 router.use('/operators', operatorRoutes);
@@ -44,6 +46,7 @@ router.use('/staking', stakingRoutes);
 router.use('/experiments', experimentRoutes);
 router.use('/peers', peerRoutes);
 router.use('/quorum-commitments', commitmentRoutes);
+router.use('/fairness', fairnessRoutes);
 router.use('/metrics', metricsRoutes);
 // Blocks and transactions mount at the router root: /blocks, /txs.
 router.use('/', chainRoutes);
