@@ -97,7 +97,9 @@ fi
 echo "==> rolling out"
 ssh "$JUMP" "bash -s" <<REMOTE_DEPLOY
 set -uo pipefail
-SSH="ssh -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
+# -n: without it ssh reads the loop's stdin and swallows the rest of the
+# inventory, so the rollout silently visits one host and reports success.
+SSH="ssh -n -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
 SCP="scp -q -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
 failed=0
 while read -r ip; do
