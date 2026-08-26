@@ -87,16 +87,23 @@ router.post(
     const stored = ops.length > 0 ? (await PeerObservation.bulkWrite(ops, { ordered: false })).upsertedCount : 0;
 
     if (body.status) {
+      const { stakeScripts, ...status } = body.status;
       await HostStatus.updateOne(
         { host: body.host },
         {
           $set: {
-            ...body.status,
+            ...status,
             host: body.host,
             clockOffsetMs: body.clockOffsetMs,
             agentVersion: body.agentVersion,
             reportedAt: ingestedAt,
           },
+          // Accumulated, never replaced. A payout script belongs to whoever
+          // holds its key, permanently -- but it is invisible to the agent
+          // while the coinstake that created it is still immature, which is
+          // exactly the window covering the most recent blocks. Overwriting
+          // would lose attribution for a key every time it went to work.
+          $addToSet: { stakeScripts: { $each: stakeScripts } },
         },
         { upsert: true }
       );
