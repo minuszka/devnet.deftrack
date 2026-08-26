@@ -24,14 +24,17 @@ import { seedStatusService } from './services/seedStatus.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
-import { Transaction } from './models/Transaction.js';
 import { MasternodeState } from './models/MasternodeState.js';
 import v1Routes from './routes/v1/index.js';
 import { sendError } from './utils/http.js';
 import { evaluateReadiness } from './domain/readiness.js';
+import { currentParticipants } from './services/experiment.service.js';
 import { metricsService } from './services/metrics.service.js';
 
-/** Blocks looked at when counting who is actually producing them. */
+/**
+ * Blocks the staker count looks back over. Stated in the response so a reader
+ * knows what "active" means here -- it is a window, not a registry.
+ */
 const STAKER_WINDOW = 200;
 
 const app = express();
@@ -66,23 +69,16 @@ app.get('/api/v1/health', async (_req, res) => {
       MasternodeState.countDocuments({ active: { $ne: false }, banned: false }).catch(() => -1),
     ]);
 
-  // How many wallets actually produced a block recently. There is no RPC for
+  // How many machines actually produced a block recently. There is no RPC for
   // "who is staking" network-wide -- getstakinginfo speaks only for this node --
-  // so this counts distinct coinstake payees, which is what block production
-  // actually depended on.
+  // so this is derived from who paid the coinstakes.
   //
-  // Keyed on the output script, not the address: coinstake payouts are
-  // pay-to-pubkey and the RPC reports no address for them, so counting
-  // addresses returned zero while the chain was plainly being staked.
+  // The same helper the experiment records use, deliberately: this figure and
+  // the one on the staking page were computed separately and drifted, so the
+  // banner read 27 producers while the page read 9 machines. One definition,
+  // one code path.
   const stakers =
-    tip >= 0
-      ? await Transaction.distinct('vout.scriptHex', {
-          isCoinstake: true,
-          height: { $gt: tip - STAKER_WINDOW },
-        })
-          .then((a) => a.filter((h) => typeof h === 'string' && h.length > 0).length)
-          .catch(() => -1)
-      : -1;
+    tip >= 0 ? await currentParticipants(tip).then((p) => p.stakers).catch(() => -1) : -1;
 
   const readiness = evaluateReadiness({
     mongoConnected: mongoose.connection.readyState === 1,
