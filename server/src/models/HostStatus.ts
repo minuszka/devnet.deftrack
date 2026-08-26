@@ -23,6 +23,16 @@ export interface HostStatusDocument extends Document {
   /** The host's own chain height, for spotting one node left behind. */
   height: number | null;
 
+  /**
+   * Coinstake payout scripts this host can produce.
+   *
+   * A coinstake pays to the key of the output it spent, so one machine holding
+   * five outputs under five keys shows up as five producers. Counting keys
+   * overstates how distributed block production is, and understates
+   * concentration -- the two numbers this devnet exists to measure.
+   */
+  stakeScripts: string[];
+
   clockOffsetMs: number | null;
   agentVersion: string;
   reportedAt: Date;
@@ -37,6 +47,8 @@ const hostStatusSchema = new Schema<HostStatusDocument>({
   medianPingMs: { type: Number, default: null },
   maxPingWaitMs: { type: Number, default: null },
   height: { type: Number, default: null },
+
+  stakeScripts: [{ type: String }],
 
   clockOffsetMs: { type: Number, default: null },
   agentVersion: { type: String, default: 'unknown' },

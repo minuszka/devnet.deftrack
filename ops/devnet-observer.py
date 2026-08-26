@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 import requests
 
-AGENT_VERSION = "1.2.0"
+AGENT_VERSION = "1.3.0"
 
 DATADIR = os.environ.get("OBSERVER_DATADIR", "/opt/defcon-devnet/mn11")
 CLI = os.environ.get("OBSERVER_CLI", "/opt/defcon-devnet/bin/defcon-cli")
@@ -126,7 +126,45 @@ def peer_status():
         "medianPingMs": median_ping,
         "maxPingWaitMs": max((p.get("pingwait", 0) or 0) * 1000.0 for p in peers) if peers else 0,
         "height": height,
+        "stakeScripts": stake_scripts() or [],
     }
+
+
+def stake_scripts():
+    """
+    The coinstake payout scripts this host can produce, so the explorer can
+    group block production by machine instead of by key.
+
+    A coinstake pays to the key of the output it spent, as pay-to-pubkey, so a
+    wallet holding five outputs under five keys appears as five independent
+    producers. Counting those as five stakers overstates decentralisation and
+    understates concentration -- exactly the two numbers this devnet exists to
+    measure.
+    """
+    raw = cli("-rpcwallet=stake", "listunspent", "0", "9999999")
+    if raw is None:
+        return None
+    try:
+        utxos = json.loads(raw)
+    except Exception:
+        return None
+
+    scripts = set()
+    for u in utxos:
+        addr = u.get("address")
+        if not addr:
+            continue
+        info = cli("-rpcwallet=stake", "getaddressinfo", addr)
+        if not info:
+            continue
+        try:
+            pubkey = json.loads(info).get("pubkey")
+        except Exception:
+            pubkey = None
+        # OP_PUSH33 <pubkey> OP_CHECKSIG -- the script a coinstake pays to.
+        if pubkey and len(pubkey) == 66:
+            scripts.add("21" + pubkey + "ac")
+    return sorted(scripts)
 
 
 def now_iso():

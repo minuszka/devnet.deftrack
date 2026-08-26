@@ -85,3 +85,37 @@ describe('staking health', () => {
     expect(h.topStakerShare).toBeNull();
   });
 });
+
+describe('grouping production by machine', () => {
+  const owners = new Map([
+    ['k1', 'fullnode-1'],
+    ['k2', 'fullnode-1'],
+    ['k3', 'fullnode-1'],
+    ['k4', 'fullnode-4'],
+  ]);
+
+  it('counts one machine once, however many keys it stakes with', () => {
+    // Three keys on one host read as three independent producers otherwise,
+    // which overstates decentralisation and dilutes the concentration index.
+    const h = stakingHealth(chain([[0, 'k1'], [150, 'k2'], [300, 'k3'], [450, 'k4']]), owners);
+    expect(h.distinctStakers).toBe(4);
+    expect(h.byHost?.distinctHosts).toBe(2);
+    expect(h.byHost?.topHostShare).toBeCloseTo(0.75, 6);
+    // Per key it looked like 0.25; per machine it is 0.625.
+    expect(h.hhi).toBeCloseTo(0.25, 6);
+    expect(h.byHost?.hhi).toBeCloseTo(0.625, 6);
+  });
+
+  it('counts blocks from an unknown key separately rather than guessing', () => {
+    const h = stakingHealth(chain([[0, 'k1'], [150, 'stranger'], [300, 'k4']]), owners);
+    expect(h.byHost?.unattributedBlocks).toBe(1);
+    expect(h.byHost?.distinctHosts).toBe(2);
+  });
+
+  it('reports nothing per machine when no ownership is known', () => {
+    // Null rather than a copy of the per-key figures: pretending the two are
+    // the same is exactly the mistake this exists to prevent.
+    const h = stakingHealth(chain([[0, 'k1'], [150, 'k4']]));
+    expect(h.byHost).toBeNull();
+  });
+});

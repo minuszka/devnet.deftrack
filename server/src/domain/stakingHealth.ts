@@ -44,6 +44,24 @@ export interface StakingHealth {
   topStakerShare: number | null;
 
   stakers: Array<{ payee: string; blocks: number; share: number }>;
+
+  /**
+   * The same production grouped by machine, where the owner of a payout script
+   * is known.
+   *
+   * This is the figure that answers the question. A coinstake pays to the key
+   * of the output it spent, so one host with five staked outputs appears five
+   * times above -- which reads as five independent producers and dilutes the
+   * concentration index in exactly the wrong direction. Null when no ownership
+   * is known, rather than silently falling back to the per-key numbers.
+   */
+  byHost: {
+    distinctHosts: number;
+    hhi: number | null;
+    topHostShare: number | null;
+    unattributedBlocks: number;
+    hosts: Array<{ host: string; blocks: number; share: number }>;
+  } | null;
 }
 
 /** Intervals above this are treated as production faltering, not variance. */
@@ -57,7 +75,10 @@ function median(sorted: number[]): number | null {
     : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-export function stakingHealth(samples: BlockSample[]): StakingHealth {
+/** Payout script -> the machine that produces it. */
+export type ScriptOwners = ReadonlyMap<string, string>;
+
+export function stakingHealth(samples: BlockSample[], owners: ScriptOwners = new Map()): StakingHealth {
   // Oldest first: intervals only mean anything in chain order.
   const blocks = [...samples].sort((a, b) => a.height - b.height);
 
@@ -97,6 +118,36 @@ export function stakingHealth(samples: BlockSample[]): StakingHealth {
 
   const sortedIntervals = [...intervals].sort((a, b) => a - b);
 
+  // Grouped by machine. Blocks whose payout script belongs to no known host are
+  // counted separately rather than assigned to one, and rather than quietly
+  // dropped: an unattributed producer is a gap in the map, not an absence.
+  let byHost: StakingHealth['byHost'] = null;
+  if (owners.size > 0 && totalPaid > 0) {
+    const perHost = new Map<string, number>();
+    let unattributed = 0;
+    for (const s of stakers) {
+      const host = owners.get(s.payee);
+      if (host === undefined) {
+        unattributed += s.blocks;
+        continue;
+      }
+      perHost.set(host, (perHost.get(host) ?? 0) + s.blocks);
+    }
+
+    const attributed = [...perHost.values()].reduce((a, b) => a + b, 0);
+    const hosts = [...perHost.entries()]
+      .map(([host, n]) => ({ host, blocks: n, share: attributed > 0 ? n / attributed : 0 }))
+      .sort((a, b) => b.blocks - a.blocks);
+
+    byHost = {
+      distinctHosts: hosts.length,
+      hhi: hosts.length > 0 ? hosts.reduce((sum, h) => sum + h.share * h.share, 0) : null,
+      topHostShare: hosts[0]?.share ?? null,
+      unattributedBlocks: unattributed,
+      hosts,
+    };
+  }
+
   return {
     blocks: blocks.length,
     fromHeight: blocks[0]?.height ?? 0,
@@ -110,5 +161,6 @@ export function stakingHealth(samples: BlockSample[]): StakingHealth {
     gini,
     topStakerShare: stakers[0]?.share ?? null,
     stakers,
+    byHost,
   };
 }

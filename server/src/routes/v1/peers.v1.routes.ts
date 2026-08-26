@@ -24,6 +24,7 @@ const ingestSchema = z.object({
       medianPingMs: z.number().finite().nullable().default(null),
       maxPingWaitMs: z.number().finite().nullable().default(null),
       height: z.number().int().min(0).nullable().default(null),
+      stakeScripts: z.array(z.string().regex(/^[0-9a-f]{2,140}$/i)).max(200).default([]),
     })
     .optional(),
   observations: z

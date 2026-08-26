@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Block } from '../../models/Block.js';
 import { Transaction } from '../../models/Transaction.js';
 import { stakingHealth, type BlockSample } from '../../domain/stakingHealth.js';
+import { HostStatus } from '../../models/HostStatus.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
 
@@ -68,13 +69,27 @@ router.get(
       payee: payeeByHeight.get(b.height) ?? null,
     }));
 
-    const health = stakingHealth(samples);
+    // Who owns which payout script, so production can be counted per machine
+    // rather than per key. A host staking five outputs pays to five different
+    // scripts, and counting those as five producers would overstate how
+    // distributed block production is.
+    const statuses = await HostStatus.find().select('host stakeScripts').lean();
+    const owners = new Map<string, string>();
+    for (const h of statuses) {
+      for (const script of h.stakeScripts ?? []) owners.set(script.toLowerCase(), h.host);
+    }
+
+    const health = stakingHealth(samples, owners);
 
     sendData(res, {
       ...health,
       windowBlocks: q.blocks,
       // The script is an identifier, not something to display in full.
-      stakers: health.stakers.map((s) => ({ ...s, payee: s.payee.slice(0, 16) })),
+      stakers: health.stakers.map((s) => ({
+        ...s,
+        payee: s.payee.slice(0, 16),
+        host: owners.get(s.payee.toLowerCase()) ?? null,
+      })),
     });
   })
 );
