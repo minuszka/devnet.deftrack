@@ -5,7 +5,12 @@ import { Transaction } from '../models/Transaction.js';
 import { stakingHealth, type BlockSample } from '../domain/stakingHealth.js';
 import { MasternodeState } from '../models/MasternodeState.js';
 import { HostStatus } from '../models/HostStatus.js';
-import type { ExperimentOutcome, ExperimentRunDocument } from '../models/ExperimentRun.js';
+import { roundStats } from '../domain/roundStats.js';
+import type {
+  ExperimentOutcome,
+  ExperimentRunDocument,
+  ProfileOutcome,
+} from '../models/ExperimentRun.js';
 
 /**
  * What an experiment found, computed from the underlying observations.
@@ -16,7 +21,7 @@ import type { ExperimentOutcome, ExperimentRunDocument } from '../models/Experim
  * changes the answer without touching the evidence.
  */
 export async function computeOutcome(
-  run: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight' | 'llmqName'>,
+  run: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>,
   tipHeight: number
 ): Promise<ExperimentOutcome> {
   const from = run.startHeight;
@@ -24,9 +29,12 @@ export async function computeOutcome(
   const heightRange = { $gte: from, $lte: to };
 
   const [rounds, events, blocks, coinstakes, chainLocked] = await Promise.all([
-    QuorumRound.find({ llmqName: run.llmqName, expectedHeight: heightRange })
+    // Every tracked profile, not just the one the run was opened against. A
+    // run that watched only its own profile reported no rounds at all while
+    // three of another type had already decided inside its window.
+    QuorumRound.find({ expectedHeight: heightRange })
       .sort({ expectedHeight: 1 })
-      .select('status healthRatio invalidMembers')
+      .select('llmqName dkgInterval status healthRatio invalidMembers')
       .lean(),
     MasternodeEvent.find({ height: heightRange }).select('type proTxHash').lean(),
     Block.find({ height: heightRange, isProofOfStake: true }).select('height time').lean(),
@@ -34,26 +42,27 @@ export async function computeOutcome(
     Block.countDocuments({ height: heightRange, hasChainLock: true }),
   ]);
 
-  const formed = rounds.filter((r) => r.status === 'formed');
-  const failed = rounds.filter((r) => r.status === 'failed');
-  const pending = rounds.filter((r) => r.status === 'pending');
-
-  const ratios = formed
-    .map((r) => r.healthRatio)
-    .filter((v): v is number => typeof v === 'number')
-    .sort((a, b) => a - b);
-  const median = ratios.length
-    ? ratios.length % 2 === 1
-      ? ratios[(ratios.length - 1) / 2]!
-      : (ratios[ratios.length / 2 - 1]! + ratios[ratios.length / 2]!) / 2
-    : null;
-
-  let streak = 0;
-  let longest = 0;
+  // Per profile first: the schedules are interleaved, so a streak or a median
+  // taken across all of them at once describes no quorum type that exists.
+  const byName = new Map<string, typeof rounds>();
   for (const r of rounds) {
-    if (r.status === 'failed') longest = Math.max(longest, ++streak);
-    else if (r.status === 'formed') streak = 0;
+    const list = byName.get(r.llmqName) ?? [];
+    list.push(r);
+    byName.set(r.llmqName, list);
   }
+
+  const byProfile: ProfileOutcome[] = [...byName.entries()]
+    .map(([llmqName, list]) => ({
+      llmqName,
+      dkgInterval: list[0]?.dkgInterval ?? 0,
+      ...roundStats(list),
+    }))
+    .sort((a, b) => a.dkgInterval - b.dkgInterval);
+
+  const overall = roundStats(rounds);
+  // The run-wide streak is the worst any single profile reached, never a count
+  // over the interleaved sequence.
+  const longest = byProfile.reduce((max, p) => Math.max(max, p.longestFailureStreak), 0);
 
   const punished = new Set<string>();
   for (const r of rounds) for (const p of r.invalidMembers) punished.add(p);
@@ -75,15 +84,14 @@ export async function computeOutcome(
   }));
   const staking = stakingHealth(samples);
 
-  const decided = formed.length + failed.length;
-
   return {
-    rounds: { formed: formed.length, failed: failed.length, pending: pending.length },
+    rounds: overall.rounds,
     // Pending rounds are excluded rather than counted as failures.
-    formationRate: decided > 0 ? formed.length / decided : null,
-    medianHealthRatio: median,
-    worstHealthRatio: ratios.length ? ratios[0]! : null,
+    formationRate: overall.formationRate,
+    medianHealthRatio: overall.medianHealthRatio,
+    worstHealthRatio: overall.worstHealthRatio,
     longestFailureStreak: longest,
+    byProfile,
 
     banEvents: events.filter((e) => e.type === 'banned').length,
     revivalEvents: events.filter((e) => e.type === 'revived').length,

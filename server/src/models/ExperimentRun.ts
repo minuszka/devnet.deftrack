@@ -13,6 +13,28 @@ import mongoose, { Schema, type Document } from 'mongoose';
  * events and can be recomputed at any time; it is snapshotted at close only so
  * a published result stays quotable, never so that it becomes the only copy.
  */
+/**
+ * One quorum type's share of a run.
+ *
+ * Kept separate rather than folded into the totals because the profiles do not
+ * run at the same rate: llmq_50_60 closes a round every 24 blocks and
+ * llmq_400_60 every 72, so a single blended figure is dominated by whichever
+ * type is most frequent and hides which one actually degraded. The revive run
+ * is the case in point -- llmq_400_60 stayed at health 1.00 throughout while
+ * llmq_50_60 fell to 0.16.
+ */
+export interface ProfileOutcome {
+  llmqName: string;
+  dkgInterval: number;
+  rounds: { formed: number; failed: number; pending: number };
+  formationRate: number | null;
+  medianHealthRatio: number | null;
+  worstHealthRatio: number | null;
+  longestFailureStreak: number;
+  /** Members marked invalid in this profile's rounds, distinct. */
+  membersPunished: number;
+}
+
 export interface ExperimentOutcome {
   rounds: { formed: number; failed: number; pending: number };
   /** Excludes pending: a round still inside its window has not failed. */
@@ -33,6 +55,13 @@ export interface ExperimentOutcome {
 
   chainLockedBlocks: number;
   chainLockCoverage: number | null;
+
+  /**
+   * The same window seen per quorum type. Absent on outcomes snapshotted
+   * before the collector tracked more than one profile -- those runs measured
+   * a single type and cannot be broken down after the fact.
+   */
+  byProfile?: ProfileOutcome[];
 }
 
 export interface ExperimentRunDocument extends Document {
@@ -109,6 +138,29 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
 
     chainLockedBlocks: { type: Number, default: 0 },
     chainLockCoverage: { type: Number, default: null },
+
+    byProfile: {
+      type: [
+        new Schema<ProfileOutcome>(
+          {
+            llmqName: { type: String, required: true },
+            dkgInterval: { type: Number, required: true },
+            rounds: {
+              formed: { type: Number, default: 0 },
+              failed: { type: Number, default: 0 },
+              pending: { type: Number, default: 0 },
+            },
+            formationRate: { type: Number, default: null },
+            medianHealthRatio: { type: Number, default: null },
+            worstHealthRatio: { type: Number, default: null },
+            longestFailureStreak: { type: Number, default: 0 },
+            membersPunished: { type: Number, default: 0 },
+          },
+          { _id: false }
+        ),
+      ],
+      default: undefined,
+    },
   },
   { _id: false }
 );

@@ -121,6 +121,17 @@ export interface StakingHealth {
   stakers: Array<{ payee: string; blocks: number; share: number }>;
 }
 
+export interface ProfileOutcome {
+  llmqName: string;
+  dkgInterval: number;
+  rounds: { formed: number; failed: number; pending: number };
+  formationRate: number | null;
+  medianHealthRatio: number | null;
+  worstHealthRatio: number | null;
+  longestFailureStreak: number;
+  membersPunished: number;
+}
+
 export interface ExperimentOutcome {
   rounds: { formed: number; failed: number; pending: number };
   formationRate: number | null;
@@ -136,6 +147,8 @@ export interface ExperimentOutcome {
   distinctStakers: number;
   chainLockedBlocks: number;
   chainLockCoverage: number | null;
+  /** Absent on runs closed before more than one quorum type was tracked. */
+  byProfile?: ProfileOutcome[];
 }
 
 export interface ExperimentRow {

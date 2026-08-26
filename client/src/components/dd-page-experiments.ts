@@ -57,6 +57,17 @@ export class DdPageExperiments extends LitElement {
       .delta.flat {
         color: var(--ink-3);
       }
+      .caveat {
+        padding: 10px 14px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--ink-3);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .bad {
+        color: var(--crit);
+        font-weight: 600;
+      }
     `,
   ];
 
@@ -186,7 +197,81 @@ export class DdPageExperiments extends LitElement {
             </section>
           `
         : nothing}
-      ${this._declared(d)} ${d.comparison ? this._comparison(d) : nothing}
+      ${this._byProfile(d)} ${this._declared(d)}
+      ${d.comparison ? this._comparison(d) : nothing}
+    `;
+  }
+
+  /**
+   * The same window, per quorum type.
+   *
+   * Blending them hides the finding: the profiles close rounds at different
+   * rates, so the frequent one dominates every total while the type that
+   * actually degraded disappears into the average.
+   */
+  private _byProfile(d: ExperimentDetail): TemplateResult | typeof nothing {
+    const rows = d.outcome?.byProfile ?? [];
+    if (rows.length === 0) return nothing;
+
+    return html`
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">By quorum type</div>
+          <div class="page-sub mono">${num(rows.length)} tracked</div>
+        </div>
+        <div class="card-body flush">
+          <div class="twrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th class="r">Every</th>
+                  <th class="r">Formed</th>
+                  <th class="r">Failed</th>
+                  <th class="r">Pending</th>
+                  <th class="r">Formation</th>
+                  <th class="r">Median health</th>
+                  <th class="r">Worst</th>
+                  <th class="r">Members punished</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(
+                  (p) => html`
+                    <tr>
+                      <td class="mono">${p.llmqName}</td>
+                      <td class="r mono">${num(p.dkgInterval)} blk</td>
+                      <td class="r mono">${num(p.rounds.formed)}</td>
+                      <td class="r mono ${p.rounds.failed > 0 ? 'bad' : ''}">
+                        ${num(p.rounds.failed)}
+                      </td>
+                      <td class="r mono">${num(p.rounds.pending)}</td>
+                      <td class="r mono">
+                        ${p.formationRate === null ? '—' : ratio(p.formationRate)}
+                      </td>
+                      <td class="r mono">
+                        ${p.medianHealthRatio === null ? '—' : ratio(p.medianHealthRatio)}
+                      </td>
+                      <td class="r mono ${(p.worstHealthRatio ?? 1) < 0.5 ? 'bad' : ''}">
+                        ${p.worstHealthRatio === null ? '—' : ratio(p.worstHealthRatio)}
+                      </td>
+                      <td class="r mono ${p.membersPunished > 0 ? 'bad' : ''}">
+                        ${num(p.membersPunished)}
+                      </td>
+                    </tr>
+                  `
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div class="caveat">
+            A failed round mines no commitment, so only the reconstructed schedule shows it was
+            ever due — and that reconstruction runs per type. Rounds are counted separately
+            because the intervals differ: one type can hold a perfect record while another
+            degrades, and a single blended rate would report neither.
+          </div>
+        </div>
+      </section>
     `;
   }
 
