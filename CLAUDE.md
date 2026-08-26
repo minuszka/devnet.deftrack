@@ -184,14 +184,28 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   What actually settles it is the **object or binary timestamp against the build
   start**, and the count of `CXX`/`CXXLD` lines in the log.
 
-- **The evodb diffs on this devnet do not reproduce its snapshots, and the tool
-  cannot mend it.** `evodb verify` fails on every snapshot pair from height 1000
-  onward, including `ApplyDiff: can't find an updated masternode, id=0`. A repair
-  cannot fix it: rebuilding assigns different `internalId`s, and a diff built
-  from those references ids the stored snapshots do not have. Only a full reindex
-  would. **The node is unaffected** -- it builds its list from blocks, not from
-  these diffs, which is why 80 masternodes, `protx listdiff` and the payments all
-  work. Do not read a verification failure here as a node fault.
+- **The devnet's evodb was never corrupt -- the verifier was.** An earlier
+  version of this note recorded that the diffs do not reproduce the snapshots
+  and that repair could not mend it. Both halves were wrong, and the real
+  defect was in the tool: `VerifySnapshotPair` and `RepairSnapshotPair` called
+  `ApplyDiff` -- which is `const` and *returns* the advanced list -- without
+  assigning the result, so verification compared every interval against its
+  unmoved base snapshot. That fails exactly like corruption fails:
+  `ApplyDiff: can't find an updated masternode, id=0` on every pair. Fixed in
+  #73 with a regression test; with the fix, `evodb verify` on this datadir
+  answers 3 pairs verified, 0 errors -- including the 1304 diffs an earlier
+  broken repair had rewritten, so even that rewrite was correct in content.
+  The `internalId` theory recorded here before was a story invented to explain
+  a fault that did not exist.
+
+  Three lessons survive. `-Wunused-result` had flagged both call sites in
+  every build log all day, and nobody read the warnings -- the compiler knew.
+  "Successfully repaired 1304 diffs, verified 0 snapshots in 0s" is a
+  self-contradicting success line, and the marker it wrote then suppressed
+  startup verification on every later boot, so no later restart could catch
+  it. And a verification tool must be proven able to *pass* on known-good
+  data before its failures are believed: ours had never once passed anywhere,
+  and that alone should have indicted the tool, not the database.
 
 - **Check the firewall on every host, not one.** Two of the eight fullnodes run
   `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
