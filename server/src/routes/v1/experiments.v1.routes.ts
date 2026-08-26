@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { ExperimentRun, type ExperimentRunDocument } from '../../models/ExperimentRun.js';
-import { computeOutcome, compareOutcomes } from '../../services/experiment.service.js';
+import { computeOutcome, compareOutcomes, currentParticipants } from '../../services/experiment.service.js';
 import { rpc } from '../../services/rpc.service.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
@@ -122,6 +122,12 @@ router.get(
     const tip = await rpc.getBlockCount().catch(() => run.endHeight ?? run.startHeight);
     const live = run.status === 'running' ? await computeOutcome(run, tip) : run.outcome;
 
+    // The declared participants stay frozen -- that is the point of declaring
+    // them. A running experiment also shows the network as it stands now, so a
+    // change during the run is visible rather than hidden behind a stale
+    // number.
+    const current = run.status === 'running' ? await currentParticipants(tip) : null;
+
     let comparison = null;
     if (run.baselineRunKey && live) {
       const baseline = await ExperimentRun.findOne({ runKey: run.baselineRunKey })
@@ -140,7 +146,7 @@ router.get(
       }
     }
 
-    sendData(res, { ...view(run), outcome: live, comparison });
+    sendData(res, { ...view(run), outcome: live, comparison, currentParticipants: current, tipHeight: tip });
   })
 );
 

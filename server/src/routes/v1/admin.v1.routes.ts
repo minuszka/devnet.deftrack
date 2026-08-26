@@ -9,7 +9,7 @@ import { asyncRoute, sendData, sendError } from '../../utils/http.js';
 import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
 import { ExperimentRun } from '../../models/ExperimentRun.js';
 import { Transaction } from '../../models/Transaction.js';
-import { computeOutcome } from '../../services/experiment.service.js';
+import { computeOutcome, currentParticipants } from '../../services/experiment.service.js';
 import { chainlockProfile } from '../../config/llmq.js';
 import { rpc } from '../../services/rpc.service.js';
 
@@ -188,19 +188,15 @@ router.post(
     }
 
     const profile = chainlockProfile();
-    const [tip, net, masternodes] = await Promise.all([
+    const [tip, net] = await Promise.all([
       rpc.getBlockCount(),
       rpc.getNetworkInfo().catch(() => null),
-      MasternodeState.find({ active: { $ne: false } }).select('hostIp').lean(),
     ]);
 
-    const hosts = new Set(masternodes.map((m) => m.hostIp).filter((h): h is string => Boolean(h)));
-    // Stakers are counted from who actually produced blocks recently, because
-    // no RPC reports staking wallets network-wide.
-    const stakers = await Transaction.distinct('vout.scriptHex', {
-      isCoinstake: true,
-      height: { $gt: tip - 200 },
-    }).then((a) => a.filter((h) => typeof h === 'string' && h.length > 0).length);
+    // Counted by machine rather than by payout key: a host staking five
+    // outputs pays to five scripts, and a declaration that inflates its own
+    // participant count is worse than none.
+    const participants = await currentParticipants(tip);
 
     const run = await ExperimentRun.create({
       ...body,
@@ -213,7 +209,7 @@ router.post(
       llmqMinSize: profile.minSize,
       llmqThreshold: profile.threshold,
       dkgInterval: profile.dkgInterval,
-      participants: { masternodes: masternodes.length, hosts: hosts.size, stakers },
+      participants,
     });
 
     sendData(res, { runKey: run.runKey, startHeight: run.startHeight, status: run.status });

@@ -3,6 +3,8 @@ import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { stakingHealth, type BlockSample } from '../domain/stakingHealth.js';
+import { MasternodeState } from '../models/MasternodeState.js';
+import { HostStatus } from '../models/HostStatus.js';
 import type { ExperimentOutcome, ExperimentRunDocument } from '../models/ExperimentRun.js';
 
 /**
@@ -96,6 +98,60 @@ export async function computeOutcome(
     // Coverage over the run's own blocks only. Counting an era in which a lock
     // was impossible would report a failure that never happened.
     chainLockCoverage: blocks.length > 0 ? chainLocked / blocks.length : null,
+  };
+}
+
+/** Blocks looked at when asking who is producing them. */
+const STAKER_WINDOW = 200;
+
+export interface Participants {
+  masternodes: number;
+  hosts: number;
+  /**
+   * Machines producing blocks, not payout keys.
+   *
+   * A coinstake pays to the key of the output it spent, so one host staking
+   * five outputs shows up as five producers. Counting keys here would have
+   * recorded 18 for a network of 9 machines, and a participant count that
+   * inflates itself is worse than none.
+   */
+  stakers: number;
+}
+
+/** The network as it stands right now, on the same terms a run declares it. */
+export async function currentParticipants(tipHeight: number): Promise<Participants> {
+  const [masternodes, statuses, scripts] = await Promise.all([
+    MasternodeState.find({ active: { $ne: false } }).select('hostIp').lean(),
+    HostStatus.find().select('host stakeScripts').lean(),
+    Transaction.distinct('vout.scriptHex', {
+      isCoinstake: true,
+      height: { $gt: tipHeight - STAKER_WINDOW },
+    }),
+  ]);
+
+  const owners = new Map<string, string>();
+  for (const h of statuses) {
+    for (const script of h.stakeScripts ?? []) owners.set(script.toLowerCase(), h.host);
+  }
+
+  const producing = scripts.filter((s): s is string => typeof s === 'string' && s.length > 0);
+  const machines = new Set<string>();
+  let unattributed = 0;
+  for (const script of producing) {
+    const host = owners.get(script.toLowerCase());
+    if (host === undefined) unattributed++;
+    else machines.add(host);
+  }
+
+  const hosts = new Set(masternodes.map((m) => m.hostIp).filter((h): h is string => Boolean(h)));
+
+  return {
+    masternodes: masternodes.length,
+    hosts: hosts.size,
+    // Unattributed scripts are counted as one producer each: they are real
+    // producers whose machine is unknown, and dropping them would understate
+    // the count as badly as counting keys overstates it.
+    stakers: machines.size + unattributed,
   };
 }
 

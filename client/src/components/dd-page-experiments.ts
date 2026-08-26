@@ -219,7 +219,19 @@ export class DdPageExperiments extends LitElement {
             <dd class="mono">
               ${num(d.participants.masternodes)} masternodes on ${num(d.participants.hosts)} hosts ·
               ${num(d.participants.stakers)} staker(s)
+              <span class="muted">at open</span>
             </dd>
+            ${d.currentParticipants
+              ? html`
+                  <dt>Right now</dt>
+                  <dd class="mono">
+                    ${num(d.currentParticipants.masternodes)} masternodes on
+                    ${num(d.currentParticipants.hosts)} hosts ·
+                    ${num(d.currentParticipants.stakers)} staker(s)
+                    <span class="muted">height ${num(d.tipHeight)}</span>
+                  </dd>
+                `
+              : nothing}
             <dt>Window</dt>
             <dd class="mono">
               height ${num(d.startHeight)}${d.endHeight === null

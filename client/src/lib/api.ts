@@ -159,6 +159,9 @@ export interface ExperimentRow {
 }
 
 export interface ExperimentDetail extends ExperimentRow {
+  /** The network as it stands now; null once the run is closed. */
+  currentParticipants: { masternodes: number; hosts: number; stakers: number } | null;
+  tipHeight: number;
   comparison: {
     baselineRunKey: string;
     baseline: ExperimentOutcome;
