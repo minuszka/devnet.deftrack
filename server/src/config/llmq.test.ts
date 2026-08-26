@@ -2,11 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { LLMQ_PROFILES, TRACKED_PROFILE_NAMES, maxPossibleBan, trackedProfiles } from './llmq.js';
 
 describe('llmq profile registry', () => {
-  it('tracks every quorum type this devnet forms', () => {
-    // Observed commitments carry llmqType 1, 2 and 5. Tracking a subset is how
-    // failed rounds of the untracked types became invisible: no commitment is
-    // mined for them, so the reconstructed schedule is the only witness.
-    expect(trackedProfiles().map((p) => p.llmqType).sort()).toEqual([1, 2, 5]);
+  it('tracks every quorum type this devnet is observed to form', () => {
+    // chainparams.cpp enables five types here; commitments exist for llmqType
+    // 1, 2, 3 and 5. Tracking a subset is how failed rounds of the untracked
+    // types became invisible: no commitment is mined for a failed round, so the
+    // reconstructed schedule is the only witness it was ever due.
+    expect(trackedProfiles().map((p) => p.llmqType).sort()).toEqual([1, 2, 3, 5]);
+  });
+
+  it('knows every enabled type, including the one it does not track', () => {
+    // llmq_100_67 is enabled on this devnet but has produced no commitment at
+    // any height. It stays in the registry so such a commitment could be named,
+    // and out of the tracked set so no schedule is reconstructed for it:
+    // absence of evidence that it runs is not evidence that it failed.
+    expect(LLMQ_PROFILES.llmq_100_67?.llmqType).toBe(4);
+    expect(TRACKED_PROFILE_NAMES).not.toContain('llmq_100_67');
   });
 
   it('gives each tracked profile a distinct llmqType', () => {
@@ -44,6 +54,15 @@ describe('llmq profile registry', () => {
       minSize: 4,
       dkgInterval: 72,
       dkgMiningWindowEnd: 28,
+      useRotation: false,
+    });
+    expect(LLMQ_PROFILES.llmq_400_85).toMatchObject({
+      llmqType: 3,
+      size: 400,
+      minSize: 350,
+      threshold: 340,
+      dkgInterval: 576,
+      dkgMiningWindowEnd: 48,
       useRotation: false,
     });
   });

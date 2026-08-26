@@ -56,6 +56,34 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
     useRotation: false,
     signingActiveQuorumCount: 2,
   },
+  llmq_400_85: {
+    llmqType: 3,
+    llmqName: 'llmq_400_85',
+    size: 400,
+    minSize: 350,
+    threshold: 340,
+    dkgInterval: 576, // 24 * 24 -- one DKG per day
+    dkgPhaseBlocks: 4,
+    dkgMiningWindowStart: 20,
+    dkgMiningWindowEnd: 48,
+    dkgBadVotesThreshold: 300,
+    useRotation: false,
+    signingActiveQuorumCount: 4,
+  },
+  llmq_100_67: {
+    llmqType: 4,
+    llmqName: 'llmq_100_67',
+    size: 100,
+    minSize: 80,
+    threshold: 67,
+    dkgInterval: 24,
+    dkgPhaseBlocks: 2,
+    dkgMiningWindowStart: 10,
+    dkgMiningWindowEnd: 18,
+    dkgBadVotesThreshold: 80,
+    useRotation: false,
+    signingActiveQuorumCount: 24,
+  },
   llmq_400_60: {
     llmqType: 2,
     llmqName: 'llmq_400_60',
@@ -115,12 +143,21 @@ export function chainlockProfile(): LlmqProfile {
  * decided round at all, while llmq_50_60 (interval 24) had run twice in the
  * same window and punished 41 members in one of them.
  *
- * These three are the types this devnet actually forms, confirmed against
- * observed commitments (llmqType 1, 2 and 5). llmq_devnet stays in the registry
- * but is not tracked: the mainnet-parity change retired it here.
+ * chainparams.cpp enables five types on this devnet -- llmq_50_60, llmq_60_75,
+ * llmq_400_60, llmq_400_85 and llmq_100_67 -- and all five are in the registry
+ * above so that a commitment of any of them can be named.
+ *
+ * Four of them are tracked. llmq_100_67 is not: it is enabled but has produced
+ * no commitment at any height, so reconstructing a schedule for it would record
+ * a failed round at every interval for a type that is not being attempted.
+ * Absence of evidence that it runs is not evidence that it failed. Add it here
+ * the moment one of its commitments appears.
+ *
+ * llmq_devnet stays in the registry but is not tracked: the mainnet-parity
+ * change retired it here.
  */
 export const TRACKED_PROFILE_NAMES: readonly string[] = (
-  process.env.TRACKED_LLMQ_NAMES ?? 'llmq_50_60,llmq_60_75,llmq_400_60'
+  process.env.TRACKED_LLMQ_NAMES ?? 'llmq_50_60,llmq_60_75,llmq_400_60,llmq_400_85'
 )
   .split(',')
   .map((name) => name.trim())
