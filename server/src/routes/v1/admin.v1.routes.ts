@@ -250,10 +250,31 @@ router.patch(
   })
 );
 
-/** POST /api/v1/admin/experiments/:runKey/close -- freezes the outcome. */
+/**
+ * POST /api/v1/admin/experiments/:runKey/close -- freezes the outcome.
+ *
+ * `endHeight` is optional and defaults to the tip. It exists because a run
+ * left open keeps absorbing whatever the network does next: a baseline opened
+ * at height 1458 and closed at 2475 had swallowed two ban waves and 78 bans,
+ * which is precisely what a baseline must not contain. Closing at the height
+ * where a run stopped describing what it was opened to describe is the only
+ * way to recover one, and it cannot be done by closing late.
+ *
+ * Bounded at both ends: never before the run started, never past the tip. A
+ * window that runs backwards or into unmined chain would produce an outcome
+ * over blocks that do not exist.
+ */
+const closeSchema = z.object({ endHeight: z.coerce.number().int().min(0).optional() });
+
 router.post(
   '/experiments/:runKey/close',
   asyncRoute(async (req, res) => {
+    const parsed = closeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendError(res, 400, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+      return;
+    }
+
     const run = await ExperimentRun.findOne({ runKey: String(req.params.runKey ?? '') });
     if (!run) {
       sendError(res, 404, 'experiment not found');
@@ -265,7 +286,19 @@ router.post(
     }
 
     const tip = await rpc.getBlockCount();
-    run.endHeight = tip;
+    const requested = parsed.data.endHeight;
+    if (requested !== undefined) {
+      if (requested < run.startHeight) {
+        sendError(res, 400, `endHeight ${requested} is below startHeight ${run.startHeight}`);
+        return;
+      }
+      if (requested > tip) {
+        sendError(res, 400, `endHeight ${requested} is above the tip ${tip}`);
+        return;
+      }
+    }
+
+    run.endHeight = requested ?? tip;
     run.endedAt = new Date();
     // Snapshotted so a published result stays quotable -- not so it becomes the
     // only copy. Everything here is recomputable from the rounds and events.
