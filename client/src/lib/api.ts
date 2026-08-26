@@ -119,6 +119,14 @@ export interface StakingHealth {
   gini: number | null;
   topStakerShare: number | null;
   stakers: Array<{ payee: string; blocks: number; share: number }>;
+  /** The same window counted by machine rather than by payout key. */
+  byHost: {
+    distinctHosts: number;
+    hhi: number | null;
+    topHostShare: number | null;
+    unattributedBlocks: number;
+    hosts: Array<{ host: string | null; blocks: number; share: number }>;
+  };
 }
 
 export interface ProfileOutcome {
