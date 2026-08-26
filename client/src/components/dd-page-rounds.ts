@@ -13,6 +13,8 @@ export class DdPageRounds extends LitElement {
     _total: { state: true },
     _offset: { state: true },
     _status: { state: true },
+    _llmq: { state: true },
+    _types: { state: true },
     _error: { state: true },
     _loading: { state: true },
   };
@@ -21,6 +23,14 @@ export class DdPageRounds extends LitElement {
   private _total = 0;
   private _offset = 0;
   private _status = '';
+  private _llmq = '';
+  /**
+   * Quorum types discovered in the data rather than listed here, so the filter
+   * cannot fall out of step with the profiles the collector tracks. Names are
+   * accumulated and never dropped: filtering to one type must not make the
+   * others disappear from the control that switches back to them.
+   */
+  private _types: string[] = [];
   private _error = '';
   private _loading = true;
   private _timer: number | null = null;
@@ -32,6 +42,11 @@ export class DdPageRounds extends LitElement {
     pageStyles,
     css`
       .filters {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .group {
         display: flex;
         gap: 6px;
         flex-wrap: wrap;
@@ -88,14 +103,17 @@ export class DdPageRounds extends LitElement {
 
   private async _load(): Promise<void> {
     try {
-      const params: { limit: number; offset: number; status?: string } = {
+      const params: { limit: number; offset: number; status?: string; llmqName?: string } = {
         limit: PAGE_SIZE,
         offset: this._offset,
       };
       if (this._status) params.status = this._status;
+      if (this._llmq) params.llmqName = this._llmq;
       const p = await api.rounds(params);
       this._rounds = p.items;
       this._total = p.total;
+      const known = new Set([...this._types, ...p.items.map((r) => r.llmqName)]);
+      this._types = [...known].sort();
       this._error = '';
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
@@ -106,6 +124,12 @@ export class DdPageRounds extends LitElement {
 
   private _setStatus(value: string): void {
     this._status = value;
+    this._offset = 0;
+    void this._load();
+  }
+
+  private _setLlmq(value: string): void {
+    this._llmq = value;
     this._offset = 0;
     void this._load();
   }
@@ -130,16 +154,34 @@ export class DdPageRounds extends LitElement {
           </div>
         </div>
         <div class="filters">
-          ${['', 'formed', 'failed', 'pending'].map(
-            (s) => html`
-              <button
-                aria-pressed=${this._status === s ? 'true' : 'false'}
-                @click=${() => this._setStatus(s)}
-              >
-                ${s === '' ? 'All' : s}
-              </button>
-            `
-          )}
+          ${this._types.length > 1
+            ? html`
+                <div class="group">
+                  ${['', ...this._types].map(
+                    (t) => html`
+                      <button
+                        aria-pressed=${this._llmq === t ? 'true' : 'false'}
+                        @click=${() => this._setLlmq(t)}
+                      >
+                        ${t === '' ? 'All types' : t}
+                      </button>
+                    `
+                  )}
+                </div>
+              `
+            : nothing}
+          <div class="group">
+            ${['', 'formed', 'failed', 'pending'].map(
+              (s) => html`
+                <button
+                  aria-pressed=${this._status === s ? 'true' : 'false'}
+                  @click=${() => this._setStatus(s)}
+                >
+                  ${s === '' ? 'All' : s}
+                </button>
+              `
+            )}
+          </div>
         </div>
       </div>
 
@@ -156,6 +198,7 @@ export class DdPageRounds extends LitElement {
               <thead>
                 <tr>
                   <th>Round</th>
+                  <th>Type</th>
                   <th class="r">Height</th>
                   <th class="c">Formed</th>
                   <th class="r">Valid members</th>
@@ -170,9 +213,9 @@ export class DdPageRounds extends LitElement {
               </thead>
               <tbody>
                 ${this._loading && this._rounds.length === 0
-                  ? html`<tr><td class="empty" colspan="11">Loading…</td></tr>`
+                  ? html`<tr><td class="empty" colspan="12">Loading…</td></tr>`
                   : this._rounds.length === 0
-                    ? html`<tr><td class="empty" colspan="11">No rounds match this filter.</td></tr>`
+                    ? html`<tr><td class="empty" colspan="12">No rounds match this filter.</td></tr>`
                     : this._rounds.map((r) => this._row(r))}
               </tbody>
             </table>
@@ -200,6 +243,7 @@ export class DdPageRounds extends LitElement {
     return html`
       <tr>
         <td class="mono">${r.roundKey}</td>
+        <td class="mono">${r.llmqName}</td>
         <td class="r mono">${num(r.expectedHeight)}</td>
         <td class="c"><span class="pill ${r.status}">${r.status}</span></td>
         <td class="r mono">

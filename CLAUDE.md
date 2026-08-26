@@ -225,6 +225,24 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   masternode a block paid comes from `masternode payments <blockhash>`, stored
   at index time; every masternode here shares one payout address.
 
+- **Do not measure in the first rounds after a revive or a restart.** Reviving
+  46 masternodes at height 2404 returned the network to 80 enabled, and the
+  selection immediately drew 50 of them into the next `llmq_50_60` round --
+  before their DKG mesh had re-formed. That round closed at health 0.16 with 42
+  members punished, the next at 0.32 with 34, and penalties accumulated to the
+  ban threshold for 21 nodes. `quorum dkgstatus` showed it plainly at the time:
+  `members=50 connected=25`, with `recvContrib` still at the pre-revive count.
+  Nothing was wrong with the network; the measurement was taken while it was
+  still re-connecting. Wait for the mesh, or record the round as an artefact of
+  the intervention.
+
+- **A round forming and a round being healthy are different questions.** In the
+  window above `formationRate` was **1.00** -- every round that decided did
+  form -- while the median health ratio was 0.24. Reading only the formation
+  rate would have reported a healthy network at the exact moment it was
+  punishing 55 of its own members. The two numbers must always be shown
+  together.
+
 - **Operator attribution is by host IP** with an explicit proTxHash override.
   It is declared through the admin API, never inferred, and never committed:
   the host addresses are not public and this repository is.
@@ -292,6 +310,23 @@ Idempotency key is synthetic:
 ```
 roundKey = `${llmqType}:${expectedHeight}:${quorumIndex}`
 ```
+
+The reconstruction runs for **every** quorum type this devnet forms --
+`llmq_50_60` (interval 24), `llmq_60_75` (48) and `llmq_400_60` (72) -- not
+only the ChainLock profile. Tracking one type hid real failures for months of
+chain: a 57-block experiment window contained no decided `llmq_400_60` round at
+all, while `llmq_50_60` had closed twice inside it and punished 55 members.
+Streaks and medians are computed per profile; blending three interleaved
+schedules invents streaks no type ever had.
+
+**`quorum listextended` takes a height, not a count,** and returns exactly
+`signingActiveQuorumCount` quorums per type
+(`ScanQuorums(type, pblockindex, signingActiveQuorumCount)`, `rpc/quorums.cpp`).
+So a commitment older than the oldest one it still reports has left the RPC's
+reach: absence there means "cannot see", not "did not happen". A profile added
+to the collector later starts mid-window, and its oldest scheduled height would
+otherwise be written as a failure that never occurred. Such heights are left
+out of the record entirely -- `absenceIsEvidence()` in `domain/dkgSchedule.ts`.
 
 `quorumHash` becomes an optional field, populated only when the round formed.
 Upserts use a `unique` index on `roundKey` plus `$setOnInsert` for immutable
