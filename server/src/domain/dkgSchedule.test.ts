@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  absenceIsEvidence,
   classifyRound,
   currentRoundHeight,
   expectedRoundHeights,
@@ -81,5 +82,29 @@ describe('DKG round schedule', () => {
 
   it('handles the stock devnet profile interval too', () => {
     expect(expectedRoundHeights(100, 24)).toEqual([0, 24, 48, 72, 96]);
+  });
+});
+
+describe('evidence reach', () => {
+  it('treats a missing commitment as failure only within listextended reach', () => {
+    // listextended still reports a quorum created at 2424, so a scheduled round
+    // at 2448 with nothing mined genuinely produced nothing.
+    expect(absenceIsEvidence(2448, 2424)).toBe(true);
+    expect(absenceIsEvidence(2424, 2424)).toBe(true);
+  });
+
+  it('refuses to judge a round older than the oldest commitment still reported', () => {
+    // ScanQuorums returns only signingActiveQuorumCount quorums per type, so
+    // below that boundary absence means "aged out of the RPC", not "failed".
+    // A profile tracked for the first time starts mid-window and would
+    // otherwise record its oldest scheduled height as a failure that never
+    // happened.
+    expect(absenceIsEvidence(2400, 2424)).toBe(false);
+  });
+
+  it('judges normally when nothing has been observed at all', () => {
+    // With no commitment of this type anywhere there is no aged-out boundary to
+    // have fallen behind, so absence carries its ordinary meaning.
+    expect(absenceIsEvidence(2400, null)).toBe(true);
   });
 });

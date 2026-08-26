@@ -48,6 +48,32 @@ export function resolvedByHeight(expectedHeight: number, dkgMiningWindowEnd: num
   return expectedHeight + dkgMiningWindowEnd;
 }
 
+/**
+ * Whether a missing commitment at `expectedHeight` is evidence of failure.
+ *
+ * `quorum listextended` reports only the `signingActiveQuorumCount` most recent
+ * quorums of a type -- `ScanQuorums(type, pblockindex, signingActiveQuorumCount)`
+ * in rpc/quorums.cpp -- so a commitment older than the oldest one it still
+ * returns has left the RPC's reach entirely. Absence there means "cannot see",
+ * not "did not happen".
+ *
+ * The distinction only bites when a profile is observed for the first time: a
+ * continuously running collector has already recorded each round while it was
+ * still visible, and resolved rounds are never revisited. A profile added later
+ * starts mid-window, and without this its oldest scheduled height would be
+ * written as a failure that never happened -- the one error this project must
+ * not make.
+ *
+ * With nothing observed at all there is no aged-out boundary to have fallen
+ * behind, so absence is judged normally.
+ */
+export function absenceIsEvidence(
+  expectedHeight: number,
+  oldestObservedHeight: number | null
+): boolean {
+  return oldestObservedHeight === null || expectedHeight >= oldestObservedHeight;
+}
+
 export type RoundOutcome = 'pending' | 'formed' | 'failed';
 
 export function classifyRound(args: {

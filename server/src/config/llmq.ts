@@ -28,6 +28,34 @@ export interface LlmqProfile {
 }
 
 export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
+  llmq_50_60: {
+    llmqType: 1,
+    llmqName: 'llmq_50_60',
+    size: 50,
+    minSize: 3,
+    threshold: 3,
+    dkgInterval: 24, // one DKG per hour at 2.5 min blocks
+    dkgPhaseBlocks: 2,
+    dkgMiningWindowStart: 10,
+    dkgMiningWindowEnd: 18,
+    dkgBadVotesThreshold: 3,
+    useRotation: false,
+    signingActiveQuorumCount: 2,
+  },
+  llmq_60_75: {
+    llmqType: 5,
+    llmqName: 'llmq_60_75',
+    size: 60,
+    minSize: 3,
+    threshold: 3,
+    dkgInterval: 48, // 24 * 2 -- one DKG every 2 hours
+    dkgPhaseBlocks: 2,
+    dkgMiningWindowStart: 20,
+    dkgMiningWindowEnd: 36,
+    dkgBadVotesThreshold: 3,
+    useRotation: false,
+    signingActiveQuorumCount: 2,
+  },
   llmq_400_60: {
     llmqType: 2,
     llmqName: 'llmq_400_60',
@@ -74,6 +102,40 @@ export function chainlockProfile(): LlmqProfile {
     );
   }
   return profile;
+}
+
+/**
+ * Every profile whose DKG schedule is reconstructed.
+ *
+ * Not just the ChainLock one. A round that fails mines no commitment, so the
+ * only way it is ever visible is that the schedule expected it and nothing
+ * arrived -- and that reconstruction has to exist per profile or the failure is
+ * simply absent from the record. Tracking only llmq_400_60 hid this: its
+ * dkgInterval is 72 blocks, so a 54-block experiment window contained no
+ * decided round at all, while llmq_50_60 (interval 24) had run twice in the
+ * same window and punished 41 members in one of them.
+ *
+ * These three are the types this devnet actually forms, confirmed against
+ * observed commitments (llmqType 1, 2 and 5). llmq_devnet stays in the registry
+ * but is not tracked: the mainnet-parity change retired it here.
+ */
+export const TRACKED_PROFILE_NAMES: readonly string[] = (
+  process.env.TRACKED_LLMQ_NAMES ?? 'llmq_50_60,llmq_60_75,llmq_400_60'
+)
+  .split(',')
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
+
+export function trackedProfiles(): LlmqProfile[] {
+  return TRACKED_PROFILE_NAMES.map((name) => {
+    const profile = LLMQ_PROFILES[name];
+    if (!profile) {
+      throw new Error(
+        `Unknown LLMQ profile "${name}"; known: ${Object.keys(LLMQ_PROFILES).join(', ')}`
+      );
+    }
+    return profile;
+  });
 }
 
 /**
