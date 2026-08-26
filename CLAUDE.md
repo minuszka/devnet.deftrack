@@ -198,46 +198,75 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   from the first host cost 20 unreachable masternodes and a PoSe ban wave that
   looked like real data.
 
-- **A descriptor wallet can never stake on this build, and RPC cannot see it.**
-  `CStakeWallet::CreateCoinStake` calls `EnsureLegacyScriptPubKeyMan(*wallet)`
-  (`src/pos/stake.cpp`), an **RPC helper** that throws
-  `JSONRPCError(RPC_WALLET_ERROR, "This type of wallet does not support this
-  command")` whenever the wallet has no legacy ScriptPubKeyMan
+- **A descriptor wallet could not stake before v22.1.5, and RPC could not see
+  that it had stopped.** `CStakeWallet::CreateCoinStake` called
+  `EnsureLegacyScriptPubKeyMan(*wallet)` (`src/pos/stake.cpp`), an **RPC
+  helper** that throws `JSONRPCError(RPC_WALLET_ERROR, "This type of wallet does
+  not support this command")` whenever the wallet has no legacy ScriptPubKeyMan
   (`src/wallet/rpcwallet.cpp:132`) -- which is every descriptor wallet. A
   `JSONRPCError` is a `UniValue`, not a `std::exception`, so `ThreadStakeMiner`
-  reports `Exception: <null>` and the thread exits on the first block it tries
-  to stake.
+  reported `Exception: <null>` and the thread exited on the first block it tried
+  to stake, each of the eight fleet hosts within 48 seconds of its coins
+  maturing.
 
-  The daemon keeps running and `getstakinginfo` keeps reporting `staking: true`
-  with a full weight, because those read wallet state, not the thread: **a dead
-  minter is invisible from RPC.** Reproduced on Ubuntu 24.04 (node2) on the same
-  host where the seed's legacy BDB wallet stakes without trouble, and on all
-  eight Debian 13 fleet hosts, each within 48 seconds of its coins maturing.
+  **Fixed upstream in #59, and confirmed running.** On v22.1.5 every fleet
+  staker's debug.log shows five `threadstakeminer thread start` lines against
+  four `thread exit` lines: the four exits are the older binaries, and the fifth
+  thread is still alive. Six distinct P2PK kernel keys won blocks 2626-2637, so
+  block production is genuinely distributed and no longer the seed alone.
 
-  Consequence: the fleet cannot stake at all, because Debian 13 has no
-  `libdb5.3++` and the `--without-bdb` build cannot create a legacy wallet.
-  Distributed block production is blocked on a node fix, not on configuration.
+  What survives the fix is the diagnostic lesson: `getstakinginfo` reports
+  `staking: true` with a full weight whether or not the minter thread is
+  running, because it reads wallet state and not the thread. **A dead minter is
+  invisible from RPC.** Count `threadstakeminer thread start` against `thread
+  exit` in the log; that is the only place the difference shows.
 
-- **A descriptor wallet cannot see its own staking rewards.** The coinstake
-  pays `vout[1]` to a **pay-to-pubkey** script built from the kernel key, and
-  consensus requires that: `CheckBlockSignature` (`node/miner.cpp:630`) reads
-  `vtx[1]->vout[1]`, and only its `PUBKEY` branch works -- the `PUBKEYHASH`
-  branch builds a `CPubKey` from a 20-byte hash and always fails `IsValid()`.
-  A descriptor wallet tracks only the scripts its descriptors produce, which are
-  `pkh(...)`, so it does not recognise the P2PK output as its own: it books its
-  own coinstake as an outgoing `send`, and the staked principal plus reward
-  leave its visible balance. Observed on fullnode-4: two wins, balance 50M to
-  30M, `listtransactions` showing `send -5,000,250.00` twice per win
-  (10,000,000 staked + 500 reward, split across two outputs).
+- **A descriptor wallet books its own coinstake as a `send`, but the balance is
+  correct on v22.1.5.** The coinstake pays `vout[1]` to a **pay-to-pubkey**
+  script built from the kernel key, and consensus requires that:
+  `CheckBlockSignature` (`node/miner.cpp:630`) reads `vtx[1]->vout[1]`, and only
+  its `PUBKEY` branch works -- the `PUBKEYHASH` branch builds a `CPubKey` from a
+  20-byte hash and always fails `IsValid()`. On the earlier binary a wallet
+  tracking only `pkh(...)` scripts did not recognise that output as its own:
+  fullnode-4 was observed going 50M to 30M with `send -5,000,250.00` twice per
+  win.
 
-  The coins are not destroyed -- the key is still in the wallet -- but nothing
-  in the wallet can see or spend them until a matching `pk(...)` descriptor is
-  imported. This is separate from the throw fixed in #59 and is not fixed by it.
+  That drain does not reproduce on v22.1.5. Across a window in which five of the
+  eight stakers won a block, each of those five gained **exactly +500** -- the
+  PoS reward -- and none lost principal; all eight sit just above 50,000,000
+  with `immature` at zero. Old `send` rows from before the fix are still in
+  `listtransactions` and are history, not a current symptom: read the balance,
+  not the row type.
 
 - **Debian 13 has no `libdb5.3++`,** so a wallet build linked against Berkeley
   DB will not run there. The fleet uses a `--without-bdb` build with SQLite
   descriptor wallets, which does stake. The seed node keeps its BDB wallet and
   must not be given the other binary.
+
+- **A node stuck below the tip may be on a marked-conflicting fork, not merely
+  behind.** After the v22.1.5 restart two masternodes on one host sat at 2427
+  while the network ran at 2624, one of them holding 12 peers -- which rules out
+  a connectivity problem. `getchaintips` told the real story: their active tip
+  was a 2427 the network had abandoned, and the network's actual 2427 was listed
+  `status: conflicting`. Neither node held a ChainLock at all (`getbestchainlock`
+  answered "Unable to find any ChainLock"), so the marking did not come from
+  one.
+
+  `BLOCK_CONFLICT_CHAINLOCK` is a separate bit from `BLOCK_FAILED_MASK`, and
+  `ResetBlockFailureFlags` clears it only when `ignore_chainlocks` is true
+  (`validation.cpp:3740-3762`). So plain `reconsiderblock <hash>` does nothing
+  here; **`reconsiderblock <hash> true`** is what releases it. Both nodes went
+  from 2427 to the tip within 60 seconds, no reindex needed. Pass the network's
+  hash for the forked height -- descendants are cleared with it.
+
+- **Stalled block production and a slow block are hard to tell apart, and the
+  ISLock timeout makes the difference.** A gap of 454 seconds looked like the
+  chain had stopped; it was one block waiting out `WAIT_FOR_ISLOCK_TIMEOUT` for
+  a batch of 23 transactions, and it mined all of them at once. Blocks either
+  side of it were 56-130 seconds apart. Before concluding the chain has stalled,
+  check whether the mempool is non-empty and the node is logging `CreateNewBlock`
+  -- and read the node's log timestamps as **UTC**, which is an hour or two off
+  the wall clock the surrounding commands print.
 
 ## Measurement caveats that are easy to get wrong
 
@@ -275,7 +304,13 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   It is declared through the admin API, never inferred, and never committed:
   the host addresses are not public and this repository is.
 
-## Verified facts about the node (DeFCoN Core v22.1.4, `v22.1.x` @ `7227180053`)
+## Verified facts about the node (`v22.1.x`; the devnet now runs v22.1.5)
+
+The facts below were read from source at v22.1.4 (`7227180053`) and re-checked
+against the tree that became v22.1.5. The version bump itself is only
+`configure.ac`: it exists because eight backports shipped in one day under an
+unchanged version string, and three different binaries reported v22.1.4 at
+once. The string still does not identify a build -- compare `md5sum`.
 
 ### The chain is proof-of-work to height 1000, then proof-of-stake
 
