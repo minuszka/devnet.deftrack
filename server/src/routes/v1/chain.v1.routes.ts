@@ -4,6 +4,11 @@ import { Block } from '../../models/Block.js';
 import { Transaction } from '../../models/Transaction.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
 import { config } from '../../config.js';
+import {
+  CHAINLOCK_PROFILE_NAME,
+  CHAINLOCK_V2_ACTIVATION_HEIGHT,
+  CHAINLOCK_V2_PROFILE_NAME,
+} from '../../config/llmq.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
 
@@ -201,7 +206,16 @@ router.get(
     const recent = await Block.find({ isProofOfStake: true })
       .sort({ height: -1 })
       .limit(q.blocks)
-      .select('height time hasChainLock chainLockedAt chainLockLatencySec chainLockLatencyMs chainLockSource')
+      .select(
+        'height time hasChainLock chainLockedAt chainLockLatencySec chainLockLatencyMs chainLockSource chainLockLlmqName'
+      )
+      .lean();
+
+    // The switchover, as observed: the first lock each profile ever signed.
+    // Height-keyed rather than time-keyed because the resolver is height-only.
+    const firstV2 = await Block.findOne({ hasChainLock: true, chainLockLlmqName: CHAINLOCK_V2_PROFILE_NAME })
+      .sort({ height: 1 })
+      .select('height')
       .lean();
 
     const eligible = first ? recent.filter((b) => b.height >= first.height) : [];
@@ -260,6 +274,18 @@ router.get(
       eventLatencyMeasured: eventMeasured.length,
       eventLatencyMs: { p50: eventPct(0.5), p90: eventPct(0.9), max: eventMeasured.at(-1) ?? null },
       sourceCounts,
+      // The Q60 switchover, stated as data: which profile signs, from what
+      // height, and whether the first post-activation lock has been seen yet.
+      signers: {
+        v1: CHAINLOCK_PROFILE_NAME,
+        v2: CHAINLOCK_V2_PROFILE_NAME,
+        activationHeight: CHAINLOCK_V2_ACTIVATION_HEIGHT,
+        firstV2LockedHeight: firstV2?.height ?? null,
+        counts: {
+          v1: locked.filter((b) => b.chainLockLlmqName === CHAINLOCK_PROFILE_NAME).length,
+          v2: locked.filter((b) => b.chainLockLlmqName === CHAINLOCK_V2_PROFILE_NAME).length,
+        },
+      },
       resolutionSec: Math.round(config.chainlock.intervalMs / 1000),
       reconciliationIntervalSec: Math.round(config.chainlock.reconcileIntervalMs / 1000),
       points: eligible
@@ -271,6 +297,7 @@ router.get(
           latencySec: b.chainLockLatencySec,
           latencyMs: b.chainLockLatencyMs ?? null,
           source: b.chainLockSource ?? null,
+          signer: b.chainLockLlmqName ?? null,
         }))
         .reverse(),
     });

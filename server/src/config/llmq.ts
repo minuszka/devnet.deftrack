@@ -148,6 +148,24 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
  */
 export const CHAINLOCK_PROFILE_NAME = process.env.CHAINLOCK_LLMQ_NAME ?? 'llmq_400_60';
 
+/**
+ * The signed-height ChainLock resolver, mirrored from the node
+ * (llmq::GetChainLocksLLMQType): below the activation height every CLSIG is
+ * and remains signed by the legacy profile; at and above it, by llmq_defcon.
+ * Height-only and one-way, so the signing profile of any lock can be derived
+ * from its block height. The node confirms it live only for the best lock
+ * (getbestchainlock reports the resolved profile name since v22.1.5), which
+ * the ChainLock watcher uses as a drift check on this mirror.
+ */
+export const CHAINLOCK_V2_ACTIVATION_HEIGHT = Number(
+  process.env.CHAINLOCK_V2_ACTIVATION_HEIGHT ?? 3240
+);
+export const CHAINLOCK_V2_PROFILE_NAME = process.env.CHAINLOCK_V2_LLMQ_NAME ?? 'llmq_defcon';
+
+export function chainlockProfileNameAtHeight(height: number): string {
+  return height >= CHAINLOCK_V2_ACTIVATION_HEIGHT ? CHAINLOCK_V2_PROFILE_NAME : CHAINLOCK_PROFILE_NAME;
+}
+
 export function chainlockProfile(): LlmqProfile {
   const profile = LLMQ_PROFILES[CHAINLOCK_PROFILE_NAME];
   if (!profile) {

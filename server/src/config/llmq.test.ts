@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { LLMQ_PROFILES, TRACKED_PROFILE_NAMES, maxPossibleBan, trackedProfiles } from './llmq.js';
+import {
+  CHAINLOCK_V2_ACTIVATION_HEIGHT,
+  LLMQ_PROFILES,
+  TRACKED_PROFILE_NAMES,
+  chainlockProfileNameAtHeight,
+  maxPossibleBan,
+  trackedProfiles,
+} from './llmq.js';
 
 describe('llmq profile registry', () => {
   it('tracks every quorum type this devnet is observed to form', () => {
@@ -9,6 +16,18 @@ describe('llmq profile registry', () => {
     // commitment is mined for a failed round, so the reconstructed schedule is
     // the only witness it was ever due.
     expect(trackedProfiles().map((p) => p.llmqType).sort()).toEqual([1, 2, 3, 5, 7]);
+  });
+
+  it('resolves the ChainLock signer by signed height, one-way at activation', () => {
+    // Mirrors llmq::GetChainLocksLLMQType: the boundary is >= activation, so
+    // 3239 is the last legacy lock and 3240 the first Q60 one. Getting this
+    // off by one would attribute the first Q60 lock to the wrong profile --
+    // the exact moment this instrument exists to record.
+    expect(CHAINLOCK_V2_ACTIVATION_HEIGHT).toBe(3240);
+    expect(chainlockProfileNameAtHeight(0)).toBe('llmq_400_60');
+    expect(chainlockProfileNameAtHeight(3239)).toBe('llmq_400_60');
+    expect(chainlockProfileNameAtHeight(3240)).toBe('llmq_defcon');
+    expect(chainlockProfileNameAtHeight(1_000_000)).toBe('llmq_defcon');
   });
 
   it('gates the Q60 profile at its formation height and no other profile', () => {

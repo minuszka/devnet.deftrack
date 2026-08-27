@@ -71,6 +71,18 @@ export interface ChainLockReport {
   eventLatencyMeasured: number;
   eventLatencyMs: { p50: number | null; p90: number | null; max: number | null };
   sourceCounts: { zmq: number; poll: number; unknown: number };
+  /**
+   * The Q60 switchover as data: the signed-height resolver flips the signing
+   * profile from v1 to v2 at activationHeight, one-way. firstV2LockedHeight is
+   * null until the first post-activation lock is observed.
+   */
+  signers: {
+    v1: string;
+    v2: string;
+    activationHeight: number;
+    firstV2LockedHeight: number | null;
+    counts: { v1: number; v2: number };
+  };
   /** Fast polling interval used only when ZMQ is disabled. */
   resolutionSec: number;
   reconciliationIntervalSec: number;
@@ -81,6 +93,8 @@ export interface ChainLockReport {
     latencySec: number | null;
     latencyMs: number | null;
     source: 'zmq' | 'poll' | null;
+    /** LLMQ profile that signed this block's lock; null when unknown. */
+    signer: string | null;
   }>;
 }
 

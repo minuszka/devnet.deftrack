@@ -74,6 +74,17 @@ export interface BlockDocument extends Document {
    */
   chainLockLatencyMs: number | null;
 
+  /**
+   * The LLMQ profile that signed this block's ChainLock.
+   *
+   * Derived from the node's signed-height resolver (height-only and one-way,
+   * so it is a consensus fact, not a guess); the ChainLock watcher confirms it
+   * against `getbestchainlock` for the current best lock, which is the only
+   * one the node reports a profile name for. This is the field that makes the
+   * llmq_400_60 -> llmq_defcon switchover at the activation height legible.
+   */
+  chainLockLlmqName: string | null;
+
   /** When this node first announced the block to us over ZMQ. */
   firstSeenAt: Date | null;
 }
@@ -112,6 +123,7 @@ const blockSchema = new Schema<BlockDocument>(
     chainLockLatencySec: { type: Number, default: null, index: true },
     chainLockSource: { type: String, enum: ['zmq', 'poll', null], default: null },
     chainLockLatencyMs: { type: Number, default: null },
+    chainLockLlmqName: { type: String, default: null, index: true },
     firstSeenAt: { type: Date, default: null },
   },
   { timestamps: true }

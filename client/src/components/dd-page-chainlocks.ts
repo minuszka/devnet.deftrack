@@ -116,6 +116,7 @@ export class DdPageChainLocks extends LitElement {
           value=${d.firstLockedHeight === null ? '—' : num(d.firstLockedHeight)}
           sub="first block ever locked"
         ></dd-stat>
+        ${this._signerTile(d)}
       </section>
 
       <div class="note caveat">
@@ -129,6 +130,43 @@ export class DdPageChainLocks extends LitElement {
               are excluded rather than given an invented latency.`}
       </div>
     `;
+  }
+
+  /**
+   * Which profile signs the locks right now, and where the switchover stands.
+   *
+   * Three states, strictly ordered: before activation the legacy profile
+   * signs; past activation the first Q60 lock is still pending (the resolver
+   * has flipped but no lock proves it yet); once one is observed, Q60 is live
+   * from that height on -- one-way, so this tile never goes back.
+   */
+  private _signerTile(d: ChainLockReport): TemplateResult {
+    const s = d.signers;
+    const tipHeight = d.points.at(-1)?.height ?? 0;
+
+    if (s.firstV2LockedHeight !== null) {
+      return html`<dd-stat
+        label="Signing quorum"
+        value=${s.v2}
+        sub="live since block ${num(s.firstV2LockedHeight)}"
+        tone="good"
+      ></dd-stat>`;
+    }
+    if (tipHeight >= s.activationHeight) {
+      return html`<dd-stat
+        label="Signing quorum"
+        value="${s.v1} → ${s.v2}"
+        sub="activation at ${num(s.activationHeight)} passed · first ${s.v2} lock pending"
+        tone="warn"
+      ></dd-stat>`;
+    }
+    return html`<dd-stat
+      label="Signing quorum"
+      value=${s.v1}
+      sub="switches to ${s.v2} at block ${num(s.activationHeight)} · ${num(
+        Math.max(0, s.activationHeight - tipHeight)
+      )} blocks away"
+    ></dd-stat>`;
   }
 
   /** One tick per block: present, missing, or present-but-untimed. */
@@ -151,16 +189,44 @@ export class DdPageChainLocks extends LitElement {
             svg`<rect
               x=${(i * w).toFixed(2)} y="10" width=${Math.max(1, w - 0.6).toFixed(2)} height="34"
               fill=${p.locked ? (p.latencyMs === null ? 'var(--accent-dim)' : 'var(--accent)') : 'var(--crit)'}
-            ><title>${p.height}${p.locked ? (p.latencyMs === null ? ` · locked (${p.source ?? 'untimed'})` : ` · ${p.latencyMs}ms · ZMQ`) : ' · no lock'}</title></rect>`
+            ><title>${p.height}${p.locked ? (p.latencyMs === null ? ` · locked (${p.source ?? 'untimed'})` : ` · ${p.latencyMs}ms · ZMQ`) : ' · no lock'}${p.signer ? ` · signed by ${p.signer}` : ''}</title></rect>`
           )}
+          ${this._activationLine(d, pts, w, H)}
         </svg>
         <div class="legend">
           <span><i class="swatch" style="background: var(--accent)"></i>locked, latency measured</span>
           <span><i class="swatch" style="background: var(--accent-dim)"></i>locked before we watched</span>
           <span><i class="swatch" style="background: var(--crit)"></i>no lock</span>
+          ${this._activationVisible(d, pts)
+            ? html`<span><i class="swatch" style="background: var(--warn)"></i>${d.signers.v2} activation
+                (${num(d.signers.activationHeight)})</span>`
+            : nothing}
         </div>
       </section>
     `;
+  }
+
+  private _activationVisible(d: ChainLockReport, pts: ChainLockReport['points']): boolean {
+    const act = d.signers.activationHeight;
+    return pts.length > 0 && pts[0]!.height <= act && pts.at(-1)!.height >= act;
+  }
+
+  /**
+   * A vertical marker on the boundary between the last legacy-signed block and
+   * the first Q60-signed one, drawn only while that boundary is in the window.
+   */
+  private _activationLine(
+    d: ChainLockReport,
+    pts: ChainLockReport['points'],
+    w: number,
+    h: number
+  ): ReturnType<typeof svg> | typeof nothing {
+    if (!this._activationVisible(d, pts)) return nothing;
+    const idx = pts.findIndex((p) => p.height >= d.signers.activationHeight);
+    if (idx < 0) return nothing;
+    const x = (idx * w).toFixed(2);
+    return svg`<line x1=${x} y1="4" x2=${x} y2=${h - 4} stroke="var(--warn)" stroke-width="2"
+      ><title>${d.signers.v2} activation at ${d.signers.activationHeight}</title></line>`;
   }
 
   private _gaps(d: ChainLockReport): TemplateResult {

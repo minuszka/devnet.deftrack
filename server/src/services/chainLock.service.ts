@@ -7,6 +7,12 @@ import { NodeObservation } from '../models/NodeObservation.js';
 import { zmqService } from './zmq.service.js';
 import { metricsService } from './metrics.service.js';
 import { chainLockRpcIntervalMs } from '../domain/collectorPolicy.js';
+import {
+  CHAINLOCK_V2_ACTIVATION_HEIGHT,
+  CHAINLOCK_V2_PROFILE_NAME,
+  CHAINLOCK_PROFILE_NAME,
+  chainlockProfileNameAtHeight,
+} from '../config/llmq.js';
 import { PeerObservation } from '../models/PeerObservation.js';
 import { localClockService } from './localClock.service.js';
 
@@ -46,6 +52,33 @@ export class ChainLockService {
 
   start(): void {
     this.startedAtSec = Math.floor(Date.now() / 1000);
+
+    // Locks recorded before the signer field existed get their profile from
+    // the same height rule new observations use. Idempotent, and safe to run
+    // unconditionally: only rows still missing the field are touched.
+    void Block.updateMany({ hasChainLock: true, chainLockLlmqName: null }, [
+      {
+        $set: {
+          chainLockLlmqName: {
+            $cond: [
+              { $gte: ['$height', CHAINLOCK_V2_ACTIVATION_HEIGHT] },
+              CHAINLOCK_V2_PROFILE_NAME,
+              CHAINLOCK_PROFILE_NAME,
+            ],
+          },
+        },
+      },
+    ])
+      .then((r) => {
+        if (r.modifiedCount > 0) {
+          logger.info(`ChainLock signer profile backfilled on ${r.modifiedCount} block(s)`);
+        }
+      })
+      .catch((error) =>
+        logger.error(
+          `ChainLock signer backfill failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
     this.unsubscribeZmq = zmqService.onObservation((topic) => {
       if (topic !== 'hashblock' && topic !== 'hashchainlock') return;
       this.deferredObservations = true;
@@ -78,6 +111,7 @@ export class ChainLockService {
     try {
       await this.applyPendingObservations();
       await this.collect();
+      await this.reconcileBestLock();
     } catch (error) {
       logger.error(`ChainLock watch failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -222,6 +256,10 @@ export class ChainLockService {
               ),
               chainLockLatencyMs: latencyMs,
               chainLockSource: 'zmq',
+              // The signed-height resolver is height-only and one-way, so the
+              // signer is a consensus fact derivable at observation time.
+              chainLockLlmqName:
+                typeof block.height === 'number' ? chainlockProfileNameAtHeight(block.height) : null,
             },
           }
         );
@@ -286,6 +324,7 @@ export class ChainLockService {
               // Poll resolution, not an event time -- recorded so the two are
               // never averaged together as if they were the same measurement.
               chainLockSource: 'poll' as const,
+              chainLockLlmqName: chainlockProfileNameAtHeight(b.height),
             },
           },
         },
@@ -308,6 +347,32 @@ export class ChainLockService {
         `ChainLock observed on ${ops.length} block(s) up to ${tip}; ${timed} with measurable latency`
       );
     }
+  }
+
+  /**
+   * Cross-checks the signed-height resolver mirror against the node.
+   *
+   * `getbestchainlock` is the only place the node names the profile that
+   * signed a lock, and only for the current best one. The derived name should
+   * always agree; a mismatch means this deployment's activation constants
+   * have drifted from the node's, and the node's answer wins -- both in the
+   * stored record and in the log line that says the config needs fixing.
+   */
+  private async reconcileBestLock(): Promise<void> {
+    const best = await rpc.getBestChainLock().catch(() => null);
+    if (!best?.llmqType) return;
+
+    const derived = chainlockProfileNameAtHeight(best.height);
+    if (best.llmqType !== derived) {
+      logger.warn(
+        `ChainLock resolver drift: node signs height ${best.height} with ${best.llmqType}, ` +
+          `config derives ${derived} -- storing the node's answer; check CHAINLOCK_V2_* config`
+      );
+    }
+    await Block.updateOne(
+      { hash: best.blockhash, chainLockLlmqName: { $ne: best.llmqType } },
+      { $set: { chainLockLlmqName: best.llmqType } }
+    );
   }
 }
 

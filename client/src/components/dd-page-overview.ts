@@ -4,7 +4,7 @@ import type {
   MasternodeTimelinePoint,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
-import { api, type HealthSnapshot } from '../lib/api.js';
+import { api, type ChainLockReport, type HealthSnapshot } from '../lib/api.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
@@ -21,6 +21,7 @@ export class DdPageOverview extends LitElement {
     _total: { state: true },
     _mn: { state: true },
     _health: { state: true },
+    _clocks: { state: true },
     _error: { state: true },
     _loading: { state: true },
   };
@@ -30,6 +31,7 @@ export class DdPageOverview extends LitElement {
   private _total = 0;
   private _mn: MasternodeTimelinePoint | null = null;
   private _health: HealthSnapshot | null = null;
+  private _clocks: ChainLockReport | null = null;
   private _error = '';
   private _loading = true;
   private _timer: number | null = null;
@@ -40,6 +42,31 @@ export class DdPageOverview extends LitElement {
     tableStyles,
     pageStyles,
     css`
+      .q60 {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 0 0 14px;
+        padding: 10px 14px;
+        border: 1px solid var(--line-soft);
+        border-left: 3px solid var(--warn);
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .q60.live {
+        border-left-color: var(--accent);
+      }
+      .q60 .tag {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .q60 .mono {
+        font-family: var(--font-mono);
+      }
       .more {
         padding: 10px 14px;
         border-top: 1px solid var(--line-soft);
@@ -168,17 +195,21 @@ export class DdPageOverview extends LitElement {
 
   private async _load(): Promise<void> {
     try {
-      const [timeline, rounds, mn, health] = await Promise.all([
+      const [timeline, rounds, mn, health, clocks] = await Promise.all([
         api.healthTimeline(24 * 7),
         api.rounds({ limit: RECENT }),
         api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
         api.health().catch(() => null),
+        // Only for the switchover banner; a failure hides the banner rather
+        // than the page.
+        api.chainlocks(50).catch(() => null),
       ]);
       this._timeline = timeline;
       this._rounds = rounds.items;
       this._total = rounds.total;
       this._mn = mn.points.at(-1) ?? null;
       this._health = health;
+      this._clocks = clocks;
       this._error = '';
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
@@ -214,9 +245,53 @@ export class DdPageOverview extends LitElement {
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
       ${this._loading && !s ? html`<div class="note">Loading…</div>` : nothing}
-      ${s ? this._stateBar(status) : nothing} ${s ? this._tiles(s, status) : nothing}
+      ${s ? this._stateBar(status) : nothing} ${this._q60Banner()}
+      ${s ? this._tiles(s, status) : nothing}
       ${this._rounds.length > 0 ? this._chartOrTimeline() : nothing} ${this._recent(status)}
     `;
+  }
+
+  /**
+   * The Q60 switchover, tracked live: the whole project was built to select
+   * and then measure this profile, so the moment the ChainLock signer flips
+   * from llmq_400_60 to llmq_defcon belongs on the front page. One-way by
+   * consensus, so the banner only ever moves forward through its three states.
+   */
+  private _q60Banner(): TemplateResult | typeof nothing {
+    const s = this._clocks?.signers;
+    if (!s) return nothing;
+    const tip = this._health?.chainTip ?? this._clocks?.points.at(-1)?.height ?? 0;
+
+    if (s.firstV2LockedHeight !== null) {
+      return html`<section class="q60 live">
+        <span class="tag">Q60 live</span>
+        <span
+          ><span class="mono">${s.v2}</span> signs the chain since block
+          <a class="mono" href="/block/${s.firstV2LockedHeight}">${num(s.firstV2LockedHeight)}</a> —
+          ${num(this._clocks?.signers.counts.v2 ?? 0)} lock(s) observed in the current window.</span
+        >
+      </section>`;
+    }
+    if (tip >= s.activationHeight) {
+      return html`<section class="q60">
+        <span class="tag">Q60 activation</span>
+        <span
+          >Activation height <span class="mono">${num(s.activationHeight)}</span> passed at tip
+          <span class="mono">${num(tip)}</span> — waiting for the first
+          <span class="mono">${s.v2}</span>-signed ChainLock.</span
+        >
+      </section>`;
+    }
+    const blocksLeft = s.activationHeight - tip;
+    return html`<section class="q60">
+      <span class="tag">Q60 switchover</span>
+      <span
+        ><span class="mono">${s.v1}</span> signs until block
+        <span class="mono">${num(s.activationHeight)}</span>; <span class="mono">${s.v2}</span> takes
+        over in ${num(blocksLeft)} block(s) (~${num(Math.round(blocksLeft * 2.5))} min at devnet
+        spacing).</span
+      >
+    </section>`;
   }
 
   private _stateBar(status: NetworkStatus): TemplateResult {

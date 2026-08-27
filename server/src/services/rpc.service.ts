@@ -132,6 +132,26 @@ export class RpcService {
     return this.call<number>('getblockcount');
   }
 
+  /**
+   * The node's current best ChainLock, or null when none exists yet.
+   *
+   * "Unable to find any ChainLock" is the node's answer on a chain that has
+   * not locked anything -- an ordinary state, not a failure, so it maps to
+   * null instead of an error. Since v22.1.5 the response carries `llmqType`,
+   * the resolved name of the profile that signed the lock; that field is what
+   * lets the watcher cross-check its own signed-height resolver mirror.
+   */
+  async getBestChainLock(): Promise<RpcBestChainLock | null> {
+    try {
+      return await this.call<RpcBestChainLock>('getbestchainlock');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Unable to find any ChainLock')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   getBlockHash(height: number): Promise<string> {
     return this.call<string>('getblockhash', [height]);
   }
@@ -278,6 +298,15 @@ export interface RpcBlockchainInfo {
   difficulty: number;
   mediantime: number;
   initialblockdownload: boolean;
+}
+
+export interface RpcBestChainLock {
+  blockhash: string;
+  height: number;
+  /** Resolved signing profile name (e.g. "llmq_defcon"); present since v22.1.5. */
+  llmqType?: string;
+  signature: string;
+  known_block: boolean;
 }
 
 export const rpc = new RpcService();
