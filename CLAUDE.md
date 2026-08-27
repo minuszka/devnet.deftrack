@@ -282,6 +282,32 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   -- and read the node's log timestamps as **UTC**, which is an hour or two off
   the wall clock the surrounding commands print.
 
+- **The PoSe ban waves were a parameter, not a fault: `dkgBadVotesThreshold 3`.**
+  `dkgsession.cpp:672` marks a member bad once `badMemberVotes >= threshold`,
+  and the inherited devnet profiles set that to **3 votes out of 50/60 (6%)**
+  where mainnet Dash uses 80%. Three peers that missed your contribution --
+  routine on a mesh where a handful of quorum connections are always in
+  flux -- were enough to punish; punishment accrued faster than the 1/block
+  decay between hourly rounds; 100 meant ban. The fingerprint that identified
+  it: `llmq_400_60` (badVotes 30) at health 1.00 in the same blocks where
+  `llmq_50_60`/`llmq_60_75` (badVotes 3) punished 12-16 members. It also
+  explains months of `formationRate 1.00` next to low health: `minSize 3`
+  forms anything, `badVotes 3` punishes everyone. Fixed mainnet-proportionally
+  (40/48); the Q60 profile ships with 48. Do not "fix" a wave by reviving
+  into it -- the treadmill refills.
+
+- **A reconfigure can silently kill dependency tracking.** After the
+  maintainer-mode configure regeneration, header edits stopped triggering
+  dependent rebuilds: `touch` on `consensus/params.h` + `make` recompiled 15
+  of 1081 objects. Every incremental build after a header-layout change was
+  then a potential **mixed-ABI binary** -- ours crashed with memory access
+  violations at 0x12c in every test fixture and failed base58 spork-address
+  parsing, symptoms that look nothing like their cause. Detection is one
+  line: `find . -name '*.o' ! -newer <touched-header> | wc -l` after a make
+  that claimed success. Remedy: `make clean` after any configure
+  regeneration, and treat "surprisingly few CXX lines after a header change"
+  as an alarm, not a gift.
+
 ## Measurement caveats that are easy to get wrong
 
 - **ChainLock coverage starts at the first lock ever seen,** not at the start
@@ -351,7 +377,31 @@ block's `OP_RETURN` output colliding with the premine rule.
 `MoneyRange(fee)` -- a coinstake mints its reward, so inputs - outputs is
 negative. Fixed in #55; that one affected mainnet too.
 
-### The devnet ChainLock quorum was `LLMQ_DEVNET`, now `LLMQ_400_60`
+### The devnet ChainLock quorum: `LLMQ_400_60`, switching to `llmq_defcon` (Q60) at height 3240
+
+The Q60 profile the whole project was built to test now exists in the node:
+`LLMQ_DEFCON` (type 7), **60/44/41**, hourly DKG, `dkgBadVotesThreshold 48`.
+Selected by the simulator at
+github.com/minuszka/defcon-chainlock-pose-simulator; the decisive property is
+`2*threshold > size`, which makes two disjoint signer sets -- a dual ChainLock
+under partition -- impossible by construction.
+
+The switchover follows the simulator audit's design: a single, one-way,
+height-only resolver (`llmq::GetChainLocksLLMQType`) that both signing and
+verification use, keyed on the CLSIG's signed height. Below
+`nChainLocksV2ActivationHeight` (devnet: **3240**) everything is and remains
+`llmq_400_60`; at and above it, `llmq_defcon`. Historical locks stay
+verifiable forever -- the CbTx best-CL consensus check and both RPC verifiers
+funnel through the same one line in `VerifyChainLock`.
+
+Two rollout constraints, both enforced in code: quorum formation for the new
+type is gated to `(signingActiveQuorumCount+1)*dkgInterval` = 120 blocks
+before activation (devnet: 3120), so quorums exist when the resolver flips;
+and **a commitment of a type old binaries do not know forks them off**, so
+every daemon must run the new binary before height 3120. `getbestchainlock`
+reports the resolved profile name.
+
+### The pre-Q60 history: `LLMQ_DEVNET`, then `LLMQ_400_60`
 
 `src/chainparams.cpp:634` originally set `llmqTypeChainLocks = LLMQ_DEVNET`;
 upstream #54 changed devnet to the mainnet profile (`LLMQ_400_60`,
@@ -429,8 +479,8 @@ params->dkgBadVotesThreshold = threshold;
 ```
 
 `60:41` yields `60/41/41/41`; the intended `minSize = 44` is unreachable. Same
-limitation as the regtest `-llmqtestparams` override. The first test round
-therefore runs the **stock** `LLMQ_DEVNET` profile as a baseline.
+limitation as the regtest `-llmqtestparams` override. This is why Q60 shipped
+as a first-class profile (`llmq_defcon`) instead of an override.
 
 ### `quorum dkgstatus` is nearly empty on a non-masternode
 

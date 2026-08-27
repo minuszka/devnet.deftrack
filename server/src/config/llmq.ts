@@ -98,6 +98,20 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
     useRotation: false,
     signingActiveQuorumCount: 4,
   },
+  llmq_defcon: {
+    llmqType: 7,
+    llmqName: 'llmq_defcon',
+    size: 60,
+    minSize: 44,
+    threshold: 41,
+    dkgInterval: 24, // one DKG per hour -- the Layer-1 dead-MN mitigation
+    dkgPhaseBlocks: 2,
+    dkgMiningWindowStart: 10,
+    dkgMiningWindowEnd: 18,
+    dkgBadVotesThreshold: 48, // 80% of size -- supermajority, unlike the inherited 3
+    useRotation: false,
+    signingActiveQuorumCount: 4,
+  },
   llmq_devnet: {
     llmqType: 101,
     llmqName: 'llmq_devnet',
@@ -163,7 +177,7 @@ export function chainlockProfile(): LlmqProfile {
  * change retired it here.
  */
 export const TRACKED_PROFILE_NAMES: readonly string[] = (
-  process.env.TRACKED_LLMQ_NAMES ?? 'llmq_50_60,llmq_60_75,llmq_400_60,llmq_400_85'
+  process.env.TRACKED_LLMQ_NAMES ?? 'llmq_50_60,llmq_60_75,llmq_400_60,llmq_400_85,llmq_defcon'
 )
   .split(',')
   .map((name) => name.trim())
