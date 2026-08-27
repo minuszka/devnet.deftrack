@@ -3,11 +3,22 @@ import { LLMQ_PROFILES, TRACKED_PROFILE_NAMES, maxPossibleBan, trackedProfiles }
 
 describe('llmq profile registry', () => {
   it('tracks every quorum type this devnet is observed to form', () => {
-    // chainparams.cpp enables five types here; commitments exist for llmqType
-    // 1, 2, 3 and 5. Tracking a subset is how failed rounds of the untracked
-    // types became invisible: no commitment is mined for a failed round, so the
-    // reconstructed schedule is the only witness it was ever due.
-    expect(trackedProfiles().map((p) => p.llmqType).sort()).toEqual([1, 2, 3, 5]);
+    // Commitments exist for llmqType 1, 2, 3 and 5, and since the Q60 consensus
+    // change also for 7 (llmq_defcon, first commitment at height 3120). Tracking
+    // a subset is how failed rounds of the untracked types became invisible: no
+    // commitment is mined for a failed round, so the reconstructed schedule is
+    // the only witness it was ever due.
+    expect(trackedProfiles().map((p) => p.llmqType).sort()).toEqual([1, 2, 3, 5, 7]);
+  });
+
+  it('gates the Q60 profile at its formation height and no other profile', () => {
+    // IsQuorumTypeEnabledInternal refuses llmq_defcon below
+    // activation 3240 - (signingActiveQuorumCount 4 + 1) * dkgInterval 24; the
+    // inherited profiles have formed since genesis and carry no gate.
+    expect(LLMQ_PROFILES.llmq_defcon?.formationGateHeight).toBe(3120);
+    for (const p of trackedProfiles()) {
+      if (p.llmqName !== 'llmq_defcon') expect(p.formationGateHeight).toBeUndefined();
+    }
   });
 
   it('knows every enabled type, including the one it does not track', () => {

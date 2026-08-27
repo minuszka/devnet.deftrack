@@ -74,6 +74,20 @@ export function absenceIsEvidence(
   return oldestObservedHeight === null || expectedHeight >= oldestObservedHeight;
 }
 
+/**
+ * Whether the node would even attempt this round.
+ *
+ * A profile added by consensus change is gated: IsQuorumTypeEnabledInternal
+ * refuses to form it below its formation gate height, so a scheduled height
+ * below the gate is not a round that failed -- it is a round that could not
+ * exist, by rule. Recording it as failed is the same error as judging heights
+ * beyond the RPC's observation window: a verdict the observation cannot
+ * support. Profiles without a gate are schedulable everywhere.
+ */
+export function isSchedulable(expectedHeight: number, formationGateHeight?: number): boolean {
+  return formationGateHeight === undefined || expectedHeight >= formationGateHeight;
+}
+
 export type RoundOutcome = 'pending' | 'formed' | 'failed' | 'impossible';
 
 /**

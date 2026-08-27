@@ -4,6 +4,7 @@ import {
   classifyRound,
   currentRoundHeight,
   expectedRoundHeights,
+  isSchedulable,
   resolvedByHeight,
   roundKeyFor,
 } from './dkgSchedule.js';
@@ -106,5 +107,28 @@ describe('evidence reach', () => {
     // With no commitment of this type anywhere there is no aged-out boundary to
     // have fallen behind, so absence carries its ordinary meaning.
     expect(absenceIsEvidence(2400, null)).toBe(true);
+  });
+});
+
+describe('formation gate', () => {
+  // llmq_defcon on this devnet: activation 3240, gate 3240 - (4 + 1) * 24.
+  const gate = 3120;
+
+  it('leaves heights below the gate out of the schedule entirely', () => {
+    // The node refuses to form the type there (IsQuorumTypeEnabledInternal),
+    // so no session ever ran: not failed, not impossible -- not a round.
+    expect(isSchedulable(3096, gate)).toBe(false);
+    expect(isSchedulable(0, gate)).toBe(false);
+  });
+
+  it('schedules from the gate height itself -- the first real round', () => {
+    // Verified live: the first llmq_defcon commitment on this chain is at 3120.
+    expect(isSchedulable(3120, gate)).toBe(true);
+    expect(isSchedulable(3144, gate)).toBe(true);
+  });
+
+  it('treats profiles without a gate as schedulable everywhere', () => {
+    expect(isSchedulable(0)).toBe(true);
+    expect(isSchedulable(2856)).toBe(true);
   });
 });

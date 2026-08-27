@@ -25,6 +25,15 @@ export interface LlmqProfile {
   dkgBadVotesThreshold: number;
   useRotation: boolean;
   signingActiveQuorumCount: number;
+  /**
+   * The height below which the node refuses to form this profile at all
+   * (IsQuorumTypeEnabledInternal gates new types until
+   * activation - (signingActiveQuorumCount + 1) * dkgInterval). A scheduled
+   * height below it is not a failed round -- no session ever ran, by consensus
+   * rule -- so the collector leaves those heights out of the record entirely,
+   * the same way it treats heights beyond the RPC's observation window.
+   */
+  formationGateHeight?: number;
 }
 
 export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
@@ -111,6 +120,9 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 48, // 80% of size -- supermajority, unlike the inherited 3
     useRotation: false,
     signingActiveQuorumCount: 4,
+    // nChainLocksV2ActivationHeight 3240 - (4 + 1) * 24; verified live: the
+    // first llmq_defcon commitment on this chain sits at exactly 3120.
+    formationGateHeight: 3120,
   },
   llmq_devnet: {
     llmqType: 101,

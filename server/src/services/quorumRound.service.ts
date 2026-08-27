@@ -8,6 +8,7 @@ import {
   classifyRound,
   currentRoundHeight,
   expectedRoundHeights,
+  isSchedulable,
   roundKeyFor,
 } from '../domain/dkgSchedule.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
@@ -153,7 +154,10 @@ export class QuorumRoundService {
     }
     for (const h of expectedRoundHeights(tip, p.dkgInterval)) {
       // New scheduled rounds must be created. Resolved, complete rounds are
-      // facts about the past and are deliberately never refreshed.
+      // facts about the past and are deliberately never refreshed. Heights
+      // below the profile's formation gate are not rounds at all -- the node
+      // refuses to form the type there -- so they are never planned.
+      if (!isSchedulable(h, p.formationGateHeight)) continue;
       if (h >= oldest && shouldRefreshRound(byHeight.get(h))) heights.add(h);
     }
 
@@ -183,6 +187,9 @@ export class QuorumRoundService {
     let unseeable = 0;
 
     for (const expectedHeight of plan.heights) {
+      // Belt to planProfile's braces: a height below the formation gate must
+      // never receive a verdict, whichever path put it in the plan.
+      if (!isSchedulable(expectedHeight, p.formationGateHeight)) continue;
       const entry = seen.get(expectedHeight);
       const status: RoundStatus = classifyRound({
         tip,
