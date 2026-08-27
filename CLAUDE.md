@@ -455,6 +455,16 @@ to the collector later starts mid-window, and its oldest scheduled height would
 otherwise be written as a failure that never occurred. Such heights are left
 out of the record entirely -- `absenceIsEvidence()` in `domain/dkgSchedule.ts`.
 
+**A gated profile has no rounds below its formation gate.** The node refuses
+to form a consensus-added type below
+`activation - (signingActiveQuorumCount + 1) * dkgInterval` (for `llmq_defcon`:
+3120), so a scheduled height under the gate is not a failed round -- no session
+ever ran, by rule. The collector once wrote 11 `failed` rows for that era and
+inflated `consecutiveFailures` on the first real round (3120, formed at health
+1.00, "11 straight failures"). Profiles now carry `formationGateHeight`
+(`isSchedulable()` in `domain/dkgSchedule.ts`); heights below it stay out of
+the record, exactly like heights beyond the RPC window.
+
 `quorumHash` becomes an optional field, populated only when the round formed.
 Upserts use a `unique` index on `roundKey` plus `$setOnInsert` for immutable
 fields — the same pattern as the production ban-event collector
