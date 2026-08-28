@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import type { BlockDetail, BlockRow } from '@devnet-deftrack/shared';
+import { txKindLabel, type BlockDetail, type BlockRow } from '@devnet-deftrack/shared';
 import { api } from '../lib/api.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
@@ -290,7 +290,7 @@ export class DdPageBlock extends LitElement {
                   (t) => html`
                     <tr>
                       <td class="mono"><a href="/tx/${t.txid}">${shortHash(t.txid, 12, 8)}</a></td>
-                      <td class="c">${t.isCoinbase ? 'coinbase' : t.isCoinstake ? 'coinstake' : 'normal'}</td>
+                      <td class="c">${txKindLabel(t.type, t.isCoinbase, t.isCoinstake)}</td>
                       <td class="r mono">${num(t.vinCount)}</td>
                       <td class="r mono">${num(t.voutCount)}</td>
                       <td class="r mono">${coin(t.valueOutSat)}</td>

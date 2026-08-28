@@ -189,7 +189,7 @@ router.get(
     }
 
     const txs = await Transaction.find({ blockhash: block.hash })
-      .select('txid isCoinbase isCoinstake size valueOutSat vout vin')
+      .select('txid type isCoinbase isCoinstake size valueOutSat vout vin')
       .lean();
     const byId = new Map(txs.map((t) => [t.txid, t]));
     const ordered = block.txids
@@ -243,6 +243,7 @@ router.get(
         : null,
       txs: ordered.map((t) => ({
         txid: t.txid,
+        type: t.type,
         isCoinbase: t.isCoinbase,
         isCoinstake: t.isCoinstake,
         size: t.size,
@@ -387,7 +388,7 @@ router.get(
         .sort({ height: -1, _id: -1 })
         .skip(q.offset)
         .limit(q.limit)
-        .select('txid height time size isCoinbase isCoinstake hasChainLock valueOutSat vout.n vin.txid vin.vout')
+        .select('txid height time size type isCoinbase isCoinstake hasChainLock valueOutSat vout.n vin.txid vin.vout')
         .lean(),
       Transaction.estimatedDocumentCount(),
     ]);
@@ -406,6 +407,7 @@ router.get(
           height: t.height,
           time: t.time,
           size: t.size,
+          type: t.type,
           isCoinbase: t.isCoinbase,
           isCoinstake: t.isCoinstake,
           hasChainLock: t.hasChainLock,

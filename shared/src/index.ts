@@ -212,6 +212,25 @@ export interface BanWaveReport {
 
 // ── chain (blocks and transactions) ─────────────────────────────────────────
 
+/**
+ * Human label for a transaction kind. Special transactions carry no ordinary
+ * inputs or outputs, so leaving them labelled "normal" with 0.00 value hides
+ * exactly the objects this explorer exists to show -- 885 of them are the
+ * mined DKG commitments themselves.
+ */
+export function txKindLabel(type: number, isCoinbase: boolean, isCoinstake: boolean): string {
+  if (isCoinstake) return 'coinstake';
+  if (isCoinbase) return 'coinbase';
+  switch (type) {
+    case 1: return 'proreg';
+    case 2: return 'proupserv';
+    case 3: return 'proupreg';
+    case 4: return 'prouprev';
+    case 6: return 'qc commit';
+    default: return 'normal';
+  }
+}
+
 export interface BlockRow {
   height: number;
   hash: string;
@@ -236,6 +255,8 @@ export interface BlockRow {
 
 export interface BlockTxSummary {
   txid: string;
+  /** Dash special-transaction type; 0 is a plain transaction. */
+  type: number;
   isCoinbase: boolean;
   isCoinstake: boolean;
   size: number;
@@ -265,6 +286,8 @@ export interface TxRow {
   height: number;
   time: number;
   size: number;
+  /** Dash special-transaction type; 0 is a plain transaction. */
+  type: number;
   isCoinbase: boolean;
   isCoinstake: boolean;
   hasChainLock: boolean;
@@ -282,7 +305,6 @@ export interface TxRow {
 export interface TxDetail extends TxRow {
   blockhash: string;
   version: number;
-  type: number;
   vin: Array<{ txid: string | null; vout: number | null; coinbase: string | null }>;
   vout: Array<{ n: number; valueSat: string; scriptType: string; address: string | null }>;
 }

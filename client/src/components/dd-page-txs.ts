@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import type { TxDetail, TxRow } from '@devnet-deftrack/shared';
+import { txKindLabel, type TxDetail, type TxRow } from '@devnet-deftrack/shared';
 import { api } from '../lib/api.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
@@ -48,6 +48,10 @@ const shared = css`
   .kind.coinstake {
     color: var(--s2);
     border-color: var(--s2);
+  }
+  .kind.special {
+    color: var(--s4);
+    border-color: var(--s4);
   }
   .kind.coinbase {
     color: var(--s3);
@@ -145,14 +149,14 @@ export class DdPageTxs extends LitElement {
                         <tr>
                           <td class="mono"><a href="/tx/${t.txid}">${shortHash(t.txid, 12, 8)}</a></td>
                           <td class="c">
-                            <span class="kind ${t.isCoinbase ? 'coinbase' : t.isCoinstake ? 'coinstake' : ''}">
-                              ${t.isCoinbase ? 'coinbase' : t.isCoinstake ? 'coinstake' : 'normal'}
+                            <span class="kind ${t.isCoinbase ? 'coinbase' : t.isCoinstake ? 'coinstake' : t.type !== 0 ? 'special' : ''}">
+                              ${txKindLabel(t.type, t.isCoinbase, t.isCoinstake)}
                             </span>
                           </td>
                           <td class="r mono"><a href="/block/${t.height}">${num(t.height)}</a></td>
                           <td class="r mono">${num(t.vinCount)}</td>
                           <td class="r mono">${num(t.voutCount)}</td>
-                          <td class="r mono">${coin(t.valueOutSat)}</td>
+                          <td class="r mono">${t.voutCount === 0 ? html`<span class="muted">—</span>` : coin(t.valueOutSat)}</td>
                           <td class="r mono">${t.stakePaidSat === null ? html`<span class="muted">—</span>` : coin(t.stakePaidSat)}</td>
                           <td class="r mono">${ago(new Date(t.time * 1000).toISOString())}</td>
                         </tr>
@@ -247,7 +251,7 @@ export class DdPageTx extends LitElement {
           <dt>block</dt><dd><a href="/block/${t.height}">${num(t.height)}</a></dd>
           <dt>time</dt><dd>${utc(new Date(t.time * 1000).toISOString())}</dd>
           <dt>size</dt><dd>${num(t.size)} bytes</dd>
-          <dt>version / type</dt><dd>${t.version} / ${t.type}</dd>
+          <dt>version / type</dt><dd>${t.version} / ${t.type} (${txKindLabel(t.type, t.isCoinbase, t.isCoinstake)})</dd>
           <dt>value out</dt><dd>${coin(t.valueOutSat)} DFCN</dd>
           ${t.isCoinstake
             ? html`<dt>minted reward</dt>
