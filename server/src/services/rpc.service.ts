@@ -73,7 +73,7 @@ export class RpcService {
       if (pending) return pending as Promise<T>;
     }
 
-    const promise = this.doCall<T>(method, params);
+    const promise = this.doCallWithRetry<T>(method, params);
 
     if (cacheKey) {
       this.inFlight.set(cacheKey, promise as Promise<unknown>);
@@ -85,6 +85,28 @@ export class RpcService {
     }
 
     return promise;
+  }
+
+  /**
+   * One retry, transport failures only.
+   *
+   * The node drops the odd connection mid-request ("socket hang up",
+   * ECONNRESET) a few times a day; every caller here is a read, so repeating
+   * it is safe and the alternative is a logged error and a missed poll. An
+   * error the node actually answered with -- an RPC error object or any HTTP
+   * status -- is a real answer and is never retried.
+   */
+  private async doCallWithRetry<T>(method: string, params: unknown[]): Promise<T> {
+    try {
+      return await this.doCall<T>(method, params);
+    } catch (error: unknown) {
+      const transient =
+        error instanceof Error && /socket hang up|ECONNRESET|ETIMEDOUT|EPIPE/i.test(error.message);
+      if (!transient) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      logger.warn(`RPC ${method}: transport error, retrying once`);
+      return this.doCall<T>(method, params);
+    }
   }
 
   private async doCall<T>(method: string, params: unknown[]): Promise<T> {
