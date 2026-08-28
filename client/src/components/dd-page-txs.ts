@@ -133,12 +133,13 @@ export class DdPageTxs extends LitElement {
                   <th class="r">In</th>
                   <th class="r">Out</th>
                   <th class="r">Value out</th>
+                  <th class="r">Minted</th>
                   <th class="r">Age</th>
                 </tr>
               </thead>
               <tbody>
                 ${this._loading && this._rows.length === 0
-                  ? html`<tr><td class="empty" colspan="7">Loading…</td></tr>`
+                  ? html`<tr><td class="empty" colspan="8">Loading…</td></tr>`
                   : this._rows.map(
                       (t) => html`
                         <tr>
@@ -152,6 +153,7 @@ export class DdPageTxs extends LitElement {
                           <td class="r mono">${num(t.vinCount)}</td>
                           <td class="r mono">${num(t.voutCount)}</td>
                           <td class="r mono">${coin(t.valueOutSat)}</td>
+                          <td class="r mono">${t.stakePaidSat === null ? html`<span class="muted">—</span>` : coin(t.stakePaidSat)}</td>
                           <td class="r mono">${ago(new Date(t.time * 1000).toISOString())}</td>
                         </tr>
                       `
@@ -247,6 +249,10 @@ export class DdPageTx extends LitElement {
           <dt>size</dt><dd>${num(t.size)} bytes</dd>
           <dt>version / type</dt><dd>${t.version} / ${t.type}</dd>
           <dt>value out</dt><dd>${coin(t.valueOutSat)} DFCN</dd>
+          ${t.isCoinstake
+            ? html`<dt>minted reward</dt>
+                <dd>${t.stakePaidSat === null ? html`<span class="muted">—</span>` : html`${coin(t.stakePaidSat)} DFCN`}</dd>`
+            : nothing}
           <dt>chainlocked</dt><dd>${t.hasChainLock ? 'yes' : 'no'}</dd>
         </dl>
       </section>

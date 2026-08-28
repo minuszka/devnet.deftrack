@@ -269,6 +269,12 @@ export interface TxRow {
   isCoinstake: boolean;
   hasChainLock: boolean;
   valueOutSat: string;
+  /**
+   * For a coinstake, the reward it minted: outputs minus inputs. Null on
+   * every other transaction, and null -- never a guess -- when a funding
+   * transaction is not indexed.
+   */
+  stakePaidSat: string | null;
   voutCount: number;
   vinCount: number;
 }

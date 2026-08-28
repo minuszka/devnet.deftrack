@@ -387,10 +387,16 @@ router.get(
         .sort({ height: -1, _id: -1 })
         .skip(q.offset)
         .limit(q.limit)
-        .select('txid height time size isCoinbase isCoinstake hasChainLock valueOutSat vout.n vin.txid')
+        .select('txid height time size isCoinbase isCoinstake hasChainLock valueOutSat vout.n vin.txid vin.vout')
         .lean(),
       Transaction.estimatedDocumentCount(),
     ]);
+
+    // One batched lookup resolves every listed coinstake's funding values, so
+    // the minted reward can be shown next to the (much larger) output total.
+    const fundingTxs = await fundingTxsOf(
+      txs.filter((t) => t.isCoinstake).map((t) => t as unknown as CoinstakeLike)
+    );
 
     sendData(
       res,
@@ -404,6 +410,7 @@ router.get(
           isCoinstake: t.isCoinstake,
           hasChainLock: t.hasChainLock,
           valueOutSat: dec(t.valueOutSat),
+          stakePaidSat: t.isCoinstake ? stakeRewardOf(t as unknown as CoinstakeLike, fundingTxs) : null,
           voutCount: t.vout.length,
           vinCount: t.vin.length,
         })),
@@ -431,6 +438,8 @@ router.get(
       return;
     }
 
+    const fundingTxs = tx.isCoinstake ? await fundingTxsOf([tx as unknown as CoinstakeLike]) : new Map();
+
     sendData(res, {
       txid: tx.txid,
       blockhash: tx.blockhash,
@@ -443,6 +452,7 @@ router.get(
       isCoinstake: tx.isCoinstake,
       hasChainLock: tx.hasChainLock,
       valueOutSat: dec(tx.valueOutSat),
+      stakePaidSat: tx.isCoinstake ? stakeRewardOf(tx as unknown as CoinstakeLike, fundingTxs) : null,
       vin: tx.vin.map((i) => ({ txid: i.txid, vout: i.vout, coinbase: i.coinbase })),
       vout: tx.vout.map((o) => ({
         n: o.n,
