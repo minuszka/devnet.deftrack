@@ -312,4 +312,32 @@ router.post(
   })
 );
 
+/**
+ * DELETE /api/v1/admin/experiments/:runKey -- withdraws a run that has not
+ * concluded anything.
+ *
+ * The declaration freeze protects hypotheses from being rewritten once the
+ * answer is known; it must not preserve a declaration that was wrong at birth
+ * (the profile-snapshot bug that stamped llmq_400_60 on a post-switchover run
+ * is the founding example). Withdrawing is therefore allowed only while the
+ * run is still open and has no frozen outcome -- a closed run is a published
+ * result and stays.
+ */
+router.delete(
+  '/experiments/:runKey',
+  asyncRoute(async (req, res) => {
+    const run = await ExperimentRun.findOne({ runKey: String(req.params.runKey ?? '') });
+    if (!run) {
+      sendError(res, 404, 'experiment not found');
+      return;
+    }
+    if (run.status === 'closed' || run.outcome !== null) {
+      sendError(res, 409, 'a closed experiment is a published result; it cannot be withdrawn');
+      return;
+    }
+    await ExperimentRun.deleteOne({ _id: run._id });
+    sendData(res, { withdrawn: run.runKey });
+  })
+);
+
 export default router;
