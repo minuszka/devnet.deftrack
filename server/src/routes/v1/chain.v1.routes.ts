@@ -58,6 +58,49 @@ function rewardsOf(coinbase: CoinbaseLike | undefined): {
   return { masternodePaidSat: paid.toString(), burnedSat: burned.toString(), payee };
 }
 
+/** Only the shape stakeRewardOf reads from a coinstake document. */
+interface CoinstakeLike {
+  vin: Array<{ txid: string | null; vout: number | null }>;
+  valueOutSat: { toString(): string };
+}
+
+/**
+ * Stake reward minted by the coinstake: its outputs minus its inputs.
+ *
+ * The input values live on the funding transactions, so the caller supplies a
+ * txid -> vout map covering them. Null -- never a guess -- when a funding
+ * transaction or output is missing: reporting the whole output sum would
+ * silently include the returned principal, which is 20,000x the reward.
+ */
+function stakeRewardOf(
+  coinstake: CoinstakeLike | undefined,
+  prevTxs: Map<string, { vout: Array<{ valueSat: { toString(): string } }> }>
+): string | null {
+  if (!coinstake) return null;
+  let inputs = 0n;
+  for (const vin of coinstake.vin) {
+    if (!vin.txid || vin.vout === null) return null;
+    const funding = prevTxs.get(vin.txid)?.vout[vin.vout];
+    if (funding === undefined) return null;
+    inputs += BigInt(funding.valueSat.toString());
+  }
+  return (BigInt(coinstake.valueOutSat.toString()) - inputs).toString();
+}
+
+/** The funding transactions of the given coinstakes, batched into one lookup. */
+async function fundingTxsOf(
+  coinstakes: Array<CoinstakeLike | undefined>
+): Promise<Map<string, { vout: Array<{ valueSat: { toString(): string } }> }>> {
+  const ids = [
+    ...new Set(
+      coinstakes.flatMap((cs) => (cs?.vin ?? []).map((v) => v.txid).filter((x): x is string => Boolean(x)))
+    ),
+  ];
+  if (ids.length === 0) return new Map();
+  const txs = await Transaction.find({ txid: { $in: ids } }).select('txid vout.valueSat').lean();
+  return new Map(txs.map((t) => [t.txid, t as { vout: Array<{ valueSat: { toString(): string } }> }]));
+}
+
 /** GET /api/v1/blocks */
 router.get(
   '/blocks',
@@ -76,15 +119,31 @@ router.get(
       Block.estimatedDocumentCount(),
     ]);
 
-    // Two queries, not one per row: the coinbase of every listed block is
-    // fetched in a single lookup.
+    // Batched queries, not one per row: the coinbase and coinstake of every
+    // listed block are fetched in one lookup each, and the coinstakes' funding
+    // transactions in a third.
     const coinbaseIds = blocks.map((b) => b.txids[0]).filter((x): x is string => Boolean(x));
-    const coinbases = new Map<string, CoinbaseLike>(
-      (await Transaction.find({ txid: { $in: coinbaseIds } }).select('txid vout').lean()).map((t) => [t.txid, t])
-    );
+    const coinstakeIds = blocks
+      .filter((b) => b.isProofOfStake)
+      .map((b) => b.txids[1])
+      .filter((x): x is string => Boolean(x));
+    const [coinbases, coinstakes] = await Promise.all([
+      Transaction.find({ txid: { $in: coinbaseIds } })
+        .select('txid vout')
+        .lean()
+        .then((txs) => new Map<string, CoinbaseLike>(txs.map((t) => [t.txid, t]))),
+      Transaction.find({ txid: { $in: coinstakeIds } })
+        .select('txid vin valueOutSat')
+        .lean()
+        .then((txs) => new Map<string, CoinstakeLike>(txs.map((t) => [t.txid, t as CoinstakeLike]))),
+    ]);
+    const fundingTxs = await fundingTxsOf([...coinstakes.values()]);
 
     const items = blocks.map((b) => {
       const r = rewardsOf(coinbases.get(b.txids[0] ?? ''));
+      const stakePaidSat = b.isProofOfStake
+        ? stakeRewardOf(coinstakes.get(b.txids[1] ?? ''), fundingTxs)
+        : null;
       return {
         height: b.height,
         hash: b.hash,
@@ -95,6 +154,7 @@ router.get(
         hasChainLock: b.hasChainLock,
         totalOutSat: dec(b.totalOutSat),
         ...r,
+        stakePaidSat,
       };
     });
 
@@ -136,6 +196,16 @@ router.get(
       .map((id) => byId.get(id))
       .filter((t): t is NonNullable<typeof t> => t !== undefined);
 
+    const coinstake = ordered[1]?.isCoinstake ? (ordered[1] as unknown as CoinstakeLike) : undefined;
+    const fundingTxs = await fundingTxsOf([coinstake]);
+    // A same-block funding transaction is already in hand.
+    for (const t of txs) {
+      if (!fundingTxs.has(t.txid)) {
+        fundingTxs.set(t.txid, t as unknown as { vout: Array<{ valueSat: { toString(): string } }> });
+      }
+    }
+    const stakePaidSat = block.isProofOfStake ? stakeRewardOf(coinstake, fundingTxs) : null;
+
     // Recorded at index time from `masternode payments`; the payout address in
     // the block is shared by every masternode and cannot identify one.
     const paidMasternode = block.paidProTxHash
@@ -163,6 +233,7 @@ router.get(
       hasChainLock: block.hasChainLock,
       totalOutSat: dec(block.totalOutSat),
       ...rewardsOf(ordered[0]),
+      stakePaidSat,
       paidMasternode: paidMasternode
         ? {
             proTxHash: paidMasternode.proTxHash,

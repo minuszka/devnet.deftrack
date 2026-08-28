@@ -143,6 +143,7 @@ export class DdPageBlocks extends LitElement {
                   <th class="c">Type</th>
                   <th class="r">Txs</th>
                   <th class="r">MN paid</th>
+                  <th class="r">Stake paid</th>
                   <th class="r">Burned</th>
                   <th class="r">Size</th>
                   <th class="r">Age</th>
@@ -150,7 +151,7 @@ export class DdPageBlocks extends LitElement {
               </thead>
               <tbody>
                 ${this._loading && this._rows.length === 0
-                  ? html`<tr><td class="empty" colspan="8">Loading…</td></tr>`
+                  ? html`<tr><td class="empty" colspan="9">Loading…</td></tr>`
                   : this._rows.map((b) => this._row(b))}
               </tbody>
             </table>
@@ -176,6 +177,7 @@ export class DdPageBlocks extends LitElement {
         </td>
         <td class="r mono">${num(b.nTx)}</td>
         <td class="r mono">${coin(b.masternodePaidSat)}</td>
+        <td class="r mono">${b.stakePaidSat === null ? html`<span class="muted">—</span>` : coin(b.stakePaidSat)}</td>
         <td class="r mono burn">${coin(b.burnedSat)}</td>
         <td class="r mono">${num(b.size)}</td>
         <td class="r mono" title=${utc(new Date(b.time * 1000).toISOString())}>
@@ -259,6 +261,8 @@ export class DdPageBlock extends LitElement {
           <dt>difficulty</dt><dd>${b.difficulty.toPrecision(6)}</dd>
           <dt>masternode paid</dt><dd>${coin(b.masternodePaidSat)} DFCN${b.payee ? html` → <span>${b.payee}</span>` : nothing}</dd>
           <dt>burned</dt><dd>${coin(b.burnedSat)} DFCN</dd>
+          <dt>stake reward</dt>
+          <dd>${b.stakePaidSat === null ? html`<span class="muted">—</span>` : html`${coin(b.stakePaidSat)} DFCN`}</dd>
           <dt>paid node</dt>
           <dd>
             ${b.paidMasternode

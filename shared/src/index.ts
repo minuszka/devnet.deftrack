@@ -225,6 +225,12 @@ export interface BlockRow {
   masternodePaidSat: string;
   /** Masternode reward burned to an OP_RETURN output. */
   burnedSat: string;
+  /**
+   * Stake reward minted by the coinstake: its outputs minus its inputs. Null
+   * on proof-of-work blocks, and null -- never a guess -- when an input's
+   * funding transaction is not indexed.
+   */
+  stakePaidSat: string | null;
   payee: string | null;
 }
 
