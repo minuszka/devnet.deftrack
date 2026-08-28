@@ -177,6 +177,22 @@ export function chainlockProfile(): LlmqProfile {
 }
 
 /**
+ * The profile actually signing ChainLocks at the given height. Snapshots taken
+ * "now" must use this with the current tip, not chainlockProfile(): the static
+ * name is the pre-switchover profile forever, and an experiment declaration or
+ * masternode snapshot stamped with it after the activation height records the
+ * wrong quorum as the one under test.
+ */
+export function chainlockProfileAtHeight(height: number): LlmqProfile {
+  const name = chainlockProfileNameAtHeight(height);
+  const profile = LLMQ_PROFILES[name];
+  if (!profile) {
+    throw new Error(`Unknown LLMQ profile "${name}"; known: ${Object.keys(LLMQ_PROFILES).join(', ')}`);
+  }
+  return profile;
+}
+
+/**
  * Every profile whose DKG schedule is reconstructed.
  *
  * Not just the ChainLock one. A round that fails mines no commitment, so the

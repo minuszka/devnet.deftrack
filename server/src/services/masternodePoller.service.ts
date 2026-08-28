@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rpc } from './rpc.service.js';
-import { chainlockProfile, maxPossibleBan } from '../config/llmq.js';
+import { chainlockProfileAtHeight, maxPossibleBan } from '../config/llmq.js';
 import { MasternodeState } from '../models/MasternodeState.js';
 import { MasternodeEvent, type MasternodeEventType } from '../models/MasternodeEvent.js';
 import { MasternodeSnapshot } from '../models/MasternodeSnapshot.js';
@@ -258,7 +258,9 @@ export class MasternodePollerService {
     if (stateOps.length > 0) await MasternodeState.bulkWrite(stateOps, { ordered: false });
     if (eventOps.length > 0) await MasternodeEvent.bulkWrite(eventOps, { ordered: false });
 
-    const profile = chainlockProfile();
+    // Resolved at the snapshot height: after the ChainLock switchover the
+    // effective quorum size must come from the profile actually signing.
+    const profile = chainlockProfileAtHeight(height);
     const effectiveQuorumSize = Math.min(profile.size, enabled);
     const counts = `${list.length}|${enabled}|${banned}|${penaltySum}|${penaltyMax}`;
     const changed = counts !== this.lastCounts;

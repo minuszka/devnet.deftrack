@@ -10,7 +10,7 @@ import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
 import { ExperimentRun } from '../../models/ExperimentRun.js';
 import { Transaction } from '../../models/Transaction.js';
 import { computeOutcome, currentParticipants } from '../../services/experiment.service.js';
-import { chainlockProfile } from '../../config/llmq.js';
+import { chainlockProfileAtHeight } from '../../config/llmq.js';
 import { rpc } from '../../services/rpc.service.js';
 
 const router = Router();
@@ -187,11 +187,13 @@ router.post(
       return;
     }
 
-    const profile = chainlockProfile();
     const [tip, net] = await Promise.all([
       rpc.getBlockCount(),
       rpc.getNetworkInfo().catch(() => null),
     ]);
+    // Resolved at the tip, not the static name: a run opened after the
+    // ChainLock switchover must declare the profile actually signing.
+    const profile = chainlockProfileAtHeight(tip);
 
     // Counted by machine rather than by payout key: a host staking five
     // outputs pays to five scripts, and a declaration that inflates its own
