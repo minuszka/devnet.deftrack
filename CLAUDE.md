@@ -344,6 +344,27 @@ locally. `ssh devnet` reaches the explorer VPS directly.
   It is declared through the admin API, never inferred, and never committed:
   the host addresses are not public and this repository is.
 
+- **A rule the chain is too young to reach is not measured by the chain.** The
+  PoS kernel v2 change (#109) has two halves and this devnet can observe only
+  one of them. The weighted target -- `hash/weight` division instead of a
+  multiply that truncated at 256 bits -- acts on every stake attempt from the
+  activation height. The lifted `stakeAgeRange` upper bound cannot bind until
+  an unspent output is older than that bound: 60 days on devnet
+  (`chainparams.cpp:573`), against a chain that began on 2026-08-21. Nothing
+  can exercise that half before roughly 2026-10-20.
+
+  Age here is block-time arithmetic -- `inputAge = nTime - nBlockFromTime`
+  (`pos/kernel.cpp:225`) -- not wall clock, which is why a unit test or a
+  regtest node with `setmocktime` reaches it in seconds while the devnet cannot
+  reach it at all. Both directions are already covered off-chain:
+  `src/test/pos_kernel_tests.cpp` builds the same fixture against
+  `nPosKernelV2ActivationHeight` 0 and `max()`.
+
+  So an experiment closed in this window measured the target change and not the
+  age cap, and must say which. Claiming the lift was validated on-chain would
+  be the same error as reading `formationRate` without the health ratio: a true
+  number answering a question nobody asked.
+
 ## Verified facts about the node (`v22.1.x`; the devnet now runs v22.1.5)
 
 The facts below were read from source at v22.1.4 (`7227180053`) and re-checked
@@ -608,6 +629,34 @@ A deploy that stops after the build leaves the site on whatever bundle was last
 copied there by hand -- which happened for two days, during which every client
 change appeared to have silently failed to take effect. The script rsyncs and
 re-checks which bundle the webroot actually serves.
+
+### Every binary rollout gets an Experiments entry that says what changed
+
+Whenever DeFCoN code is changed, built and shipped to the fleet, the run
+declared in the explorer's **Experiments** view must describe that change in
+full. It is the only place the code and the chain are tied together later: the
+git log knows the commits, the hosts know the binary, the chain shows a
+behaviour change at some height -- and nothing but the run record says they are
+the same event.
+
+Minimum for such a run:
+
+- `intervention.description` -- every code change in the build, one line each,
+  with its PR number and the activation height or gate that switches it on.
+  "PoS kernel v2" is not a description; "#109: weighted target divides
+  hash/weight instead of multiplying, which truncated at 256 bits and could
+  rank a larger stake below a smaller one; devnet gate 4000" is.
+- `nodeVersion` and `nodeGitSha`, plus the binary `md5sum` in `notes` -- the
+  version string does not identify a build, and has already named three
+  different binaries at once on this project.
+- `intervention.targets` -- what was actually replaced, by **host label**
+  (`fullnode-4`), never by IP: the explorer is a public site.
+- `hypothesis` and `expected`, written *before* the rollout rather than fitted
+  to the result afterwards.
+
+Because that site is public, the disclosure rule that governs PR text governs
+this field too: bug class, fix rationale and test coverage -- never
+reproduction steps or exact trigger inputs.
 
 ## Gotchas
 
