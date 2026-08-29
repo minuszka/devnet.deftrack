@@ -12,6 +12,74 @@ ChainLock behaviour, so a rollout is an intervention to be recorded, not just
 an upgrade. And a version string does not identify a build — different binaries
 report the same version — so entries record md5sums.
 
+## Phase 5 — consensus/crypto audit hardening
+
+*Rolled out 2026-08-29, completed at height 4304. Explorer record:
+[`phase5-consensus-audit-rollout`](https://devnet.deftrack.xyz/experiments/phase5-consensus-audit-rollout).*
+
+Every daemon on the devnet — 8 fullnode hosts with 11 services each, plus both
+seed daemons — runs a binary built from defcon-project/defcon commit
+`948f881b8d7e4ee8cd75de2d27ce1c2087dff383` (v22.1.5).
+
+| artefact | md5 |
+|---|---|
+| fleet / seed non-BDB (`--without-bdb`) | `04c1a60764c6031f1685b8982d12216b` |
+| seed BDB | `217a85670522bdf137d8b1e84d34cdb5` |
+
+### What the binary carries beyond phase 4
+
+The fixes come from a consensus/crypto review. All references are pull requests
+on [defcon-project/defcon](https://github.com/defcon-project/defcon):
+
+- [#114](https://github.com/defcon-project/defcon/pull/114) — test: cover the
+  PoS kernel v2 activation boundary from both sides (regtest-only)
+- [#115](https://github.com/defcon-project/defcon/pull/115) — wallet: match the
+  wallet's staking eligibility to the kernel's depth rule (wallet-only)
+- [#116](https://github.com/defcon-project/defcon/pull/116) — crypto: a BLS
+  verify can no longer throw off the script-check threads (a crash became a
+  clean `false`; unconditional)
+- [#117](https://github.com/defcon-project/defcon/pull/117) — **consensus
+  (gated)**: a strict BLS signature-size check, gated on an activation height
+- [#118](https://github.com/defcon-project/defcon/pull/118) — crypto: an
+  invalid `CPubKey` can no longer report itself valid (unconditional)
+- [#119](https://github.com/defcon-project/defcon/pull/119) — consensus: derive
+  the premature-collateral rule from the deterministic masternode list
+  (unconditional, history-compatible)
+- [#120](https://github.com/defcon-project/defcon/pull/120) — consensus:
+  require a header's proof of work by height, not by its nNonce (unconditional,
+  history-compatible)
+- [#121](https://github.com/defcon-project/defcon/pull/121) — pubkey:
+  `ValidSize` checks the secp256k1 header byte, not only the length
+  (classification/policy only, ungated)
+
+([#122](https://github.com/defcon-project/defcon/pull/122), the React + Tauri
+modern wallet, is in the same upstream range but changes no node behaviour.)
+
+### The activation
+
+Only one fix here is gated. #117 sets `nStrictBLSSigSizeActivationHeight = 6000`
+on devnet: below it nothing changes; from it a BLS signature must be exactly 96
+bytes to be treated as BLS, so an over-long signature that currently slips past
+the strict-encoding checks is held to them. The gate resolves from block height
+alone, one-way, the same shape as the kernel-v2 and Q60 switchovers; mainnet and
+testnet keep it unset. It ships now so the whole fleet already carries it before
+the gate is ever brought forward — the input it rejects does not occur in
+organic traffic, so the rule is dormant until then, and its rejection path is
+covered off-chain by the fix's regression test.
+
+The rest take effect the moment the binary runs and are history-compatible:
+#119 and #120 re-derive existing consensus rules from the deterministic
+masternode list and by-height proof of work rather than changing any verdict, so
+reconsidering old blocks yields no difference. After the rolling restart the
+whole devnet — 88 fleet services and both seed daemons — was confirmed on one
+chain (matching hashes at a settled height, the tip ChainLocked), with every
+running process checked against the shipped binary.
+
+Deferred: the GetBlockProof half of the header proof-of-work fix (the chainwork
+weighting) rewrites every node's accumulated work, so it is a coordinated,
+height-gated change scheduled with the other mainnet activations, not part of
+this binary.
+
 ## Phase 4 — PoS kernel v2, activated at height 4000
 
 *Rolled out 2026-08-28/29, completed at height 3867. Explorer record:
