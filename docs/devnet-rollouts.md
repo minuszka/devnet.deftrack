@@ -12,6 +12,94 @@ ChainLock behaviour, so a rollout is an intervention to be recorded, not just
 an upgrade. And a version string does not identify a build — different binaries
 report the same version — so entries record md5sums.
 
+## DSL shadow — the Sentinel Layer observes from height 6240
+
+*Rolled out 2026-08-30, completed at height 4750. Explorer record:
+[`dsl-shadow-activation`](https://devnet.deftrack.xyz/experiments/dsl-shadow-activation).*
+
+Every daemon on the devnet — 8 fullnode hosts with 11 services each, plus both
+seed daemons — runs a binary built from defcon-project/defcon commit
+`eaecf7e473db4b49fba79b61fed3870167769fe3` (v22.1.5), with
+`dslactivationheight=6240` configured everywhere before the restart.
+
+| artefact | md5 |
+|---|---|
+| fleet / devnet2 (`--without-bdb`) | `16e1bab8428638ebb371453581de5c87` |
+| seed BDB | `f68618a2f42c6b51b31c86f8a5be8de1` |
+
+### What the binary carries beyond phase 5
+
+The DeFCon Sentinel Layer (DSL): a service-liveness layer that bans a dead
+masternode in hours instead of the DKG-PoSe median of ~N/720 days, without
+touching the Q60 profile or the existing DKG-PoSe. Designed against the
+chainlock-pose simulator's measurements (ban window 5 consecutive missed
+epochs, 7 sentinels with 5 agreeing, 15% mass-outage guard). All references
+are pull requests on
+[defcon-project/defcon](https://github.com/defcon-project/defcon):
+
+- [#129](https://github.com/defcon-project/defcon/pull/129) — **consensus
+  (gated)**: the service-commitment special transaction (type 10), verified
+  only by its quorum threshold signature — the ChainLock trust model
+- [#130](https://github.com/defcon-project/defcon/pull/130) — **consensus
+  (gated)**: the masternode service-state fields and the evodb migration that
+  carries them
+- [#131](https://github.com/defcon-project/defcon/pull/131) — **consensus
+  (gated)**: applying a commitment's bitfield to masternode state, behind a
+  separate enforcement gate that stays unreachable
+- [#132](https://github.com/defcon-project/defcon/pull/132) — the sentinel
+  assignment (grind-safe, epoch-rotated) and BLS-signed service reports
+- [#133](https://github.com/defcon-project/defcon/pull/133) — aggregating
+  signed reports into the epoch's bitfield (five of seven must agree)
+- [#134](https://github.com/defcon-project/defcon/pull/134) — a spam-resistant
+  relay store for the reports
+- [#135](https://github.com/defcon-project/defcon/pull/135) — the probe's
+  inverse assignment and the liveness response
+- [#136](https://github.com/defcon-project/defcon/pull/136) — the per-epoch
+  probe state machine
+- [#137](https://github.com/defcon-project/defcon/pull/137),
+  [#138](https://github.com/defcon-project/defcon/pull/138) — the wire
+  vocabulary, with liveness as a self-announced flood
+- [#139](https://github.com/defcon-project/defcon/pull/139) — the probe on the
+  wire end to end, with the `dslstatus` RPC and chain-verified ingest
+- [#140](https://github.com/defcon-project/defcon/pull/140) — binding the
+  commitment to the epoch it observed
+- [#141](https://github.com/defcon-project/defcon/pull/141) — quorum signing
+  and mining of the commitment, attached only on an exact hash match
+- [#142](https://github.com/defcon-project/defcon/pull/142) — evodb: every
+  migration gate recognises a newer database (see below)
+
+### The activation
+
+`dslactivationheight = 6240` on devnet, epoch-aligned (260 × 24) and placed
+after the strict-BLS gate at 6000 so the two events stay in separate
+measurement windows. From 6240 the network probes itself once per 24-block
+epoch in **shadow mode**: announcements flood, sentinels report, the ChainLock
+quorum threshold-signs the epoch's bitfield, and the commitment is mined at
+the next boundary — the first one possible at 6264. Shadow records
+`missedServiceEpochs` per masternode and never suspends or bans: the
+enforcement height stays unreachable until the shadow data supports it. The
+open question the shadow phase exists to measure is pool convergence, and the
+fraction of epoch boundaries carrying a commitment is that measurement — a
+missing commitment is the datum, not a failure.
+
+### The rollout that had to happen twice
+
+The first deploy stopped every fleet daemon on a latent flaw in the inherited
+evodb migration pattern: each migration gate short-circuited on one fixed
+marker key — the newest constant — while a healthy database only ever carries
+the marker of the binary it last ran, so after the constant bump every older
+gate read a good database as a broken half-migration and refused to start.
+The right instinct against the wrong evidence, never hit before only because
+earlier bumps had coincided with freshly created databases. The fleet was
+rolled back within the hour — the seed stayed up and staking throughout, and
+the chain never stopped — and the fix landed as
+[#142](https://github.com/defcon-project/defcon/pull/142) with a regression
+test that replays the exact database state that refused to start. On the
+second deploy the migration ran clean in one step and `evodb verify` on a
+fleet host answered 7 snapshots verified, 0 errors. DKG and health readings in
+the rollback window are restart artefacts and are excluded from measurement,
+per the standing rule.
+
 ## Phase 5 — consensus/crypto audit hardening
 
 *Rolled out 2026-08-29, completed at height 4304. Explorer record:
