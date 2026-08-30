@@ -12,6 +12,7 @@ import './dd-page-operators.js';
 import './dd-page-blocks.js';
 import './dd-page-txs.js';
 import './dd-page-chainlocks.js';
+import './dd-page-dsl.js';
 import './dd-page-staking.js';
 import './dd-page-experiments.js';
 import './dd-page-peers.js';

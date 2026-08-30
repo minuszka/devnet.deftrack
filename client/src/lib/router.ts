@@ -28,6 +28,7 @@ export const ROUTES: Route[] = [
   { path: '/pose', tag: 'dd-page-pose', label: 'PoSe Watch' },
   { path: '/masternodes', tag: 'dd-page-masternodes', label: 'Masternodes' },
   { path: '/chainlocks', tag: 'dd-page-chainlocks', label: 'ChainLocks' },
+  { path: '/dsl', tag: 'dd-page-dsl', label: 'Sentinel Layer' },
   { path: '/staking', tag: 'dd-page-staking', label: 'Staking' },
   { path: '/peers', tag: 'dd-page-peers', label: 'Vantage Points' },
   { path: '/experiments', tag: 'dd-page-experiments', label: 'Experiments' },

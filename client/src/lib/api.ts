@@ -270,8 +270,43 @@ export interface SelectionFairness {
   neverSelectedCount: number;
 }
 
+export interface DslSummary {
+  activationHeight: number;
+  epochInterval: number;
+  firstCommittableBoundary: number | null;
+  enforcement: boolean;
+  epochsJudged: number;
+  committed: number;
+  absent: number;
+  convergenceRate: number | null;
+  totalMissedBits: number;
+  latest: {
+    epoch: number;
+    boundaryHeight: number;
+    status: 'committed' | 'absent';
+    missedCount: number | null;
+  } | null;
+}
+
+export interface DslEpochRow {
+  epoch: number;
+  boundaryHeight: number;
+  status: 'committed' | 'absent';
+  txid: string | null;
+  epochBlockHash: string | null;
+  quorumHash: string | null;
+  missedCount: number | null;
+  listSize: number | null;
+  missedIndices: number[];
+  detectedAt: string;
+}
+
 export const api = {
   health: () => get<HealthSnapshot>('/health'),
+
+  dslSummary: () => get<DslSummary>('/dsl/summary'),
+  dslEpochs: (params?: { limit?: number; offset?: number; status?: string }) =>
+    get<Page<DslEpochRow>>('/dsl/epochs', params),
 
   stakingHealth: (blocks: number) => get<StakingHealth>('/staking/health', { blocks }),
 
