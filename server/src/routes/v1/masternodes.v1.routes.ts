@@ -60,7 +60,8 @@ router.get(
         .skip(q.offset)
         .limit(q.limit)
         .select(
-          'proTxHash service hostIp operatorLabel banned poSePenalty poSeBanHeight poSeRevivedHeight registeredHeight lastPaidHeight payoutAddress lastSeenAt'
+          'proTxHash service hostIp operatorLabel banned poSePenalty poSeBanHeight poSeRevivedHeight ' +
+            'missedServiceEpochs rewardSuspended dslBanHeight registeredHeight lastPaidHeight payoutAddress lastSeenAt'
         )
         .lean(),
       MasternodeState.countDocuments(filter),
@@ -78,6 +79,9 @@ router.get(
           poSePenalty: m.poSePenalty,
           poSeBanHeight: m.poSeBanHeight,
           poSeRevivedHeight: m.poSeRevivedHeight,
+          missedServiceEpochs: m.missedServiceEpochs ?? 0,
+          rewardSuspended: m.rewardSuspended ?? false,
+          dslBanHeight: m.dslBanHeight ?? -1,
           registeredHeight: m.registeredHeight,
           lastPaidHeight: m.lastPaidHeight,
           payoutAddress: m.payoutAddress,

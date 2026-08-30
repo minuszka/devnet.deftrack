@@ -28,7 +28,20 @@ export interface MasternodeStateDocument extends Document {
   poSePenalty: number;
   poSeBanHeight: number;
   poSeRevivedHeight: number;
+  /** DKG-PoSe ban only; the DSL service ban is `dslBanHeight` below. */
   banned: boolean;
+
+  /**
+   * The Sentinel Layer's per-node service ledger, read from the same protx
+   * state JSON. In shadow mode the chain records these and never acts on them:
+   * missedServiceEpochs counts consecutive missed epochs, an ONLINE verdict
+   * resets it, and rewardSuspended / dslBanHeight stay untouched until an
+   * enforcement height exists. Field names follow the node's JSON verbatim.
+   */
+  missedServiceEpochs: number;
+  lastServiceEpoch: number;
+  rewardSuspended: boolean;
+  dslBanHeight: number;
 
   ownerAddress: string | null;
   votingAddress: string | null;
@@ -71,6 +84,11 @@ const masternodeStateSchema = new Schema<MasternodeStateDocument>(
     poSeBanHeight: { type: Number, default: -1 },
     poSeRevivedHeight: { type: Number, default: -1 },
     banned: { type: Boolean, default: false, index: true },
+
+    missedServiceEpochs: { type: Number, default: 0, index: true },
+    lastServiceEpoch: { type: Number, default: 0 },
+    rewardSuspended: { type: Boolean, default: false },
+    dslBanHeight: { type: Number, default: -1 },
 
     ownerAddress: { type: String, default: null },
     votingAddress: { type: String, default: null },

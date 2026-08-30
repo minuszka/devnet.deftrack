@@ -9,7 +9,15 @@ export type MasternodeEventType =
   | 'service_changed'
   | 'removed'
   | 'key_changed'
-  | 'revoked';
+  | 'revoked'
+  // Sentinel Layer transitions, from the per-node service ledger. A miss can
+  // land at most once per epoch (hourly), so unlike the PoSe penalty decay it
+  // is signal, not noise. In shadow only the first two can fire; the last two
+  // wait for an enforcement height, and the collector is ready for them.
+  | 'service_missed'
+  | 'service_recovered'
+  | 'service_suspended'
+  | 'service_banned';
 
 /**
  * Append-only log of every masternode state transition.

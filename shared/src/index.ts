@@ -145,6 +145,10 @@ export interface MasternodeRow {
   poSePenalty: number;
   poSeBanHeight: number;
   poSeRevivedHeight: number;
+  /** Sentinel Layer service ledger, shadow-only until enforcement exists. */
+  missedServiceEpochs: number;
+  rewardSuspended: boolean;
+  dslBanHeight: number;
   registeredHeight: number;
   lastPaidHeight: number;
   payoutAddress: string | null;

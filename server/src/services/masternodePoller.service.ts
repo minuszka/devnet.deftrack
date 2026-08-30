@@ -21,6 +21,11 @@ interface ProTxState {
   votingAddress?: string;
   payoutAddress?: string;
   pubKeyOperator?: string;
+  /** Sentinel Layer service ledger; absent on a node predating the DSL build. */
+  missedServiceEpochs?: number;
+  lastServiceEpoch?: number;
+  rewardSuspended?: boolean;
+  dslBanHeight?: number;
 }
 interface ProTxEntry {
   type?: string;
@@ -94,7 +99,10 @@ export class MasternodePollerService {
     const previous = new Map(
       (
         await MasternodeState.find()
-          .select('proTxHash active banned poSePenalty service operatorLabel hostIp lastSeenAt')
+          .select(
+            'proTxHash active banned poSePenalty service operatorLabel hostIp lastSeenAt ' +
+              'missedServiceEpochs rewardSuspended dslBanHeight'
+          )
           .lean()
       ).map((s) => [s.proTxHash, s])
     );
@@ -116,6 +124,10 @@ export class MasternodePollerService {
       const banHeight = st.PoSeBanHeight ?? -1;
       const revivedHeight = st.PoSeRevivedHeight ?? -1;
       const isBanned = banHeight !== -1;
+      const missedServiceEpochs = st.missedServiceEpochs ?? 0;
+      const lastServiceEpoch = st.lastServiceEpoch ?? 0;
+      const rewardSuspended = st.rewardSuspended ?? false;
+      const dslBanHeight = st.dslBanHeight ?? -1;
       const hostIp = hostOf(service);
       const operatorLabel = operators.resolve(entry.proTxHash, hostIp);
 
@@ -182,6 +194,30 @@ export class MasternodePollerService {
             serviceAfter: service,
           });
         }
+
+        // Sentinel Layer transitions. A masternode can miss at most one epoch
+        // per epoch (hourly), so unlike the PoSe penalty decay every step is
+        // signal worth a row. Fields may be absent on rows written before the
+        // DSL columns existed, so default them.
+        const prevMissed = prev.missedServiceEpochs ?? 0;
+        const prevSuspended = prev.rewardSuspended ?? false;
+        const prevDslBan = prev.dslBanHeight ?? -1;
+        if (missedServiceEpochs > prevMissed) {
+          push('service_missed', `${height}:${missedServiceEpochs}`, {});
+        }
+        // A miss counter that falls to zero is the node's ONLINE reset -- in
+        // shadow that includes the "too few reports" case, which is exactly the
+        // measurement caveat the reviewer flagged; the explorer records the
+        // node's verdict, it does not second-guess it.
+        if (prevMissed > 0 && missedServiceEpochs === 0) {
+          push('service_recovered', `${height}:${lastServiceEpoch}`, {});
+        }
+        if (rewardSuspended && !prevSuspended) {
+          push('service_suspended', `${height}`, {});
+        }
+        if (dslBanHeight !== -1 && prevDslBan === -1) {
+          push('service_banned', dslBanHeight, {});
+        }
       }
 
       stateOps.push({
@@ -201,6 +237,10 @@ export class MasternodePollerService {
               poSeBanHeight: banHeight,
               poSeRevivedHeight: revivedHeight,
               banned: isBanned,
+              missedServiceEpochs,
+              lastServiceEpoch,
+              rewardSuspended,
+              dslBanHeight,
               ownerAddress: st.ownerAddress ?? null,
               votingAddress: st.votingAddress ?? null,
               payoutAddress: st.payoutAddress ?? null,
