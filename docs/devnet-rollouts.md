@@ -19,13 +19,18 @@ report the same version — so entries record md5sums.
 
 Every daemon on the devnet — 8 fullnode hosts with 11 services each, plus both
 seed daemons — runs a binary built from defcon-project/defcon commit
-`eaecf7e473db4b49fba79b61fed3870167769fe3` (v22.1.5), with
+`ed33138d789176eade3a096207b5a20a3faaa6b6` (v22.1.5), with
 `dslactivationheight=6240` configured everywhere before the restart.
 
 | artefact | md5 |
 |---|---|
-| fleet / devnet2 (`--without-bdb`) | `16e1bab8428638ebb371453581de5c87` |
-| seed BDB | `f68618a2f42c6b51b31c86f8a5be8de1` |
+| fleet / devnet2 (`--without-bdb`) | `e469b2061b05f4128ac846e74ae577eb` |
+| seed BDB | `7511171d19110c2150f8720fb952eb00` |
+
+(The build the shadow runs on is the third of the rollout: the second —
+`16e1bab8…`/`f68618a2…` at `eaecf7e473` — performed the database migration,
+and the third added only the RPC payload surface of
+[#143](https://github.com/defcon-project/defcon/pull/143) below.)
 
 ### What the binary carries beyond phase 5
 
@@ -67,6 +72,9 @@ are pull requests on
   and mining of the commitment, attached only on an exact hash match
 - [#142](https://github.com/defcon-project/defcon/pull/142) — evodb: every
   migration gate recognises a newer database (see below)
+- [#143](https://github.com/defcon-project/defcon/pull/143) — rpc: the
+  commitment payload in transaction JSON, with its missed bits named by
+  canonical index — the surface this explorer's DSL view indexes
 
 ### The activation
 
