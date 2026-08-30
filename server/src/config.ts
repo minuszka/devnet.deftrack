@@ -103,4 +103,15 @@ export const config = {
     // often than needed, and keeps the observation window from ever lapsing.
     intervalMs: optionalNumber('QUORUM_POLL_INTERVAL_MS', 120_000),
   },
+
+  dsl: {
+    // The DSL shadow's consensus parameters on this devnet, kept in config the
+    // same way LLMQ profile parameters are: declared, never inferred from the
+    // chain. dslactivationheight is a devnet startup argument, so the chain
+    // cannot be asked for it. 0 disables the collector entirely (a network
+    // without the DSL build would otherwise accrue absent rows that mean
+    // nothing).
+    activationHeight: optionalNumber('DSL_ACTIVATION_HEIGHT', 6240),
+    epochInterval: optionalNumber('DSL_EPOCH_INTERVAL', 24),
+  },
 } as const;

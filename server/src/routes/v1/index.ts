@@ -9,6 +9,7 @@ import stakingRoutes from './staking.v1.routes.js';
 import experimentRoutes from './experiments.v1.routes.js';
 import peerRoutes from './peers.v1.routes.js';
 import commitmentRoutes from './commitments.v1.routes.js';
+import dslRoutes from './dsl.v1.routes.js';
 import fairnessRoutes from './fairness.v1.routes.js';
 import metricsRoutes from './metrics.v1.routes.js';
 
@@ -46,6 +47,7 @@ router.use('/staking', stakingRoutes);
 router.use('/experiments', experimentRoutes);
 router.use('/peers', peerRoutes);
 router.use('/quorum-commitments', commitmentRoutes);
+router.use('/dsl', dslRoutes);
 router.use('/fairness', fairnessRoutes);
 router.use('/metrics', metricsRoutes);
 // Blocks and transactions mount at the router root: /blocks, /txs.

@@ -298,6 +298,20 @@ export interface RpcTransaction {
       signersCount?: number;
     };
   };
+  /** Present on a DSL service commitment (type 10). */
+  poseServiceTx?: {
+    version?: number;
+    commitment?: {
+      version?: number;
+      epoch?: number;
+      epochBlockHash?: string;
+      llmqType?: number;
+      quorumHash?: string;
+      missedCount?: number;
+      size?: number;
+      missedIndices?: number[];
+    };
+  };
 }
 
 export interface RpcMasternodePayment {

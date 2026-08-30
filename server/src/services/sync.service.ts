@@ -11,6 +11,8 @@ import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { QuorumRound } from '../models/QuorumRound.js';
 import { QuorumCommitment } from '../models/QuorumCommitment.js';
+import { ServiceEpoch } from '../models/ServiceEpoch.js';
+import { closedEpochAt, epochKeyFor, isCommittable } from '../domain/dslSchedule.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
 import { quorumReorgReset } from '../domain/reorg.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
@@ -26,6 +28,8 @@ const SYNC_KEY = 'blocks';
 /** Persist indexing progress this often, in blocks. */
 /** Consensus TRANSACTION_QUORUM_COMMITMENT; the type a qfcommit carries. */
 const TRANSACTION_QUORUM_COMMITMENT = 6;
+/** Consensus TRANSACTION_POSE_SERVICE_COMMITMENT; the DSL epoch verdict. */
+const TRANSACTION_POSE_SERVICE_COMMITMENT = 10;
 
 const PROGRESS_EVERY = 25;
 
@@ -265,6 +269,9 @@ export class SyncService {
 
     const deleted = await Block.deleteMany({ height: { $gt: cursor } });
     await Transaction.deleteMany({ height: { $gt: cursor } });
+    // Epoch verdicts read off abandoned boundary blocks are verdicts about a
+    // chain that no longer exists; the surviving chain's boundary re-indexes.
+    await ServiceEpoch.deleteMany({ boundaryHeight: { $gt: cursor } });
 
     // The blocks are gone; anything derived from them must go with them, or the
     // quorum record keeps describing a chain that no longer exists.
@@ -407,6 +414,44 @@ export class SyncService {
     }
     if (commitmentOps.length > 0) {
       await QuorumCommitment.bulkWrite(commitmentOps, { ordered: false });
+    }
+
+    // DSL service commitments. The verdict is final the moment the boundary
+    // block is here: the commitment is a transaction in it or it is nowhere,
+    // and an absent one is the pool-convergence datum the shadow phase exists
+    // to measure -- fail-open recorded as data, never as silence. Boundaries
+    // below the first committable one are left out entirely: no commitment
+    // could exist there by rule, and recording them as absent would
+    // manufacture failures (the DKG collector's formation-gate lesson).
+    if (isCommittable(block.height, config.dsl.activationHeight, config.dsl.epochInterval)) {
+      const dslTx = transactions.find(
+        (tx) => tx.type === TRANSACTION_POSE_SERVICE_COMMITMENT && tx.poseServiceTx?.commitment
+      );
+      const epoch = closedEpochAt(block.height, config.dsl.epochInterval);
+      const c = dslTx?.poseServiceTx?.commitment;
+      await ServiceEpoch.updateOne(
+        { epochKey: epochKeyFor(epoch) },
+        {
+          $setOnInsert: {
+            epochKey: epochKeyFor(epoch),
+            // The payload's own epoch when present -- consensus already
+            // rejected the block if it disagreed with the height arithmetic.
+            epoch: c?.epoch ?? epoch,
+            boundaryHeight: block.height,
+            boundaryBlockHash: block.hash,
+            status: dslTx ? 'committed' : 'absent',
+            txid: dslTx?.txid ?? null,
+            epochBlockHash: c?.epochBlockHash ?? null,
+            llmqType: c?.llmqType ?? null,
+            quorumHash: c?.quorumHash ?? null,
+            missedCount: c?.missedCount ?? null,
+            listSize: c?.size ?? null,
+            missedIndices: c?.missedIndices ?? [],
+            detectedAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
     }
 
     if (txOps.length > 0) {
