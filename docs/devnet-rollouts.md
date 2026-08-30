@@ -12,6 +12,63 @@ ChainLock behaviour, so a rollout is an intervention to be recorded, not just
 an upgrade. And a version string does not identify a build — different binaries
 report the same version — so entries record md5sums.
 
+## DSL shadow re-roll — reorg/signing hardening, activation brought forward to 5472
+
+*Rolled out 2026-08-30, completed at height 4939. Explorer record: the same
+[`dsl-shadow-activation`](https://devnet.deftrack.xyz/experiments/dsl-shadow-activation)
+run (its notes carry this re-roll — the shadow phase is one experiment across
+its builds).*
+
+The sixth build of the DSL shadow phase, carrying a third external review's
+fixes and bringing both height-gated events forward so the network reaches them
+sooner. Every daemon — 8 fullnode hosts with 11 services each, plus both seed
+daemons — runs a binary built from defcon-project/defcon commit
+`371b75dcf620c6ebbfd6deb806b91bc79c65a7b9` (v22.1.5), with
+`dslactivationheight=5472` configured everywhere.
+
+| artefact | md5 |
+|---|---|
+| fleet / devnet2 (`--without-bdb`) | `d1be1264468ab1ee0119110f7b467837` |
+| seed BDB | `c0353593d0d0e46fb8dd8b79b34ec6ba` |
+
+### What the binary carries beyond the shadow build
+
+[#149](https://github.com/defcon-project/defcon/pull/149) — two things, one
+shadow-only and one a compiled-in gate move:
+
+- **DSL (shadow-only, no consensus change)**: a reorg that rewinds the tip back
+  across an epoch boundary now drops the stale epoch state — a new `Rewound`
+  path in the per-epoch manager — instead of misreading it as ordinary forward
+  progress and letting responses from the abandoned chain survive; and both
+  reorg cases now mark the epoch a warm-up, so a rebase past the report cutoff
+  can no longer judge a freshly-cleared observation set and report honest nodes
+  missed. Separately, a masternode outside the selected signing quorum no longer
+  rebuilds and retries the commitment on every block of the signing window — an
+  `IsValidMember` pre-check retires the epoch for a non-member. All of it
+  corrects shadow-mode measurement under an epoch-boundary-crossing reorg, which
+  ChainLock makes rare; none of it touches consensus or reward payment.
+- The same binary compiles the **strict-BLS-size (M-02)** gate forward, from
+  6000 to 5250.
+
+### The activation
+
+Two devnet gates move forward in one coordinated roll — reached sooner, doing
+exactly what they did before:
+
+- **M-02** strict-BLS-size gate: `nStrictBLSSigSizeActivationHeight` 6000 → 5250,
+  compiled into the binary, so every daemon carries it before the height.
+- **DSL shadow**: `dslactivationheight` 6240 → 5472 (per-node config,
+  epoch-aligned at 228 × 24), so the first service commitment is now possible at
+  5496 rather than 6264. Enforcement stays unreachable — this is still shadow,
+  and the convergence question it exists to measure is unchanged.
+
+The build recipe is the established one — the fleet artefact is
+`--without-bdb --without-miniupnpc --without-natpmp --with-gui=no`, the seed
+keeps its BDB build — and `ldd` was checked on a real fleet host before install.
+The roll completed with the whole devnet on one chain (matching tip hash at
+height 4939, ChainLocked under `llmq_defcon`), every running process verified
+against the shipped md5; rollback binaries are kept as `.bak-20260830-2304`.
+
 ## DSL shadow — the Sentinel Layer observes from height 6240
 
 *Rolled out 2026-08-30, completed at height 4750. Explorer record:
@@ -86,6 +143,9 @@ are pull requests on
   list, and close two dormant enforcement gaps (second-review follow-ups)
 
 ### The activation
+
+*(Superseded 2026-08-30 by the re-roll above: brought forward to 5472, and the
+strict-BLS gate to 5250, so the network reaches both sooner.)*
 
 `dslactivationheight = 6240` on devnet, epoch-aligned (260 × 24) and placed
 after the strict-BLS gate at 6000 so the two events stay in separate
