@@ -27,8 +27,13 @@ jobs:
       - name: Install
         run: npm ci
 
-      # Typecheck comes first: it is the fastest signal and the one that would
-      # have caught a broken shared type before the two dependent workspaces.
+      # server and client import @devnet-deftrack/shared as a built package, so
+      # its declarations must exist before they can be typechecked. A local dev
+      # tree already has shared/dist from an earlier build; a clean CI checkout
+      # does not, which is exactly the gap this whole workflow closes.
+      - name: Build shared
+        run: npm run build -w shared
+
       - name: Typecheck
         run: npm run typecheck
 
