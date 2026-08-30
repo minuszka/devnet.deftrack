@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeFCompute – decentralizált számítási hálózat</title>
+  <style>
+    :root {
+      --ink: #07131f;
+      --ink-2: #0c1d2e;
+      --ink-3: #13283d;
+      --paper: #f4f8fb;
+      --white: #ffffff;
+      --muted: #64788a;
+      --line: #d8e3eb;
+      --cyan: #15c7ff;
+      --blue: #3378ff;
+      --violet: #845cff;
+      --mint: #38dfad;
+      --amber: #ffb84d;
+      --red: #ff667d;
+      --shadow: 0 10px 30px rgba(6, 23, 39, .10);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #cfd8df; color: var(--ink); }
+    body {
+      font-family: "Segoe UI", Inter, Arial, sans-serif;
+      font-size: 10.2pt;
+      line-height: 1.42;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    @page { size: A4; margin: 0; }
+    .page {
+      position: relative;
+      width: 210mm;
+      min-height: 297mm;
+      margin: 10mm auto;
+      overflow: hidden;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      page-break-after: always;
+    }
+    .page:last-child { page-break-after: auto; }
+    .pad { padding: 18mm 17mm 16mm; }
+
+    .topbar {
+      height: 9mm;
+      padding: 0 17mm;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #6e8294;
+      font-size: 6.8pt;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid #dce6ed;
+    }
+    .topbar span { flex: 0 0 auto; white-space: nowrap; }
+    .topbar span:last-child { margin-left: 5mm; }
+    .topbar b { color: var(--blue); }
+    .page-no {
+      position: absolute;
+      right: 17mm;
+      bottom: 8mm;
+      color: #8496a5;
+      font-size: 8pt;
+      font-weight: 700;
+      letter-spacing: .08em;
+    }
+    .footer-note {
+      position: absolute;
+      left: 17mm;
+      bottom: 8mm;
+      color: #8ea0ae;
+      font-size: 7pt;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { font-size: 31pt; line-height: 1.05; letter-spacing: -.04em; }
+    h2 { font-size: 23pt; line-height: 1.08; letter-spacing: -.035em; margin-bottom: 5mm; }
+    h3 { font-size: 12.5pt; line-height: 1.2; margin-bottom: 2.2mm; }
+    p { margin-bottom: 3.3mm; }
+    .lead { font-size: 13.3pt; line-height: 1.5; color: #344e62; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 2.5mm;
+      margin-bottom: 5mm;
+      color: var(--blue);
+      font-size: 8.2pt;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 8mm; height: 1.2mm; border-radius: 2mm; background: linear-gradient(90deg, var(--cyan), var(--blue)); }
+    .accent { color: var(--blue); }
+    .muted { color: var(--muted); }
+    .small { font-size: 8.4pt; }
+    .tiny { font-size: 7.4pt; }
+    .strong { font-weight: 750; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3.5mm; }
+    .card {
+      background: rgba(255,255,255,.88);
+      border: 1px solid var(--line);
+      border-radius: 4.5mm;
+      padding: 5mm;
+      box-shadow: 0 4px 13px rgba(15, 45, 67, .045);
+    }
+    .card.dark { background: var(--ink-2); color: white; border-color: #24425d; }
+    .card.tint { background: #eaf6ff; border-color: #b9e7fa; }
+    .card.mint { background: #e9fbf5; border-color: #bdeedc; }
+    .card.violet { background: #f1edff; border-color: #d7cdfc; }
+    .card.amber { background: #fff7e9; border-color: #f5d8a3; }
+    .card.red { background: #fff0f3; border-color: #ffc7d0; }
+    .icon {
+      width: 9mm; height: 9mm; border-radius: 3mm;
+      display: inline-grid; place-items: center;
+      margin-bottom: 3mm;
+      color: white; background: linear-gradient(135deg, var(--cyan), var(--blue));
+      font-weight: 900; font-size: 11pt;
+      box-shadow: 0 4px 10px rgba(51,120,255,.25);
+    }
+    .icon.mint { background: linear-gradient(135deg, #35dda5, #12a780); }
+    .icon.violet { background: linear-gradient(135deg, #a875ff, #6845e8); }
+    .icon.amber { background: linear-gradient(135deg, #ffc56a, #ed8a25); }
+    .metric { font-size: 22pt; font-weight: 800; letter-spacing: -.04em; line-height: 1; margin-bottom: 1.5mm; }
+    .metric-label { color: var(--muted); font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+
+    .callout {
+      position: relative;
+      padding: 5mm 5mm 5mm 7mm;
+      border-radius: 4mm;
+      background: #e9f7ff;
+      border: 1px solid #bbe7fa;
+      color: #173c55;
+    }
+    .callout::before { content: ""; position: absolute; left: 0; top: 4mm; bottom: 4mm; width: 1.5mm; border-radius: 2mm; background: linear-gradient(var(--cyan), var(--blue)); }
+    .callout.warning { background: #fff6e6; border-color: #f4d59f; color: #5e4218; }
+    .callout.warning::before { background: var(--amber); }
+    .callout.success { background: #e8faf4; border-color: #bcebdc; color: #174b3c; }
+    .callout.success::before { background: var(--mint); }
+
+    ul.clean { list-style: none; padding: 0; margin: 0; }
+    ul.clean li { position: relative; padding-left: 6mm; margin: 2.2mm 0; }
+    ul.clean li::before { content: ""; position: absolute; left: 0; top: .52em; width: 2.7mm; height: 2.7mm; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 1.2mm rgba(56,223,173,.15); }
+    ul.checks { list-style: none; padding: 0; margin: 0; }
+    ul.checks li { position: relative; padding-left: 6.5mm; margin: 2.4mm 0; }
+    ul.checks li::before { content: "✓"; position: absolute; left: 0; top: -.2mm; color: #0bad7d; font-weight: 900; }
+    ul.cross li::before { content: "×"; color: var(--red); }
+
+    table { width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 3.5mm; background: white; font-size: 8.3pt; }
+    th { padding: 3mm; background: var(--ink-2); color: white; text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: .08em; }
+    td { padding: 2.8mm 3mm; border-top: 1px solid #e5edf2; vertical-align: top; }
+    tr:first-child td { border-top: 0; }
+    td:first-child { font-weight: 700; }
+    .tag {
+      display: inline-block; padding: 1.2mm 2.4mm; border-radius: 9mm;
+      color: #14517a; background: #dff3ff; border: 1px solid #b4e3fa;
+      font-size: 7pt; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+    }
+    .tag.green { color: #146247; background: #dff7ee; border-color: #b0ead7; }
+    .tag.gold { color: #6b4811; background: #fff0d2; border-color: #efd199; }
+    .tag.violet { color: #4b348f; background: #ece5ff; border-color: #d2c5fb; }
+
+    .number-list { counter-reset: step; display: grid; gap: 3mm; }
+    .number-item { counter-increment: step; display: grid; grid-template-columns: 10mm 1fr; gap: 3mm; align-items: start; }
+    .number-item::before {
+      content: counter(step); width: 9mm; height: 9mm; border-radius: 50%; display: grid; place-items: center;
+      color: white; background: linear-gradient(135deg, var(--cyan), var(--blue)); font-weight: 900;
+      box-shadow: 0 4px 10px rgba(51,120,255,.22);
+    }
+    .number-item h3 { margin: .5mm 0 1mm; }
+
+    .section-rule { height: 1px; background: linear-gradient(90deg, var(--blue), rgba(51,120,255,0)); margin: 6mm 0; }
+
+    /* Cover */
+    .cover {
+      color: white;
+      background:
+        radial-gradient(circle at 86% 14%, rgba(21,199,255,.33), transparent 28%),
+        radial-gradient(circle at 12% 83%, rgba(132,92,255,.30), transparent 34%),
+        linear-gradient(145deg, #040d17 0%, #071a2d 56%, #0b2238 100%);
+    }
+    .cover::before {
+      content: ""; position: absolute; inset: 0; opacity: .22;
+      background-image: linear-gradient(rgba(255,255,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px);
+      background-size: 15mm 15mm;
+      mask-image: linear-gradient(to bottom, black, transparent 78%);
+    }
+    .cover-orbit { position: absolute; width: 135mm; height: 135mm; right: -38mm; top: 34mm; border: 1px solid rgba(70,205,255,.24); border-radius: 50%; }
+    .cover-orbit::before, .cover-orbit::after { content: ""; position: absolute; border: 1px solid rgba(132,92,255,.22); border-radius: 50%; }
+    .cover-orbit::before { inset: 15mm; }
+    .cover-orbit::after { inset: 32mm; }
+    .cover-content { position: relative; z-index: 2; height: 100%; padding: 18mm 17mm; display: flex; flex-direction: column; }
+    .brand { display: flex; align-items: center; gap: 4mm; font-weight: 850; letter-spacing: .03em; }
+    .brand img { width: 13mm; height: 13mm; object-fit: contain; border-radius: 3mm; }
+    .brand-title { font-size: 16pt; }
+    .brand-title span { color: var(--cyan); }
+    .cover-main { margin-top: 49mm; width: 148mm; }
+    .cover-main h1 { font-size: 39pt; max-width: 155mm; margin-bottom: 7mm; }
+    .cover-main .subtitle { width: 128mm; color: #afc6d7; font-size: 14pt; line-height: 1.52; }
+    .cover-chip { display: inline-block; margin-bottom: 7mm; padding: 2mm 3.5mm; border-radius: 8mm; color: #8de6ff; border: 1px solid rgba(73,210,255,.4); background: rgba(20,123,164,.18); font-size: 8pt; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+    .cover-footer { margin-top: auto; display: flex; justify-content: space-between; align-items: end; color: #91aabe; font-size: 8.5pt; }
+    .cover-bars { display: flex; gap: 1.6mm; align-items: end; }
+    .cover-bars i { display: block; width: 2mm; border-radius: 2mm; background: linear-gradient(var(--cyan), var(--blue)); }
+    .cover-bars i:nth-child(1) { height: 5mm; } .cover-bars i:nth-child(2) { height: 9mm; } .cover-bars i:nth-child(3) { height: 14mm; } .cover-bars i:nth-child(4) { height: 21mm; }
+
+    .svg-wrap { background: white; border: 1px solid var(--line); border-radius: 5mm; padding: 3mm; box-shadow: 0 5px 18px rgba(15,45,67,.06); }
+    svg text { font-family: "Segoe UI", Arial, sans-serif; }
+
+    .score-ring { width: 34mm; height: 34mm; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--mint) 0 86%, #dfe9ef 86%); position: relative; }
+    .score-ring::after { content: ""; position: absolute; inset: 4mm; border-radius: 50%; background: white; }
+    .score-ring b { position: relative; z-index: 1; font-size: 18pt; }
+
+    .phase { position: relative; padding-left: 12mm; margin-bottom: 5mm; }
+    .phase::before { content: ""; position: absolute; left: 3.5mm; top: 3mm; bottom: -6mm; width: 1px; background: #bcd0de; }
+    .phase:last-child::before { display: none; }
+    .phase-dot { position: absolute; left: 0; top: 0; width: 8mm; height: 8mm; border-radius: 50%; display: grid; place-items: center; color: white; font-size: 7pt; font-weight: 900; background: var(--blue); border: 1.5mm solid #dcecff; }
+
+    @media print {
+      html, body { background: white; }
+      .page { margin: 0; box-shadow: none; width: 210mm; height: 297mm; min-height: 297mm; }
+    }
+    body.single-page { background: white; }
+    body.single-page .page { display: none; }
+    body.single-page .page.preview-page { display: block; margin: 0; box-shadow: none; }
+  </style>
+</head>
+<body>
+
+  <!-- 1: COVER -->
+  <section class="page cover">
+    <div class="cover-orbit"></div>
+    <div class="cover-content">
+      <div class="brand">
+        <img src="assets/defcon-logo.png" alt="DeFCon" />
+        <div class="brand-title">DeF<span>Compute</span></div>
+      </div>
+      <div class="cover-main">
+        <div class="cover-chip">Koncepció és megvalósítási vázlat</div>
+        <h1>Decentralizált számítási hálózat</h1>
+        <p class="subtitle">Hogyan kapcsolható össze a DeFCon masternode-hálózat, a független oracle-réteg és a világ számítási kapacitása egy ellenőrizhető piactérré?</p>
+      </div>
+      <div class="cover-footer">
+        <div>
+          <div style="color:#d6e6f0;font-weight:750;margin-bottom:1mm;">Magyar nyelvű áttekintő</div>
+          <div>Laikusoknak, üzemeltetőknek és fejlesztőknek</div>
+          <div style="margin-top:3mm;">2026. augusztus · koncepcióverzió 1.0</div>
+        </div>
+        <div class="cover-bars"><i></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2: EXECUTIVE SUMMARY -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Áttekintés</span><span>Koncepciódokumentum</span></div>
+    <div class="pad">
+      <div class="eyebrow">Az ötlet egy oldalon</div>
+      <h2>A kihasználatlan gépekből ellenőrizhető számítási piac</h2>
+      <p class="lead">A szolgáltató számítási kapacitást ad el, a vevő munkát küld, a DeFCon-hálózathoz kötött szereplők pedig bizonyíthatóan ellenőrzik, hogy a munka valóban és helyesen elkészült.</p>
+
+      <div class="grid-4" style="margin:8mm 0 7mm;">
+        <div class="card"><div class="icon">1</div><h3>Szolgáltató</h3><p class="small muted">GPU-t, CPU-t, memóriát és tárhelyet kínál.</p></div>
+        <div class="card"><div class="icon violet">4M</div><h3>Oracle node</h3><p class="small muted">Közvetít, mér, tárol és bizonyítékot replikál.</p></div>
+        <div class="card"><div class="icon mint">5/7</div><h3>Validátorok</h3><p class="small muted">Hét 1M node közül öt jóváhagyása szükséges.</p></div>
+        <div class="card"><div class="icon amber">✓</div><h3>Elszámolás</h3><p class="small muted">Csak elfogadott eredmény után történik fizetés.</p></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card dark">
+          <div class="eyebrow" style="color:#7ee2ff;margin-bottom:3mm;">A lényeg</div>
+          <h3 style="font-size:15pt;">Aki kiszolgál, nem dönthet egyedül</h3>
+          <p style="color:#bbcedc;">A 4 milliós node-ok futtatják az oracle-szolgáltatásokat, de az általuk kezelt munkát nem hagyhatják jóvá saját hatáskörben. A végső döntés egy külön, 1 milliós masternode-okból választott bizottságé.</p>
+        </div>
+        <div class="card mint">
+          <div class="eyebrow" style="color:#15956f;margin-bottom:3mm;">Minőségi kapu</div>
+          <h3 style="font-size:15pt;">Nem kerülhet fel akármilyen gép</h3>
+          <p>Oracle-ok által indított hálózati, hardveres és próbafeladatos mérés előzi meg a listázást. A mérés később véletlenszerűen megismétlődik.</p>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:7mm;">
+        <strong>Fontos tervezési alapelv:</strong> a 4 milliós fedezet nagyobb szolgáltatási kötelezettséget és felelősséget jelent, nem automatikusan négyszeres szavazati vagy kifizetési súlyt.
+      </div>
+    </div>
+    <div class="footer-note">A dokumentum célarchitektúrát ír le; nem végleges protokollspecifikáció.</div><div class="page-no">02</div>
+  </section>
+
+  <!-- 3: ARCHITECTURE -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Rendszerkép</span><span>Szétválasztott felelősség</span></div>
+    <div class="pad">
+      <div class="eyebrow">Szereplők és kapcsolatok</div>
+      <h2>Így áll össze a teljes rendszer</h2>
+      <p class="lead">A munka végrehajtása, a bizonyíték őrzése, az ellenőrzés és a fizetés külön szereplőkhöz kerül. Ettől lesz a rendszer hibatűrő és nehezebben manipulálható.</p>
+
+      <div class="svg-wrap" style="margin-top:6mm;">
+        <svg viewBox="0 0 720 530" width="100%" height="145mm" role="img" aria-label="DeFCompute architektúra">
+          <defs>
+            <linearGradient id="gBlue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#15c7ff"/><stop offset="1" stop-color="#3378ff"/></linearGradient>
+            <linearGradient id="gViolet" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a875ff"/><stop offset="1" stop-color="#6845e8"/></linearGradient>
+            <linearGradient id="gMint" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#45e2b4"/><stop offset="1" stop-color="#12a780"/></linearGradient>
+            <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><polygon points="0 0, 8 3.5, 0 7" fill="#6d8aa0"/></marker>
+          </defs>
+          <rect x="18" y="18" width="684" height="494" rx="24" fill="#f6fafd" stroke="#d9e6ee"/>
+          <text x="360" y="48" text-anchor="middle" fill="#6a8294" font-size="12" font-weight="700" letter-spacing="2">EGY MUNKA ÚTJA</text>
+
+          <rect x="48" y="78" width="166" height="78" rx="16" fill="#ffffff" stroke="#bcdce9"/>
+          <circle cx="78" cy="117" r="18" fill="url(#gBlue)"/><text x="78" y="122" text-anchor="middle" fill="white" font-weight="800">V</text>
+          <text x="108" y="108" fill="#0b2336" font-size="16" font-weight="800">Vevő</text><text x="108" y="130" fill="#6c8293" font-size="11">feladat + letét</text>
+
+          <rect x="506" y="78" width="166" height="78" rx="16" fill="#ffffff" stroke="#bcdce9"/>
+          <circle cx="536" cy="117" r="18" fill="url(#gViolet)"/><text x="536" y="122" text-anchor="middle" fill="white" font-weight="800">G</text>
+          <text x="566" y="108" fill="#0b2336" font-size="16" font-weight="800">GPU / CPU gép</text><text x="566" y="130" fill="#6c8293" font-size="11">szolgáltató agent</text>
+
+          <rect x="248" y="72" width="224" height="96" rx="20" fill="#0c2032" stroke="#215074" stroke-width="2"/>
+          <text x="360" y="106" text-anchor="middle" fill="#77dfff" font-size="13" font-weight="700">PIACTÉR ÉS ÜTEMEZŐ</text>
+          <text x="360" y="133" text-anchor="middle" fill="white" font-size="19" font-weight="800">Megfelelő gép kiválasztása</text>
+          <text x="360" y="153" text-anchor="middle" fill="#9fb7c8" font-size="11">ár · teljesítmény · régió · minősítés</text>
+
+          <line x1="214" y1="117" x2="244" y2="117" stroke="#6d8aa0" stroke-width="2" marker-end="url(#arr)"/>
+          <line x1="472" y1="117" x2="502" y2="117" stroke="#6d8aa0" stroke-width="2" marker-end="url(#arr)"/>
+
+          <rect x="72" y="226" width="576" height="104" rx="22" fill="#eaf7ff" stroke="#9cdcf6" stroke-width="2"/>
+          <text x="360" y="255" text-anchor="middle" fill="#156492" font-size="12" font-weight="800" letter-spacing="1.5">4M COMPUTE / ORACLE MASTERNODE-RÉTEG</text>
+          <g>
+            <rect x="101" y="273" width="112" height="37" rx="10" fill="white" stroke="#b9e5f5"/><text x="157" y="296" text-anchor="middle" fill="#173f58" font-size="12" font-weight="700">közvetítés</text>
+            <rect x="231" y="273" width="112" height="37" rx="10" fill="white" stroke="#b9e5f5"/><text x="287" y="296" text-anchor="middle" fill="#173f58" font-size="12" font-weight="700">mérés</text>
+            <rect x="361" y="273" width="112" height="37" rx="10" fill="white" stroke="#b9e5f5"/><text x="417" y="296" text-anchor="middle" fill="#173f58" font-size="12" font-weight="700">bizonyíték</text>
+            <rect x="491" y="273" width="112" height="37" rx="10" fill="white" stroke="#b9e5f5"/><text x="547" y="296" text-anchor="middle" fill="#173f58" font-size="12" font-weight="700">replikáció</text>
+          </g>
+          <line x1="360" y1="168" x2="360" y2="221" stroke="#6d8aa0" stroke-width="2" marker-end="url(#arr)"/>
+
+          <rect x="72" y="379" width="360" height="92" rx="20" fill="#ecfaf6" stroke="#a9e7d3" stroke-width="2"/>
+          <text x="252" y="407" text-anchor="middle" fill="#137353" font-size="12" font-weight="800" letter-spacing="1.2">1M MASTERNODE VALIDÁTOROK</text>
+          <g fill="url(#gMint)"><circle cx="125" cy="440" r="15"/><circle cx="167" cy="440" r="15"/><circle cx="209" cy="440" r="15"/><circle cx="251" cy="440" r="15"/><circle cx="293" cy="440" r="15"/></g>
+          <g fill="#d5e5df" stroke="#aec8bf"><circle cx="335" cy="440" r="15"/><circle cx="377" cy="440" r="15"/></g>
+          <text x="251" y="466" text-anchor="middle" fill="#42685a" font-size="11">5 igen a 7-ből → elfogadva</text>
+
+          <rect x="466" y="379" width="182" height="92" rx="20" fill="#f1edff" stroke="#cfc1fa" stroke-width="2"/>
+          <text x="557" y="407" text-anchor="middle" fill="#6543c4" font-size="12" font-weight="800">ELSZÁMOLÁS</text>
+          <rect x="502" y="422" width="110" height="30" rx="15" fill="url(#gViolet)"/><text x="557" y="442" text-anchor="middle" fill="white" font-size="12" font-weight="800">Escrow fizet</text>
+
+          <line x1="300" y1="330" x2="271" y2="374" stroke="#6d8aa0" stroke-width="2" marker-end="url(#arr)"/>
+          <line x1="432" y1="425" x2="461" y2="425" stroke="#6d8aa0" stroke-width="2" marker-end="url(#arr)"/>
+        </svg>
+      </div>
+    </div>
+    <div class="footer-note">Nincs egyetlen olyan szerver, amely egymaga végrehajt, igazol és fizet.</div><div class="page-no">03</div>
+  </section>
+
+  <!-- 4: JOB FLOW -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Felhasználói folyamat</span><span>A vevőtől a kifizetésig</span></div>
+    <div class="pad">
+      <div class="eyebrow">Példa hétköznapi nyelven</div>
+      <h2>Mi történik egy számítási feladattal?</h2>
+      <p class="lead">A vevő nem kap hozzáférést a szolgáltató gépéhez. Egy pontosan meghatározott, elszigetelt feladat fut le, majd csak az ellenőrzött eredmény után történik elszámolás.</p>
+
+      <div class="grid-2" style="margin-top:7mm;gap:7mm;">
+        <div class="number-list">
+          <div class="number-item"><div><h3>A gép ajánlatot tesz</h3><p class="small muted">Az agent közzéteszi a ténylegesen kiadható erőforrást, árat és minőségi bizonyítványt.</p></div></div>
+          <div class="number-item"><div><h3>A vevő kiválasztja</h3><p class="small muted">A piactér ár, régió, GPU, tárhely és minőségi osztály alapján párosít.</p></div></div>
+          <div class="number-item"><div><h3>A díj letétbe kerül</h3><p class="small muted">A pénz nem közvetlenül a szolgáltatóhoz megy; az escrow a döntésig zárolja.</p></div></div>
+          <div class="number-item"><div><h3>Az agent letölti a feladatot</h3><p class="small muted">Konténerképet és bemenetet kap, ellenőrzött hash-ekkel.</p></div></div>
+          <div class="number-item"><div><h3>Elszigetelt futtatás</h3><p class="small muted">A feladat Dockerben, később erősebb microVM-szigetelésben fut.</p></div></div>
+        </div>
+        <div class="number-list" style="counter-reset:step 5;">
+          <div class="number-item"><div><h3>Eredmény és bizonyíték készül</h3><p class="small muted">Kimeneti hash, napló, futási mérés és proof-of-resource csomag jön létre.</p></div></div>
+          <div class="number-item"><div><h3>Több oracle eltárolja</h3><p class="small muted">Az evidencia nem egyetlen gépen marad; tartalomazonosító alapján replikálódik.</p></div></div>
+          <div class="number-item"><div><h3>Hét validátor ellenőriz</h3><p class="small muted">A kijelölt 1M masternode-ok egymástól függetlenül szavaznak.</p></div></div>
+          <div class="number-item"><div><h3>Öt aláírás dönt</h3><p class="small muted">Legalább öt egyező, érvényes aláírás nélkül nincs elfogadás.</p></div></div>
+          <div class="number-item"><div><h3>Fizetés vagy visszatérítés</h3><p class="small muted">Elfogadáskor fizetés, hibánál szabály szerinti újrapróba vagy visszatérítés.</p></div></div>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top:7mm;">
+        <strong>Biztonsági határ:</strong> a vevő soha nem kap SSH/root hozzáférést, a számítási agent pedig soha nem kaphatja meg a Core wallet, tulajdonosi vagy masternode BLS-kulcsait.
+      </div>
+
+      <div class="grid-3" style="margin-top:6mm;">
+        <div class="card"><div class="metric">Hash</div><div class="metric-label">változtathatatlan azonosító</div></div>
+        <div class="card"><div class="metric">3–5×</div><div class="metric-label">bizonyíték-replika</div></div>
+        <div class="card"><div class="metric">5/7</div><div class="metric-label">elfogadási küszöb</div></div>
+      </div>
+    </div>
+    <div class="footer-note">A végleges elszámolási szabályokat devneten kell viselkedés- és hibatesztelni.</div><div class="page-no">04</div>
+  </section>
+
+  <!-- 5: 4M NODE -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / 4M szolgáltatási réteg</span><span>Nagyobb fedezet, több feladat</span></div>
+    <div class="pad">
+      <div class="eyebrow">Compute / Oracle Masternode</div>
+      <h2>Mitől ér többet a 4 milliós node?</h2>
+      <p class="lead">Nem attól, hogy ugyanazt a blokkláncot négyszer tölti le. Attól válik hálózati szempontból értékessé, hogy kötelező, mérhető és számonkérhető többletszolgáltatásokat nyújt.</p>
+
+      <div class="grid-2" style="margin-top:7mm;">
+        <div class="card tint"><div class="icon">↔</div><h3>Oracle API és relay</h3><p class="small">Összeköti a szolgáltató agenteket, a piacteret és a validátorokat. A forgalom hitelesített és visszakövethető.</p></div>
+        <div class="card violet"><div class="icon violet">◆</div><h3>Bizonyítéktár</h3><p class="small">Megőrzi és több társhoz továbbítja a futási bizonyítékokat, naplóhash-eket és eredményazonosítókat.</p></div>
+        <div class="card mint"><div class="icon mint">⌁</div><h3>Minőségmérés</h3><p class="small">Aktív hálózati teszteket és véletlen próbafeladatokat indít a szolgáltatói gépeken.</p></div>
+        <div class="card amber"><div class="icon amber">⚙</div><h3>Aggregálás és beküldés</h3><p class="small">Összegyűjti az öt validátoraláírást, majd bárki által ellenőrizhető csomagként továbbítja az elszámoláshoz.</p></div>
+      </div>
+
+      <div class="section-rule"></div>
+      <div class="grid-2" style="grid-template-columns:.9fr 1.1fr;align-items:center;">
+        <div>
+          <div class="metric" style="font-size:40pt;color:var(--blue);">4 000 000</div>
+          <div class="metric-label">DFCN fedezet a tervezett új típushoz</div>
+          <p style="margin-top:5mm;">A nagy fedezet gazdasági felelősséget ad, a műszaki feladat pedig valódi hasznot teremt a hálózatnak.</p>
+        </div>
+        <div class="card dark">
+          <h3>Ajánlott Core-tervezési szabály</h3>
+          <ul class="checks small" style="color:#c5d6e2;">
+            <li>külön <b style="color:white;">Compute</b> masternode-típus;</li>
+            <li>külön devnet aktiválási magasság;</li>
+            <li>Platform/Evo mezők nélkül;</li>
+            <li>szavazati súly: 1;</li>
+            <li>fizetési súly: külön szabály, nem automatikus 4×;</li>
+            <li>régi kliens aktiválás előtt kötelezően frissítendő.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top:7mm;">
+        <strong>Miért fontos a külön típus?</strong> A meglévő Evo-típus 4M fedezete a kódban más mezőkhöz és súlyozásokhoz kötődik. Egyszerű újrahasználata akaratlanul extra governance- vagy kifizetési befolyást adhatna.
+      </div>
+    </div>
+    <div class="footer-note">A fedezet nem helyettesíti a teljesítménymérést és a szolgáltatási kötelezettséget.</div><div class="page-no">05</div>
+  </section>
+
+  <!-- 6: VALIDATORS -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / 1M validátorok</span><span>Független 5-of-7 döntés</span></div>
+    <div class="pad">
+      <div class="eyebrow">Ellenőrzési réteg</div>
+      <h2>Miért hét ellenőr és miért kell öt igen?</h2>
+      <p class="lead">Az 1 milliós masternode-ok közül feladatonként kiválasztott bizottság ellenőrzi a bizonyítékot. Így az oracle, a szolgáltató és a döntéshozó nem ugyanaz a fél.</p>
+
+      <div class="svg-wrap" style="margin-top:7mm;">
+        <svg viewBox="0 0 720 310" width="100%" height="86mm" role="img" aria-label="5 a 7-ből validáció">
+          <defs><linearGradient id="vg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#45e2b4"/><stop offset="1" stop-color="#12a780"/></linearGradient></defs>
+          <text x="360" y="36" text-anchor="middle" fill="#647f92" font-size="12" font-weight="800" letter-spacing="2">RÖGZÍTETT BIZOTTSÁG EGY ADOTT MUNKÁHOZ</text>
+          <g font-weight="900" text-anchor="middle">
+            <g transform="translate(70,80)"><circle cx="0" cy="0" r="30" fill="url(#vg)"/><text y="6" fill="white" font-size="18">✓</text><text y="50" fill="#33566b" font-size="12">MN 1</text></g>
+            <g transform="translate(165,80)"><circle cx="0" cy="0" r="30" fill="url(#vg)"/><text y="6" fill="white" font-size="18">✓</text><text y="50" fill="#33566b" font-size="12">MN 2</text></g>
+            <g transform="translate(260,80)"><circle cx="0" cy="0" r="30" fill="url(#vg)"/><text y="6" fill="white" font-size="18">✓</text><text y="50" fill="#33566b" font-size="12">MN 3</text></g>
+            <g transform="translate(355,80)"><circle cx="0" cy="0" r="30" fill="url(#vg)"/><text y="6" fill="white" font-size="18">✓</text><text y="50" fill="#33566b" font-size="12">MN 4</text></g>
+            <g transform="translate(450,80)"><circle cx="0" cy="0" r="30" fill="url(#vg)"/><text y="6" fill="white" font-size="18">✓</text><text y="50" fill="#33566b" font-size="12">MN 5</text></g>
+            <g transform="translate(545,80)"><circle cx="0" cy="0" r="30" fill="#dfe9ef" stroke="#bdccd6"/><text y="6" fill="#7890a0" font-size="18">–</text><text y="50" fill="#758b9a" font-size="12">MN 6</text></g>
+            <g transform="translate(640,80)"><circle cx="0" cy="0" r="30" fill="#dfe9ef" stroke="#bdccd6"/><text y="6" fill="#7890a0" font-size="18">–</text><text y="50" fill="#758b9a" font-size="12">MN 7</text></g>
+          </g>
+          <path d="M70 154 C70 210 250 187 310 220 M165 154 C165 200 280 192 320 222 M260 154 C260 190 310 202 330 223 M355 154 L355 221 M450 154 C450 190 400 202 380 223" fill="none" stroke="#7ccdb4" stroke-width="2"/>
+          <rect x="257" y="220" width="206" height="64" rx="18" fill="#0c2032"/><text x="360" y="246" text-anchor="middle" fill="#75e9c4" font-size="13" font-weight="800">KÜSZÖB ELÉRVE</text><text x="360" y="270" text-anchor="middle" fill="white" font-size="19" font-weight="900">5 aláírás → elfogadás</text>
+        </svg>
+      </div>
+
+      <div class="grid-2" style="margin-top:6mm;">
+        <div class="card">
+          <h3>Mit ellenőriz a validátor?</h3>
+          <ul class="clean small">
+            <li>a bizottsági tagság és referencia ChainLock;</li>
+            <li>a feladat és eredmény hash-e;</li>
+            <li>a bizonyíték teljessége és szabályossága;</li>
+            <li>a szolgáltató aláírása és időkorlátja;</li>
+            <li>nincs-e kettős, ellentmondó eredmény.</li>
+          </ul>
+        </div>
+        <div class="card red">
+          <h3>Mit kell kizárni?</h3>
+          <ul class="checks cross small">
+            <li>oracle által gyártott ál-szavazatok;</li>
+            <li>utólag változó bizottság;</li>
+            <li>szavazat csendes felülírása;</li>
+            <li>egy közös API-kulccsal leadott voksok;</li>
+            <li>production módban mock fallback.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:6mm;">
+        Minden munkához rögzíteni kell a <strong>referenciamagasságot, ChainLock hash-t, hét tagot, 5-ös küszöböt és szabályverziót</strong>. A szavazatok aláírt, hozzáfűzhető események legyenek; az ellentmondó szavazat bizonyítékként megőrizhető.
+      </div>
+    </div>
+    <div class="footer-note">A validátor sidecar külön szolgáltatás; nem tárolhatja a masternode érzékeny kulcsait.</div><div class="page-no">06</div>
+  </section>
+
+  <!-- 7: ADMISSION TEST -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Minőségi kapu</span><span>Belépés csak mérés után</span></div>
+    <div class="pad">
+      <div class="eyebrow">Gépfelvétel a piactérre</div>
+      <h2>A bemondott teljesítmény helyett bizonyított képesség</h2>
+      <p class="lead">A szolgáltatói agent önbevallása csak kiindulási adat. A listázást oracle-ok által indított, időzített és aláírt vizsgálat engedélyezi.</p>
+
+      <div class="svg-wrap" style="margin-top:6mm;">
+        <svg viewBox="0 0 720 280" width="100%" height="78mm" role="img" aria-label="Belépési minőségellenőrzés folyamatábra">
+          <defs><marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><polygon points="0 0, 8 3.5, 0 7" fill="#7692a5"/></marker></defs>
+          <g text-anchor="middle">
+            <g transform="translate(68,54)"><circle r="31" fill="#e7f7ff" stroke="#8cd8f5"/><text y="5" fill="#1675a6" font-size="17" font-weight="900">01</text><text y="56" fill="#163c53" font-size="12" font-weight="800">Felismerés</text><text y="74" fill="#718797" font-size="10">CPU · GPU · RAM</text></g>
+            <g transform="translate(214,54)"><circle r="31" fill="#eee9ff" stroke="#c4b4fa"/><text y="5" fill="#6b48cf" font-size="17" font-weight="900">02</text><text y="56" fill="#163c53" font-size="12" font-weight="800">Oracle-kihívás</text><text y="74" fill="#718797" font-size="10">nonce + időlimit</text></g>
+            <g transform="translate(360,54)"><circle r="31" fill="#e7faf4" stroke="#a5e5d0"/><text y="5" fill="#158762" font-size="17" font-weight="900">03</text><text y="56" fill="#163c53" font-size="12" font-weight="800">Terhelés</text><text y="74" fill="#718797" font-size="10">10–15 perc</text></g>
+            <g transform="translate(506,54)"><circle r="31" fill="#fff5e4" stroke="#f1cf95"/><text y="5" fill="#aa6817" font-size="17" font-weight="900">04</text><text y="56" fill="#163c53" font-size="12" font-weight="800">Mintafeladat</text><text y="74" fill="#718797" font-size="10">valódi eredmény</text></g>
+            <g transform="translate(652,54)"><circle r="31" fill="#e7f7ff" stroke="#8cd8f5"/><text y="5" fill="#1675a6" font-size="17" font-weight="900">05</text><text y="56" fill="#163c53" font-size="12" font-weight="800">Bizonyítvány</text><text y="74" fill="#718797" font-size="10">lejáró minősítés</text></g>
+          </g>
+          <g stroke="#7692a5" stroke-width="2" marker-end="url(#arr2)"><line x1="102" y1="54" x2="177" y2="54"/><line x1="248" y1="54" x2="323" y2="54"/><line x1="394" y1="54" x2="469" y2="54"/><line x1="540" y1="54" x2="615" y2="54"/></g>
+          <rect x="50" y="158" width="286" height="83" rx="18" fill="#e9faf4" stroke="#a9e5d2"/><text x="193" y="188" text-anchor="middle" fill="#147b5a" font-size="14" font-weight="900">MEGFELELT</text><text x="193" y="213" text-anchor="middle" fill="#315d50" font-size="12">listázható + minőségi osztály</text><text x="193" y="231" text-anchor="middle" fill="#6d8d82" font-size="10">kezdetben korlátozott munkakeret</text>
+          <rect x="384" y="158" width="286" height="83" rx="18" fill="#fff0f3" stroke="#f4bac4"/><text x="527" y="188" text-anchor="middle" fill="#b63e54" font-size="14" font-weight="900">NEM FELELT MEG</text><text x="527" y="213" text-anchor="middle" fill="#6b4350" font-size="12">nem bérelhető</text><text x="527" y="231" text-anchor="middle" fill="#91737d" font-size="10">javítás után ismételt vizsgálat</text>
+        </svg>
+      </div>
+
+      <div class="grid-3" style="margin-top:6mm;">
+        <div class="card"><div class="icon">GPU</div><h3>Hardver</h3><p class="small muted">Modell, VRAM, tartós sebesség, hőmérséklet, hibák, throttling.</p></div>
+        <div class="card"><div class="icon mint">SSD</div><h3>Tárhely</h3><p class="small muted">Szabad hely, szekvenciális és véletlen I/O, stabilitás.</p></div>
+        <div class="card"><div class="icon violet">NET</div><h3>Hálózat</h3><p class="small muted">Fel- és letöltés, ping, jitter, csomagvesztés több régióból.</p></div>
+      </div>
+
+      <div class="callout success" style="margin-top:6mm;">
+        <strong>Nem egyszeri vizsga:</strong> rövid újramérés 6–24 óránként, véletlen próbafeladatok és minden valódi munka után frissülő minőségi pontszám. Így a belépés után visszavett vagy túlértékesített kapacitás is észlelhető.
+      </div>
+    </div>
+    <div class="footer-note">A mérési bizonyítvány aláírt, időkorlátos és gépazonosítóhoz kötött legyen.</div><div class="page-no">07</div>
+  </section>
+
+  <!-- 8: METRICS -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Mérési rendszer</span><span>Érthető és összehasonlítható</span></div>
+    <div class="pad">
+      <div class="eyebrow">Ajánlott induló küszöbök</div>
+      <h2>Mitől számít megfelelőnek egy GPU-s gép?</h2>
+      <p class="lead">A minimumértékek nem örök szabályok. Devnetes mérésekből kell őket kalibrálni, majd géposztályonként és feladattípusonként verziózni.</p>
+
+      <table style="margin-top:6mm;">
+        <thead><tr><th>Terület</th><th>Induló minimum</th><th>Miért fontos?</th><th>Hogyan mérjük?</th></tr></thead>
+        <tbody>
+          <tr><td>Memória</td><td>32 GB fizikai / kb. 24 GB kiadható</td><td>A rendszernek és az agentnek is maradjon tartaléka.</td><td>OS-adat + terhelés alatti mérés</td></tr>
+          <tr><td>GPU memória</td><td>8–12 GB, munkakategóriától függően</td><td>A modellnek és a batch-nek el kell férnie.</td><td>Driverlekérdezés + allokációs próba</td></tr>
+          <tr><td>Szabad SSD</td><td>150 GB; ajánlott 300–500 GB NVMe</td><td>Konténerképek, modellek, munkatér és cache.</td><td>Szabad hely + kontrollált I/O teszt</td></tr>
+          <tr><td>Letöltés</td><td>≥ 100 Mbps</td><td>Bemenetek és image-ek érkezése.</td><td>Több oracle-régióból aktív teszt</td></tr>
+          <tr><td>Feltöltés</td><td>≥ 50 Mbps</td><td>Eredmények és bizonyítékok visszaküldése.</td><td>Oracle oldalon is mért adatfolyam</td></tr>
+          <tr><td>Csomagvesztés</td><td>&lt; 1%; prémium osztályban &lt; 0,5%</td><td>Megszakadás, hibás interaktív élmény ellen.</td><td>Időzített minták több célponttal</td></tr>
+          <tr><td>Jitter</td><td>&lt; 30 ms</td><td>A késleltetés kiszámíthatósága.</td><td>Rövid és hosszabb mintasorozat</td></tr>
+          <tr><td>GPU tartós teljesítmény</td><td>≥ 80% típusreferencia</td><td>Kiszűri a túlmelegedést és erős limitálást.</td><td>10–15 perces változó kihívás</td></tr>
+        </tbody>
+      </table>
+
+      <div class="grid-2" style="margin-top:7mm;align-items:center;">
+        <div class="card" style="display:flex;gap:6mm;align-items:center;">
+          <div class="score-ring"><b>86</b></div>
+          <div><h3 style="margin-bottom:1mm;">Quality Score</h3><p class="small muted" style="margin:0;">Egységes, de részleteiben is megtekinthető pontszám. Nem helyettesíti a munkaspecifikus minimumot.</p></div>
+        </div>
+        <div class="card">
+          <div class="small"><b>35%</b> tartós teljesítmény</div>
+          <div style="height:2.4mm;background:#e4edf2;border-radius:3mm;margin:1.3mm 0 2.4mm;"><i style="display:block;width:35%;height:100%;background:var(--blue);border-radius:3mm;"></i></div>
+          <div class="small"><b>25%</b> hálózat · <b>25%</b> rendelkezésre állás · <b>15%</b> sikeres munkák</div>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top:6mm;">
+        Egy 32 GB RAM + RTX 3090 konfiguráció számításra erős lehet, de <strong>80 GB SSD általános piactérhez kevés</strong>. Kis munkakategóriában engedhető, nagy modellekhez legalább 250–500 GB NVMe célszerű.
+      </div>
+    </div>
+    <div class="footer-note">A küszöbök protokollverzióval együtt változhassanak, visszamenőleges zavar nélkül.</div><div class="page-no">08</div>
+  </section>
+
+  <!-- 9: TIERS -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Szolgáltatói osztályok</span><span>Minőség kizárás helyett</span></div>
+    <div class="pad">
+      <div class="eyebrow">Otthoni vagy adatközponti?</div>
+      <h2>Ne a címet, hanem a szolgáltatás minőségét jutalmazzuk</h2>
+      <p class="lead">Az adatközpont részben felismerhető IP/ASN, útvonal és stabilitás alapján, de nem bizonyítható tökéletesen. Egy otthoni optikai RTX 3090 jobb lehet egy túlterhelt olcsó szervernél.</p>
+
+      <div class="grid-3" style="margin-top:7mm;">
+        <div class="card">
+          <span class="tag">Community</span>
+          <h3 style="margin-top:4mm;">Közösségi gép</h3>
+          <p class="small muted">Otthoni vagy nem igazolt környezet, amely műszakilag átment a mérésen.</p>
+          <ul class="checks small"><li>rövid batch munkák</li><li>alacsonyabb értékhatár</li><li>gyakoribb újramérés</li><li>reputáció építése</li></ul>
+        </div>
+        <div class="card tint">
+          <span class="tag green">Verified</span>
+          <h3 style="margin-top:4mm;">Ellenőrzött</h3>
+          <p class="small muted">Tartós teszteken megfelelt, stabil és jó munkatörténettel rendelkező gép.</p>
+          <ul class="checks small"><li>közepes és hosszabb munkák</li><li>magasabb értékhatár</li><li>jobb rangsorolás</li><li>nyilvános részeredmények</li></ul>
+        </div>
+        <div class="card violet">
+          <span class="tag violet">Datacenter Verified</span>
+          <h3 style="margin-top:4mm;">Adatközpont igazolt</h3>
+          <p class="small muted">Hosting ASN, stabil IP, hosszú próbaüzem és magas rendelkezésre állás.</p>
+          <ul class="checks small"><li>nagy értékű munkák</li><li>interaktív feladatok</li><li>szigorúbb SLA</li><li>prioritásos párosítás</li></ul>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:7mm;">
+        <div class="card dark">
+          <h3>Datacenter Verified feltételek</h3>
+          <ul class="checks small" style="color:#c5d6e2;"><li>hosting szolgáltatóhoz tartozó ASN;</li><li>stabil, közvetlenül mért hálózati útvonal;</li><li>legalább 72 órás próbaüzem;</li><li>később ≥ 99,5% gördülő rendelkezésre állás;</li><li>prémium hálózati küszöbök.</li></ul>
+        </div>
+        <div>
+          <div class="callout success"><strong>Decentralizációs előny:</strong> az otthoni GPU-k földrajzilag és szolgáltatónként szétszórják a kapacitást.</div>
+          <div class="callout warning" style="margin-top:4mm;"><strong>Kockázat:</strong> VPN vagy proxy miatt a fizikai hely nem bizonyítható teljesen; a rendszer ezért a ténylegesen mért szolgáltatást tekintse elsődlegesnek.</div>
+        </div>
+      </div>
+
+      <div class="section-rule"></div>
+      <h3>Feladatosztályok automatikus párosítással</h3>
+      <table>
+        <thead><tr><th>Osztály</th><th>Mire való?</th><th>Legfontosabb követelmény</th></tr></thead>
+        <tbody>
+          <tr><td>Standard Batch</td><td>Render, AI batch, kódolás, hosszabb számítás</td><td>tartós teljesítmény és megbízhatóság</td></tr>
+          <tr><td>Interactive</td><td>gyors válaszú fejlesztési vagy vizualizációs munka</td><td>alacsony ping, jitter és csomagvesztés</td></tr>
+          <tr><td>High Performance</td><td>nagy modell, nagy adat, időérzékeny GPU-feladat</td><td>gyors GPU, NVMe, nagy sávszélesség</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="footer-note">Az IP-cím szükséges lehet a méréshez, de nem kell nyilvánosan megjeleníteni.</div><div class="page-no">09</div>
+  </section>
+
+  <!-- 10: ANTI-CHEAT -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Csalás- és hibavédelem</span><span>Bizalom helyett bizonyíték</span></div>
+    <div class="pad">
+      <div class="eyebrow">A mérés kijátszásának nehezítése</div>
+      <h2>Honnan tudjuk, hogy valóban az ígért gép dolgozik?</h2>
+      <p class="lead">A szolgáltató által küldött adat önmagában nem bizonyíték. A kihívást az oracle adja, a mérést mindkét oldal rögzíti, az eredményt pedig több független szereplő ellenőrzi.</p>
+
+      <div class="grid-2" style="margin-top:7mm;">
+        <div class="card tint"><div class="icon">#</div><h3>Véletlen, aláírt kihívás</h3><p class="small">Egyszer használható nonce, változó bemenet és szűk időablak akadályozza az előre elkészített válaszokat.</p></div>
+        <div class="card mint"><div class="icon mint">⇄</div><h3>Kétoldali hálózati mérés</h3><p class="small">Nem az agent állítása számít: az oracle saját oldalán is méri az átvitelt, késleltetést és megszakítást.</p></div>
+        <div class="card violet"><div class="icon violet">3×</div><h3>Több független oracle</h3><p class="small">Eltérő régióból, szolgáltatótól és lehetőleg ASN-ből érkező mérések csökkentik az összejátszás esélyét.</p></div>
+        <div class="card amber"><div class="icon amber">↻</div><h3>Véletlen újratesztelés</h3><p class="small">A minősítés lejár; valódi munkák közben és között is érkezhet rövid próba.</p></div>
+      </div>
+
+      <div class="grid-2" style="margin-top:7mm;">
+        <div>
+          <h3>Automatikus riasztási jelek</h3>
+          <ul class="clean small">
+            <li>a teljesítmény hirtelen eltér a referenciaértéktől;</li>
+            <li>azonos hardverazonosító több helyen egyszerre;</li>
+            <li>túl sok kapacitás kerül párhuzamosan értékesítésre;</li>
+            <li>eredményhash vagy időbélyeg ellentmondása;</li>
+            <li>oracle-ok eltérő evidencia-rootot látnak;</li>
+            <li>gyakori megszakadás vagy feladatátadás.</li>
+          </ul>
+        </div>
+        <div class="card dark">
+          <h3>Fokozatos következmények</h3>
+          <div class="number-list small">
+            <div class="number-item"><div><b>Figyelmeztetés</b><br><span style="color:#aec1cf;">pontszámcsökkenés, újramérés</span></div></div>
+            <div class="number-item"><div><b>Korlátozás</b><br><span style="color:#aec1cf;">kisebb értékű munkák</span></div></div>
+            <div class="number-item"><div><b>Felfüggesztés</b><br><span style="color:#aec1cf;">nem kap új munkát</span></div></div>
+            <div class="number-item"><div><b>Bizonyított csalás</b><br><span style="color:#aec1cf;">protokoll szerinti szankció</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top:7mm;">
+        <strong>A távoli mérés korlátja:</strong> hagyományos szoftverrel nem bizonyítható tökéletesen a gép fizikai helye vagy tulajdonosa. A TEE/hardveres attestáció később erősíthet ezen, de önmagában az sem bizonyít adatközponti elhelyezést.
+      </div>
+    </div>
+    <div class="footer-note">A csalás elleni rendszernek átlátható fellebbezési és újramérési folyamatot is kell adnia.</div><div class="page-no">10</div>
+  </section>
+
+  <!-- 11: INFRA -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Infrastruktúra</span><span>Ajánlott szerepkörök</span></div>
+    <div class="pad">
+      <div class="eyebrow">Hol mi fusson?</div>
+      <h2>Különítsük el a hálózati bizalmat és a számítási kockázatot</h2>
+      <p class="lead">A nagy fedezetű oracle/Core node stabil Linux szerveren fusson. A Windows, macOS vagy Linux számítási gépek távoli worker-ként kapcsolódjanak hozzá.</p>
+
+      <div class="grid-2" style="margin-top:7mm;">
+        <div class="card dark">
+          <span class="tag green">4M Oracle / Core</span>
+          <h3 style="margin-top:4mm;font-size:15pt;">Stabil dedikált Linux szerver</h3>
+          <ul class="checks small" style="color:#c5d6e2;"><li>8–16 modern CPU-mag;</li><li>64–128 GB ECC RAM;</li><li>2× NVMe, lehetőleg tükrözve;</li><li>1–4 TB használható tárhely;</li><li>garantált 1 Gbps kapcsolat;</li><li>monitoring, mentés, több régió.</li></ul>
+          <p class="tiny" style="color:#8fa8ba;margin:4mm 0 0;">GPU általában nem szükséges az oracle, relay, indexer és bizonyítéktár feladataihoz.</p>
+        </div>
+        <div class="card">
+          <span class="tag violet">Compute Worker</span>
+          <h3 style="margin-top:4mm;font-size:15pt;">Windows · macOS · Linux</h3>
+          <ul class="checks small"><li>GPU/CPU kapacitás értékesítése;</li><li>kifelé induló, hitelesített kapcsolat;</li><li>elkülönített munkatér;</li><li>erőforráskorlátok;</li><li>Docker, később microVM;</li><li>Core-kulcsok nélkül.</li></ul>
+          <p class="tiny muted" style="margin:4mm 0 0;">A Linux/Docker út a legegyszerűbb kezdeti cél; a Windows GPU és macOS Metal támogatás külön fejlesztési feladat.</p>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:7mm;">
+        <strong>A legfontosabb izoláció:</strong> önkényes idegen kódot ne futtassunk ugyanazon a hoston, ahol a 4M fedezethez tartozó Core folyamat és érzékeny kulcsok vannak. A worker külön gép vagy legalább erősen izolált környezet legyen.
+      </div>
+
+      <div class="section-rule"></div>
+      <h3>Hálózati élmény feladattípusonként</h3>
+      <div class="grid-3">
+        <div class="card"><div class="metric">&lt;100 ms</div><div class="metric-label">batch feladat</div><p class="small muted" style="margin-top:3mm;">A nagy adatátvitel fontosabb, a válaszidő kevésbé érzékeny.</p></div>
+        <div class="card"><div class="metric">&lt;40 ms</div><div class="metric-label">interaktív munka</div><p class="small muted" style="margin-top:3mm;">Alacsony jitter és csomagvesztés is szükséges.</p></div>
+        <div class="card"><div class="metric">1/1 Gbps</div><div class="metric-label">kiváló kapcsolat</div><p class="small muted" style="margin-top:3mm;">Szimmetrikus optika előny, de nem minden munkához kötelező.</p></div>
+      </div>
+    </div>
+    <div class="footer-note">CGNAT vagy dinamikus IP elfogadható lehet outbound relay mellett, alacsonyabb szolgáltatási osztályban.</div><div class="page-no">11</div>
+  </section>
+
+  <!-- 12: RELIABILITY -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Hibatűrés</span><span>Több oracle, nem egy központ</span></div>
+    <div class="pad">
+      <div class="eyebrow">Decentralizált oracle-szolgáltatás</div>
+      <h2>Minél több oracle van, annál jobb — bizonyos feltételekkel</h2>
+      <p class="lead">A több példány növeli a rendelkezésre állást és megőrzi a bizonyítékokat, de csak akkor, ha nincs mind ugyanannál a szolgáltatónál, és ugyanazt az eseménysorrendet tudják ellenőrizni.</p>
+
+      <div class="svg-wrap" style="margin-top:6mm;">
+        <svg viewBox="0 0 720 320" width="100%" height="88mm" role="img" aria-label="Több oracle replika">
+          <defs><marker id="arr3" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><polygon points="0 0, 8 3.5, 0 7" fill="#7692a5"/></marker><linearGradient id="og" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#18caff"/><stop offset="1" stop-color="#3d72ff"/></linearGradient></defs>
+          <rect x="25" y="30" width="158" height="92" rx="18" fill="#0d2133"/><text x="104" y="63" text-anchor="middle" fill="#79e2ff" font-size="12" font-weight="800">WORKER</text><text x="104" y="91" text-anchor="middle" fill="white" font-size="16" font-weight="900">Bizonyíték</text><text x="104" y="109" text-anchor="middle" fill="#9bb2c2" font-size="10">content hash</text>
+          <g>
+            <rect x="282" y="18" width="162" height="62" rx="16" fill="#e7f7ff" stroke="#8fdaf5"/><circle cx="310" cy="49" r="16" fill="url(#og)"/><text x="310" y="54" text-anchor="middle" fill="white" font-weight="900">A</text><text x="344" y="45" fill="#17465f" font-size="12" font-weight="800">Oracle EU</text><text x="344" y="63" fill="#6c8797" font-size="10">szolgáltató 1</text>
+            <rect x="282" y="102" width="162" height="62" rx="16" fill="#e7f7ff" stroke="#8fdaf5"/><circle cx="310" cy="133" r="16" fill="url(#og)"/><text x="310" y="138" text-anchor="middle" fill="white" font-weight="900">B</text><text x="344" y="129" fill="#17465f" font-size="12" font-weight="800">Oracle US</text><text x="344" y="147" fill="#6c8797" font-size="10">szolgáltató 2</text>
+            <rect x="282" y="186" width="162" height="62" rx="16" fill="#e7f7ff" stroke="#8fdaf5"/><circle cx="310" cy="217" r="16" fill="url(#og)"/><text x="310" y="222" text-anchor="middle" fill="white" font-weight="900">C</text><text x="344" y="213" fill="#17465f" font-size="12" font-weight="800">Oracle AP</text><text x="344" y="231" fill="#6c8797" font-size="10">szolgáltató 3</text>
+          </g>
+          <g stroke="#7692a5" stroke-width="2" marker-end="url(#arr3)"><line x1="183" y1="75" x2="275" y2="49"/><line x1="183" y1="76" x2="275" y2="133"/><line x1="183" y1="77" x2="275" y2="217"/></g>
+          <rect x="513" y="84" width="180" height="112" rx="20" fill="#edf9f5" stroke="#a8e3d0"/><text x="603" y="116" text-anchor="middle" fill="#157c5b" font-size="12" font-weight="800">VALIDÁTOR</text><text x="603" y="140" text-anchor="middle" fill="#133d32" font-size="15" font-weight="900">3 forrás összevetése</text><text x="603" y="163" text-anchor="middle" fill="#5f8177" font-size="10">egyező proof/evidence root?</text><rect x="555" y="174" width="96" height="28" rx="14" fill="#27bd90"/><text x="603" y="193" text-anchor="middle" fill="white" font-size="11" font-weight="800">ELLENŐRZÖTT</text>
+          <g stroke="#7692a5" stroke-width="2" marker-end="url(#arr3)"><line x1="444" y1="49" x2="508" y2="112"/><line x1="444" y1="133" x2="508" y2="138"/><line x1="444" y1="217" x2="508" y2="167"/></g>
+          <rect x="210" y="274" width="300" height="33" rx="16" fill="#fff4e2" stroke="#efcf99"/><text x="360" y="295" text-anchor="middle" fill="#79511b" font-size="11" font-weight="800">ELTÉRŐ ROOT → konfliktus, nincs automatikus fizetés</text>
+        </svg>
+      </div>
+
+      <div class="grid-2" style="margin-top:6mm;">
+        <div class="card">
+          <h3>Replikált események</h3>
+          <p class="small muted">Minden állapotváltozás aláírt, tartalomazonosított esemény: jobHash, proofHash, evidenceRoot, outputHash, időbélyeg és aláíró.</p>
+        </div>
+        <div class="card">
+          <h3>Elhelyezési szabály</h3>
+          <p class="small muted">Egy munkához választott replikák lehetőleg külön országban, szolgáltatónál és ASN-ben fussanak.</p>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top:6mm;">
+        Egy közös SQLite adatbázis jó fejlesztői MVP, de nem decentralizált igazságforrás. Productionben eseményalapú replikáció kell; a helyi adatbázis csak gyorsítótár vagy lokális nézet legyen.
+      </div>
+    </div>
+    <div class="footer-note">Az oracle-ok rendelkezésre állást és bizonyítékot szolgáltatnak; a végső döntést nem ők hozzák.</div><div class="page-no">12</div>
+  </section>
+
+  <!-- 13: IMPLEMENTATION -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Megvalósítás</span><span>Devnettől az élesítésig</span></div>
+    <div class="pad">
+      <div class="eyebrow">Javasolt lépéssorrend</div>
+      <h2>Előbb a bizonyítható működés, utána a konszenzusváltozás</h2>
+      <p class="lead">A legkisebb kockázatú út az alkalmazásszintű 5/7 validáció működőképessé tétele a meglévő 1M node-okkal, majd a 4M Compute típus külön aktiválása.</p>
+
+      <div style="margin-top:7mm;">
+        <div class="phase"><div class="phase-dot">1</div><h3>Mock szavazatok cseréje valódi aláírásokra</h3><p class="small muted">Rögzített bizottság, aláírt és append-only voksok, production mock fallback nélkül.</p></div>
+        <div class="phase"><div class="phase-dot">2</div><h3>1M validator sidecar devnetes próba</h3><p class="small muted">Legalább hét valós operátorral: offline tagok, késleltetés, hibás és ellentmondó szavazat tesztje.</p></div>
+        <div class="phase"><div class="phase-dot">3</div><h3>Több oracle és evidencia-replikáció</h3><p class="small muted">Több régió, aláírt eseményfolyam, eltérő root felismerése és reconciliation.</p></div>
+        <div class="phase"><div class="phase-dot">4</div><h3>Minőségi kapu és szolgáltatói osztályok</h3><p class="small muted">Aktív benchmark, próbafeladat, pontszám, újramérés, korlátozás és felfüggesztés.</p></div>
+        <div class="phase"><div class="phase-dot">5</div><h3>Elszámolási gateway</h3><p class="small muted">Öt egyedi, ellenőrizhető validátoraláírást fogad el; bármely oracle beküldheti.</p></div>
+        <div class="phase"><div class="phase-dot">6</div><h3>Új 4M Compute masternode-típus</h3><p class="small muted">Önálló típus, devnet activation height, külön jogosultságok és kötelezettségek.</p></div>
+        <div class="phase"><div class="phase-dot">7</div><h3>Terhelési és támadási tesztek</h3><p class="small muted">Oracle-kiesés, 2/7 és 3/7 hibás validátor, hálózati partíció, kettős eredmény, túlértékesítés.</p></div>
+        <div class="phase"><div class="phase-dot">8</div><h3>Mainnet csak mérhető sikerkritériumok után</h3><p class="small muted">Dokumentált upgrade ablak, régi kliensek kizárása, monitoring és vészleállítási szabályok.</p></div>
+      </div>
+
+      <div class="callout" style="margin-top:5mm;">
+        <strong>Miért nem rögtön natív új LLMQ?</strong> A Regular-only tagszűrés és a más láncon ellenőrizhető aláírás további Core-konszenzusmunkát igényel. Az alkalmazásszintű EIP-712/secp256k1 5/7 modell gyorsabban tesztelhető; natív LLMQ későbbi fejlesztési irány lehet.
+      </div>
+    </div>
+    <div class="footer-note">Minden fázis külön kikapcsolható feature flaggel és reprodukálható devnetes forgatókönyvvel készüljön.</div><div class="page-no">13</div>
+  </section>
+
+  <!-- 14: SUCCESS METRICS -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Üzemeltetés</span><span>Mitől mondjuk, hogy működik?</span></div>
+    <div class="pad">
+      <div class="eyebrow">Mérhető sikerkritériumok</div>
+      <h2>A hálózat egészségét is folyamatosan mérni kell</h2>
+      <p class="lead">Nem elég, hogy egy demó egyszer lefut. A rendszer akkor érett, ha terhelés, kiesés és rosszindulatú viselkedés mellett is kiszámítható.</p>
+
+      <div class="grid-3" style="margin-top:7mm;">
+        <div class="card"><div class="metric">p95</div><div class="metric-label">feladat-hozzárendelési idő</div><p class="small muted" style="margin-top:3mm;">Mennyi idő alatt kap megfelelő gépet a vevő?</p></div>
+        <div class="card"><div class="metric">≥99%</div><div class="metric-label">sikeres elszámolás</div><p class="small muted" style="margin-top:3mm;">Nem vitatott, szabályosan lezárt munkák aránya.</p></div>
+        <div class="card"><div class="metric">5/7</div><div class="metric-label">validátor rendelkezésre állás</div><p class="small muted" style="margin-top:3mm;">Mennyi idő alatt áll össze az elfogadási küszöb?</p></div>
+        <div class="card"><div class="metric">3+</div><div class="metric-label">független oracle-régió</div><p class="small muted" style="margin-top:3mm;">A bizonyíték túléli-e egy szolgáltató kiesését?</p></div>
+        <div class="card"><div class="metric">&lt;1%</div><div class="metric-label">hamis pozitív mérés</div><p class="small muted" style="margin-top:3mm;">Jó gépet tévesen ne tiltsunk ki.</p></div>
+        <div class="card"><div class="metric">0</div><div class="metric-label">kulcsszivárgási út</div><p class="small muted" style="margin-top:3mm;">Workerből ne legyen elérhető masternode/wallet kulcs.</p></div>
+      </div>
+
+      <div class="section-rule"></div>
+      <div class="grid-2">
+        <div>
+          <h3>Technikai telemetria</h3>
+          <ul class="clean small"><li>API/RPC hívások száma, p50/p95 és hibaarány;</li><li>oracle eseményeltérés és replikációs késés;</li><li>validátorszavazat késése és kiesési aránya;</li><li>munkánként CPU/GPU/VRAM/SSD kihasználtság;</li><li>hálózati ping, jitter, loss és átviteli görbe;</li><li>event-loop lag, memória és adatbázis p95.</li></ul>
+        </div>
+        <div>
+          <h3>Piaci és minőségi mutatók</h3>
+          <ul class="clean small"><li>aktív és sikeresen minősített gépek száma;</li><li>Community / Verified / Datacenter arány;</li><li>megszakadt, újraütemezett és vitatott munkák;</li><li>tényleges teljesítmény az ígérthez képest;</li><li>szolgáltatói koncentráció régió és ASN szerint;</li><li>vevői költség és szolgáltatói kihasználtság.</li></ul>
+        </div>
+      </div>
+
+      <div class="callout success" style="margin-top:7mm;">
+        A publikus explorerben ne csak „online/offline” látszódjon. Jelenjen meg a minőségi osztály, utolsó mérés, rolling uptime, teljesített munkák, hálózati kategória és a bizonyítvány lejárata — érzékeny nyers IP vagy hardverazonosító nélkül.
+      </div>
+
+      <div class="callout warning" style="margin-top:5mm;">
+        A pontszám algoritmusa legyen dokumentált és verziózott. A szolgáltató lássa, melyik mérés rontotta a besorolását, és kérhessen újramérést.
+      </div>
+    </div>
+    <div class="footer-note">A jó monitoring egyszerre segíti a hibakeresést, a piactéri bizalmat és a protokoll fejlesztését.</div><div class="page-no">14</div>
+  </section>
+
+  <!-- 15: DECISIONS -->
+  <section class="page">
+    <div class="topbar"><span><b>DeFCompute</b> / Döntési pontok</span><span>Amit specifikálni kell</span></div>
+    <div class="pad">
+      <div class="eyebrow">Nyitott kérdések</div>
+      <h2>Mit kell eldönteni a fejlesztés előtt?</h2>
+      <p class="lead">A fő architektúra összeállt, de néhány gazdasági és protokollszabályt még a kódolás előtt pontos, tesztelhető mondatokba kell foglalni.</p>
+
+      <div class="grid-2" style="margin-top:7mm;">
+        <div class="card"><span class="tag">Tagság</span><h3 style="margin-top:3mm;">Ki lehet validátor?</h3><p class="small muted">Minden 1M node kötelező sidecarral, vagy csak külön regisztrált, szolgáltatást hirdető operátorok?</p></div>
+        <div class="card"><span class="tag green">Jutalom</span><h3 style="margin-top:3mm;">Ki miből részesedik?</h3><p class="small muted">Oracle-díj, validátordíj, worker díja, DAO-rész és sikertelen feladat költsége.</p></div>
+        <div class="card"><span class="tag violet">Adat</span><h3 style="margin-top:3mm;">Meddig őrizzük az evidenciát?</h3><p class="small muted">Méretkorlát, replikaszám, titkosítás, törlés és vita esetén hosszabb megőrzés.</p></div>
+        <div class="card"><span class="tag gold">Szankció</span><h3 style="margin-top:3mm;">Mi jár hibáért és csalásért?</h3><p class="small muted">Külön kell választani a véletlen kiesést, a rossz teljesítményt és a bizonyítható manipulációt.</p></div>
+        <div class="card"><span class="tag">Bizottság</span><h3 style="margin-top:3mm;">Hogyan választunk 7 tagot?</h3><p class="small muted">Determinista, munkához és ChainLockhoz kötött kiválasztás, újrajátszás elleni védelemmel.</p></div>
+        <div class="card"><span class="tag green">Vita</span><h3 style="margin-top:3mm;">Mi történik 4/3 eredménynél?</h3><p class="small muted">Új validátorkör, újrafuttatás, kézi DAO-felülvizsgálat vagy automatikus visszatérítés?</p></div>
+      </div>
+
+      <div class="section-rule"></div>
+      <h3>Ajánlott alapállás az első devnethez</h3>
+      <table>
+        <thead><tr><th>Téma</th><th>Induló döntés</th><th>Miért?</th></tr></thead>
+        <tbody>
+          <tr><td>Validátor</td><td>külön regisztrált 1M sidecar operátorok</td><td>a nem telepített sidecar ne okozzon állandó 5/7 liveness hibát</td></tr>
+          <tr><td>Bizottság</td><td>7 fix tag / job, 5 aláírás</td><td>egyszerűen auditálható és reprodukálható</td></tr>
+          <tr><td>Oracle-replika</td><td>minimum 3, célérték 5</td><td>egy-két kiesés és szolgáltatói hiba túlélhető</td></tr>
+          <tr><td>Új szolgáltató</td><td>72 órás próba + alacsony munkalimit</td><td>reputáció nélkül korlátozza a kockázatot</td></tr>
+          <tr><td>Fizetés</td><td>csak érvényes 5/7 csomagra</td><td>az oracle egyedül ne tudjon pénzt felszabadítani</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout" style="margin-top:6mm;">
+        A DAO feladata lehet a szabályverziók, díjak és vészleállítási paraméterek jóváhagyása — <strong>nem szükséges, hogy a DAO központi oracle-szervereket vagy signer kulcsokat üzemeltessen.</strong>
+      </div>
+    </div>
+    <div class="footer-note">A nyitott döntésekből rövid, verziózott protokollspecifikáció készüljön a fejlesztési issue-k előtt.</div><div class="page-no">15</div>
+  </section>
+
+  <!-- 16: CLOSING -->
+  <section class="page cover">
+    <div class="cover-orbit" style="right:auto;left:-45mm;top:90mm;"></div>
+    <div class="cover-content">
+      <div class="brand"><img src="assets/defcon-logo.png" alt="DeFCon" /><div class="brand-title">DeF<span>Compute</span></div></div>
+      <div style="position:relative;z-index:2;margin-top:38mm;max-width:156mm;">
+        <div class="cover-chip">Összegzés</div>
+        <h1 style="font-size:34pt;">A bizalom helyét átveszi a mérés, a bizonyíték és az elosztott döntés.</h1>
+        <p class="subtitle" style="width:145mm;">A 4M node-ok szolgáltatják az oracle- és bizonyítékréteget. Az 1M masternode-ok 5/7 bizottsága ellenőriz. A worker csak sikeres minősítés után értékesíthet. A vevő pedig csak elfogadott munka után fizet.</p>
+      </div>
+      <div class="grid-4" style="position:relative;z-index:2;margin-top:14mm;">
+        <div style="padding:4mm;border-top:1px solid rgba(88,209,255,.42);"><div style="font-size:20pt;font-weight:850;color:#65dcff;">4M</div><div class="tiny" style="color:#9db5c7;">szolgáltatási felelősség</div></div>
+        <div style="padding:4mm;border-top:1px solid rgba(88,209,255,.42);"><div style="font-size:20pt;font-weight:850;color:#75e9c4;">5/7</div><div class="tiny" style="color:#9db5c7;">független elfogadás</div></div>
+        <div style="padding:4mm;border-top:1px solid rgba(88,209,255,.42);"><div style="font-size:20pt;font-weight:850;color:#ad91ff;">3–5</div><div class="tiny" style="color:#9db5c7;">oracle-replika</div></div>
+        <div style="padding:4mm;border-top:1px solid rgba(88,209,255,.42);"><div style="font-size:20pt;font-weight:850;color:#ffc66e;">100%</div><div class="tiny" style="color:#9db5c7;">mérés előtti listázási kapu</div></div>
+      </div>
+      <div class="cover-footer"><div><b style="color:#d7e7f1;">Következő konkrét lépés</b><br>devnet MVP specifikáció: szerepek, aláírt események, bizottságválasztás és minősítési protokoll.</div><div class="cover-bars"><i></i><i></i><i></i><i></i></div></div>
+    </div>
+  </section>
+
+  <script>
+    // Browser preview helper: index.html?page=7 displays only page 7.
+    const previewPage = Number(new URLSearchParams(location.search).get('page'));
+    if (previewPage > 0) {
+      const pages = document.querySelectorAll('.page');
+      if (pages[previewPage - 1]) {
+        document.body.classList.add('single-page');
+        pages[previewPage - 1].classList.add('preview-page');
+      }
+    }
+  </script>
+</body>
+</html>
