@@ -19,18 +19,20 @@ report the same version — so entries record md5sums.
 
 Every daemon on the devnet — 8 fullnode hosts with 11 services each, plus both
 seed daemons — runs a binary built from defcon-project/defcon commit
-`ed33138d789176eade3a096207b5a20a3faaa6b6` (v22.1.5), with
+`4134f7ee220a96dadf59a3b771a9b512fb9385cb` (v22.1.5), with
 `dslactivationheight=6240` configured everywhere before the restart.
 
 | artefact | md5 |
 |---|---|
-| fleet / devnet2 (`--without-bdb`) | `e469b2061b05f4128ac846e74ae577eb` |
-| seed BDB | `7511171d19110c2150f8720fb952eb00` |
+| fleet / devnet2 (`--without-bdb`) | `c51785ebb84e93b6dbf0092d2061e214` |
+| seed BDB | `72b753408692e72e4ac1b6c4991de9a9` |
 
-(The build the shadow runs on is the third of the rollout: the second —
-`16e1bab8…`/`f68618a2…` at `eaecf7e473` — performed the database migration,
-and the third added only the RPC payload surface of
-[#143](https://github.com/defcon-project/defcon/pull/143) below.)
+(This is the fifth build of the rollout. The earlier ones, in order:
+`16e1bab8…`/`f68618a2…` at `eaecf7e473` performed the database migration;
+`e469b206…`/`7511171d…` at `ed33138d78` added the RPC payload
+([#143](https://github.com/defcon-project/defcon/pull/143)); a fix for the
+`defcon-tx` link ([#144](https://github.com/defcon-project/defcon/pull/144))
+followed; and this one carries the two external reviews' fixes below.)
 
 ### What the binary carries beyond phase 5
 
@@ -75,6 +77,13 @@ are pull requests on
 - [#143](https://github.com/defcon-project/defcon/pull/143) — rpc: the
   commitment payload in transaction JSON, with its missed bits named by
   canonical index — the surface this explorer's DSL view indexes
+- [#144](https://github.com/defcon-project/defcon/pull/144) — evo: inline the
+  commitment ToJson so the full release (`defcon-tx`) links
+- [#145](https://github.com/defcon-project/defcon/pull/145) — evo: robust to
+  startup, restart, reorg and bad input (first-review follow-ups)
+- [#146](https://github.com/defcon-project/defcon/pull/146) — evo: bind the
+  probe's signatures to the epoch base, validate ingest against the epoch-base
+  list, and close two dormant enforcement gaps (second-review follow-ups)
 
 ### The activation
 
