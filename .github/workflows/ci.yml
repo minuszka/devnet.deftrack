@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Lockfile-exact install across the shared/server/client workspaces.
+      - name: Install
+        run: npm ci
+
+      # Typecheck comes first: it is the fastest signal and the one that would
+      # have caught a broken shared type before the two dependent workspaces.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # The build is the release artefact, and the reason the deploy script
+      # exists at all -- a green typecheck that does not actually bundle is not
+      # a green deploy.
+      - name: Build
+        run: npm run build
