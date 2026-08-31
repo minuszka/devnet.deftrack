@@ -261,6 +261,8 @@ export class DdShell extends LitElement {
         return html`<dd-page-operators></dd-page-operators>`;
       case 'dd-page-chainlocks':
         return html`<dd-page-chainlocks></dd-page-chainlocks>`;
+      case 'dd-page-dsl':
+        return html`<dd-page-dsl></dd-page-dsl>`;
       case 'dd-page-staking':
         return html`<dd-page-staking></dd-page-staking>`;
       case 'dd-page-fairness':
