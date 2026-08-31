@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { rpc } from './rpc.service.js';
 import { maxPossibleBan, trackedProfiles, type LlmqProfile } from '../config/llmq.js';
 import { QuorumRound, type RoundMember, type RoundStatus } from '../models/QuorumRound.js';
+import { Block } from '../models/Block.js';
 import {
   absenceIsEvidence,
   classifyRound,
@@ -325,6 +326,18 @@ export class QuorumRoundService {
         ? Math.max(0, observedSize - entry.numValidMembers)
         : 0;
 
+    // Reorg handling cuts rounds by minedHeight > forkPoint, but the RPC names
+    // the mined block only by hash -- left null, a round whose schedule sat
+    // before the fork but whose commitment was mined in an abandoned block
+    // never reset. Resolve against the indexed chain; a block not indexed yet
+    // stays null and the next poll fills it, which is why this lives in $set
+    // rather than $setOnInsert.
+    let minedHeight: number | null = null;
+    if (entry?.minedBlockHash) {
+      const minedBlock = await Block.findOne({ hash: entry.minedBlockHash }).select('height').lean();
+      minedHeight = minedBlock?.height ?? null;
+    }
+
     await QuorumRound.updateOne(
       { roundKey },
       {
@@ -343,7 +356,7 @@ export class QuorumRoundService {
         $set: {
           quorumHash: entry?.quorumHash ?? null,
           minedBlockHash: entry?.minedBlockHash ?? null,
-          minedHeight: null,
+          minedHeight,
           effectiveSize: observedSize,
           numValidMembers: entry ? entry.numValidMembers : null,
           healthRatio: entry ? Number.parseFloat(entry.healthRatio) : null,

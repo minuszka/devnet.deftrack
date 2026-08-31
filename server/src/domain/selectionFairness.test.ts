@@ -75,4 +75,55 @@ describe('selection fairness', () => {
     expect(f.expectedSelectionRate).toBeNull();
     expect(f.nodes).toEqual([]);
   });
+
+  const roundAt = (
+    expectedHeight: number,
+    members: Array<[string, boolean]>,
+    effectiveSize: number | null = null
+  ): RoundMembership => ({ ...round(members, effectiveSize), expectedHeight });
+
+  const knownAt = (rows: Array<[string, number | null]>) =>
+    new Map(rows.map(([h, registeredHeight]) => [h, { host: null, operatorLabel: null, registeredHeight }]));
+
+  it('holds a node only to the rounds it was registered for', () => {
+    // A fleet scale-up must not manufacture starvation: a node registered at
+    // height 100 simply did not exist for the round scheduled at 50.
+    const rounds = [roundAt(50, [['a', true]]), roundAt(150, [['a', true], ['b', true]])];
+    const f = selectionFairness(rounds, knownAt([['a', 0], ['b', 100]]));
+    const b = f.nodes.find((n) => n.proTxHash === 'b')!;
+    expect(b.roundsEligible).toBe(1);
+    expect(b.selectionRate).toBe(1);
+    const a = f.nodes.find((n) => n.proTxHash === 'a')!;
+    expect(a.roundsEligible).toBe(2);
+  });
+
+  it('does not report a node registered after the window as passed over', () => {
+    const f = selectionFairness([roundAt(50, [['a', true]])], knownAt([['a', 0], ['late', 100]]));
+    expect(f.neverSelected).toEqual([]);
+  });
+
+  it('holds each round against the pool registered by its height', () => {
+    // Two drawn from a pool of 2, then two drawn from a pool of 4: the
+    // expectation is the mean of 1.0 and 0.5 -- today's list would dilute
+    // every round measured before the scale-up.
+    const f = selectionFairness(
+      [roundAt(50, [['a', true], ['b', true]], 2), roundAt(150, [['a', true], ['c', true]], 2)],
+      knownAt([['a', 0], ['b', 0], ['c', 100], ['d', 100]])
+    );
+    expect(f.expectedSelectionRate).toBeCloseTo(0.75, 6);
+  });
+
+  it('brackets the selection rate with a 95% interval', () => {
+    // 30 picks out of 50 rounds is evidence only relative to this interval;
+    // the point estimate alone cannot separate an anomaly from a small sample.
+    const rounds = Array.from({ length: 50 }, (_, i) => round([[i < 30 ? 'a' : 'z', true]]));
+    const f = selectionFairness(rounds, new Map(), 5);
+    const a = f.nodes.find((n) => n.proTxHash === 'a')!;
+    expect(a.selectionRate).toBeCloseTo(0.6, 6);
+    const [lo, hi] = a.selectionCi95!;
+    expect(lo).toBeGreaterThan(0.4);
+    expect(lo).toBeLessThan(0.6);
+    expect(hi).toBeGreaterThan(0.6);
+    expect(hi).toBeLessThan(0.8);
+  });
 });

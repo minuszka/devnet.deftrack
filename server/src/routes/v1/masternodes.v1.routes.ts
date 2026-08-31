@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { MasternodeState } from '../../models/MasternodeState.js';
 import { MasternodeEvent } from '../../models/MasternodeEvent.js';
 import { MasternodeSnapshot } from '../../models/MasternodeSnapshot.js';
+import { Block } from '../../models/Block.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
 
@@ -188,7 +189,7 @@ router.get(
     const q = parsedQuery<z.infer<typeof waveQuery>>(res);
     const since = new Date(Date.now() - q.hours * 3600_000);
 
-    const [bans, snapshots] = await Promise.all([
+    const [bansByDetection, snapshots] = await Promise.all([
       MasternodeEvent.find({ type: 'banned', detectedAt: { $gte: since } })
         .sort({ detectedAt: 1 })
         .select('detectedAt height hostIp operatorLabel')
@@ -198,6 +199,22 @@ router.get(
         .select('at maxPossibleBan')
         .lean(),
     ]);
+
+    // Chain time, not observation time: a backfilled hour of history lands in
+    // Mongo in seconds, and grouped by detection it would read as one giant
+    // wave happening now. Each ban is dated by its block's own timestamp; the
+    // detection time stays on the event for the observation story. Fetching by
+    // detectedAt is a superset (observation never precedes occurrence), and
+    // the chain-time filter below cuts it to the asked-for window.
+    const heights = [...new Set(bansByDetection.map((b) => b.height))];
+    const heightBlocks = await Block.find({ height: { $in: heights } })
+      .select('height time')
+      .lean();
+    const chainTime = new Map(heightBlocks.map((b) => [b.height, new Date(b.time * 1000)]));
+    const bans = bansByDetection
+      .map((b) => ({ ...b, occurredAt: chainTime.get(b.height) ?? b.detectedAt }))
+      .filter((b) => b.occurredAt.getTime() >= since.getTime())
+      .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
 
     const gapMs = q.gapMinutes * 60_000;
     type Wave = {
@@ -212,14 +229,14 @@ router.get(
 
     for (const ban of bans) {
       const last = waves.at(-1);
-      if (last && ban.detectedAt.getTime() - last.endedAt.getTime() <= gapMs) {
-        last.endedAt = ban.detectedAt;
+      if (last && ban.occurredAt.getTime() - last.endedAt.getTime() <= gapMs) {
+        last.endedAt = ban.occurredAt;
         last.size++;
         last.heights.push(ban.height);
       } else {
         waves.push({
-          startedAt: ban.detectedAt,
-          endedAt: ban.detectedAt,
+          startedAt: ban.occurredAt,
+          endedAt: ban.occurredAt,
           size: 1,
           heights: [ban.height],
           byHost: {},

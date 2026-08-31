@@ -45,14 +45,23 @@ router.get(
         .select('members effectiveSize expectedHeight')
         .lean(),
       // The pool the selection could draw from -- active masternodes, not just
-      // the ones that happened to be picked.
+      // the ones that happened to be picked. registeredHeight travels with each
+      // so the domain can hold every round against the pool that existed at
+      // that round's height, not against today's list.
       MasternodeState.find({ active: { $ne: false } })
-        .select('proTxHash hostIp operatorLabel')
+        .select('proTxHash hostIp operatorLabel registeredHeight')
         .lean(),
     ]);
 
     const known = new Map(
-      states.map((s) => [s.proTxHash, { host: s.hostIp ?? null, operatorLabel: s.operatorLabel ?? null }])
+      states.map((s) => [
+        s.proTxHash,
+        {
+          host: s.hostIp ?? null,
+          operatorLabel: s.operatorLabel ?? null,
+          registeredHeight: s.registeredHeight ?? null,
+        },
+      ])
     );
 
     const memberships: RoundMembership[] = rounds.map((r) => ({
@@ -62,6 +71,7 @@ router.get(
         operatorLabel: m.operatorLabel,
       })),
       effectiveSize: r.effectiveSize,
+      expectedHeight: r.expectedHeight ?? null,
     }));
 
     const result = selectionFairness(memberships, known);
