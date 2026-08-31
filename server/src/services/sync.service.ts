@@ -13,6 +13,7 @@ import { QuorumRound } from '../models/QuorumRound.js';
 import { QuorumCommitment } from '../models/QuorumCommitment.js';
 import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { closedEpochAt, epochKeyFor, isCommittable } from '../domain/dslSchedule.js';
+import { commitmentPunishedCount, selectedQuorumSize } from '../domain/commitmentPunishment.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
 import { quorumReorgReset } from '../domain/reorg.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
@@ -393,6 +394,10 @@ export class SyncService {
       const valid = c.validMembersCount ?? 0;
       const signers = c.signersCount ?? 0;
       const profile = Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType);
+      // How many members the DKG actually selected -- bounded by the commitment's
+      // own validMembers bitfield, never taken from the profile's nominal size.
+      // See domain/commitmentPunishment.ts for why both traps matter.
+      const selectedSize = selectedQuorumSize(profile?.size ?? null, c.validMembers);
 
       commitmentOps.push({
         updateOne: {
@@ -410,16 +415,7 @@ export class SyncService {
               minedBlockHash: block.hash,
               validMembersCount: valid,
               signersCount: signers,
-              // Punishment goes to every SELECTED member whose validMembers bit
-              // is false -- size minus validMembersCount -- never to non-signers.
-              // signersCount counts who signed the final commitment and is
-              // almost always <= validMembersCount, so the earlier
-              // signers-minus-valid formula reported zero through real
-              // punishment. A null commitment (zero valid members) is the
-              // failed-DKG marker and punishes nobody: Core's punishment loop
-              // is guarded on a non-null commitment. Without a known profile
-              // the selected size is unknown, and zero is the honest floor.
-              punishedCount: valid === 0 || !profile ? 0 : Math.max(0, profile.size - valid),
+              punishedCount: commitmentPunishedCount(valid, selectedSize),
               detectedAt: new Date(),
             },
           },

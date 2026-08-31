@@ -296,6 +296,13 @@ export interface RpcTransaction {
       quorumHash?: string;
       validMembersCount?: number;
       signersCount?: number;
+      /**
+       * One bit per SELECTED member, hex-encoded. Its byte length is the only
+       * thing in the commitment that bounds the quorum's real size, which is
+       * min(profile size, masternodes available) and can sit far below the
+       * profile's nominal size.
+       */
+      validMembers?: string;
     };
   };
   /** Present on a DSL service commitment (type 10). */
