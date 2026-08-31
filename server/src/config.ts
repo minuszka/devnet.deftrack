@@ -110,8 +110,12 @@ export const config = {
     // chain. dslactivationheight is a devnet startup argument, so the chain
     // cannot be asked for it. 0 disables the collector entirely (a network
     // without the DSL build would otherwise accrue absent rows that mean
-    // nothing).
-    activationHeight: optionalNumber('DSL_ACTIVATION_HEIGHT', 6240),
+    // nothing). The default mirrors the devnet's current dslactivationheight;
+    // DSL_ACTIVATION_HEIGHT overrides it per deployment and is the source of
+    // truth. It was brought forward 6240 -> 5472 with defcon#149 (first
+    // commitment 5496); a stale default here would make the indexer skip the
+    // real early commitments, so it must track the on-chain value.
+    activationHeight: optionalNumber('DSL_ACTIVATION_HEIGHT', 5472),
     epochInterval: optionalNumber('DSL_EPOCH_INTERVAL', 24),
   },
 } as const;
