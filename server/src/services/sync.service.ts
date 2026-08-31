@@ -272,6 +272,12 @@ export class SyncService {
     // Epoch verdicts read off abandoned boundary blocks are verdicts about a
     // chain that no longer exists; the surviving chain's boundary re-indexes.
     await ServiceEpoch.deleteMany({ boundaryHeight: { $gt: cursor } });
+    // Same rule for quorum commitments: one mined in an abandoned block never
+    // happened on the surviving chain, and left in place it would keep
+    // counting punishment that was reorged away. minedHeight is the block it
+    // was mined in, so the same cut applies; the surviving chain's copy
+    // re-indexes under its own key.
+    await QuorumCommitment.deleteMany({ minedHeight: { $gt: cursor } });
 
     // The blocks are gone; anything derived from them must go with them, or the
     // quorum record keeps describing a chain that no longer exists.
@@ -386,6 +392,7 @@ export class SyncService {
       const commitmentKey = `${llmqType}:${quorumHeight}:${quorumHash ?? 'null'}`;
       const valid = c.validMembersCount ?? 0;
       const signers = c.signersCount ?? 0;
+      const profile = Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType);
 
       commitmentOps.push({
         updateOne: {
@@ -396,15 +403,23 @@ export class SyncService {
               llmqType,
               // The chain runs types this deployment has no profile for; the
               // number is still the truth, so a missing name is not a gap.
-              llmqName:
-                Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType)?.llmqName ?? null,
+              llmqName: profile?.llmqName ?? null,
               quorumHash,
               quorumHeight,
               minedHeight: block.height,
               minedBlockHash: block.hash,
               validMembersCount: valid,
               signersCount: signers,
-              punishedCount: Math.max(0, signers - valid),
+              // Punishment goes to every SELECTED member whose validMembers bit
+              // is false -- size minus validMembersCount -- never to non-signers.
+              // signersCount counts who signed the final commitment and is
+              // almost always <= validMembersCount, so the earlier
+              // signers-minus-valid formula reported zero through real
+              // punishment. A null commitment (zero valid members) is the
+              // failed-DKG marker and punishes nobody: Core's punishment loop
+              // is guarded on a non-null commitment. Without a known profile
+              // the selected size is unknown, and zero is the honest floor.
+              punishedCount: valid === 0 || !profile ? 0 : Math.max(0, profile.size - valid),
               detectedAt: new Date(),
             },
           },

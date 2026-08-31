@@ -36,7 +36,15 @@ export interface QuorumCommitmentDocument extends Document {
    */
   validMembersCount: number;
   signersCount: number;
-  /** signersCount - validMembersCount: how many this commitment punished. */
+  /**
+   * How many members this commitment punished: profile size minus
+   * validMembersCount for a formed commitment, zero for a null one -- Core
+   * punishes every selected member whose validMembers bit is false, and its
+   * punishment loop is guarded on a non-null commitment. (Not
+   * signersCount-based: signers measure who signed the final commitment, and
+   * signersCount <= validMembersCount made that formula report zero through
+   * real punishment.)
+   */
   punishedCount: number;
 
   detectedAt: Date;
