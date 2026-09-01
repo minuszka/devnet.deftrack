@@ -87,6 +87,20 @@ export class DdPageRounds extends LitElement {
         font-size: 11.5px;
         color: var(--ink-3);
       }
+      /* Sits against the punished count, because that is the number a reader
+         would otherwise take at face value. */
+      .warmup {
+        margin-left: 6px;
+        padding: 1px 5px;
+        border: 1px solid var(--warn);
+        border-radius: var(--radius);
+        color: var(--warn);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        cursor: help;
+      }
     `,
   ];
 
@@ -230,6 +244,27 @@ export class DdPageRounds extends LitElement {
     `;
   }
 
+  /**
+   * A round that punished only members who had just joined is measuring a mesh
+   * that has not formed yet, not the profile. Without this the table reports it
+   * as the profile's worst round on record.
+   */
+  private _warmup(r: QuorumRoundListItem) {
+    const c = r.membershipChurn;
+    if (!c.punishmentExplainedByJoiners) return nothing;
+    const size =
+      c.previousEffectiveSize !== null && c.previousEffectiveSize !== r.effectiveSize
+        ? `, ${num(c.previousEffectiveSize)} → ${num(r.effectiveSize)} members`
+        : '';
+    return html`<span
+      class="warmup"
+      title=${`All ${num(c.punishedJoiners)} punished members joined since round ${num(
+        c.previousExpectedHeight
+      )}${size}. A member in its first session has no DKG mesh yet, so peers that never reached it vote it bad. This health is not comparable with the rounds before it.`}
+      >mesh</span
+    >`;
+  }
+
   private _row(r: QuorumRoundListItem): TemplateResult {
     const who =
       r.failuresByOperator.length === 0
@@ -250,7 +285,7 @@ export class DdPageRounds extends LitElement {
           ${r.numValidMembers === null ? '—' : `${num(r.numValidMembers)}/${num(r.effectiveSize)}`}
         </td>
         <td class="r mono">${ratio(r.healthRatio)}</td>
-        <td class="r mono">${num(r.punishedCount)}</td>
+        <td class="r mono">${num(r.punishedCount)}${this._warmup(r)}</td>
         <td class="r mono">${num(r.maxPossibleBan)}</td>
         <td class="r mono">${r.consecutiveFailures > 0 ? num(r.consecutiveFailures) : '—'}</td>
         <td>${who}</td>
