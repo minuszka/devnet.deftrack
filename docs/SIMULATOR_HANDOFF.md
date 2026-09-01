@@ -1,81 +1,98 @@
 # Simulator fejlesztési handoff
 
-Aktuális nap/fázis: 2. nap kész – tiszta persistent run state machine domainréteg
+Aktuális nap/fázis: 3. nap kész – Mongo persistencia, CAS és append-only audit
 
 Aktuális branch: `feat/devnet-chaos-orchestrator`
 
-Előző napi commit: `da19182 docs: design devnet simulator control plane`
+Előző napi commit: `a10f0bb feat: add persistent simulation run state machine`
 
 ## Elkészült
 
-- A devnet explorer meglévő admin-, experiment-, operator- és observer-rétegének célzott auditja.
-- A külön `SimulationRun` és append-only `SimulationAction` vezérlési réteg megtervezése.
-- Az `ExperimentRun` megtartása stabil mérési/eredmény rétegként.
-- A public read-only, admin control, orchestrator worker és observer jogosultságok szétválasztása.
-- Konkrét TypeScript interface- és API-vázlat, state machine, lease/idempotencia és recovery szabályok.
-- Privát target-regiszter és public/private DTO-elválasztás terve.
-- Újrahasználati térkép a jelenlegi explorer és a Core-native Docker/netem/regtest szimulátor elemeihez.
-- Fenyegetési modell, mainnet hard-disable, TTL/watchdog és pilot előtti támadási tesztlista.
-- A roadmap 2. napi állapotgép-sorának összehangolása a végleges 1. napi tervvel.
-- Tiszta `SimulationRunState` állapotgép minden engedélyezett és tiltott átmenettel.
-- Persistálható revision, timestamp, teljes run deadline és fault lease; nincs process-local timer mint igazságforrás.
-- Restart/reconcile döntési réteg, amely lejárat vagy félbeszakadt abort után automatikusan recoverybe irányít.
-- Sikertelen recovery után a fault bizonytalanul aktív marad és újrapróbálható.
-- Determinisztikus, nyers idempotency adatot nem kiszivárogtató run/action azonosítók.
-- Egyetlen aktív live experiment tiszta lock/lease logikája, explicit renew és owner-ellenőrzött release.
-- A release revisiont növelő `released` tombstone-t hagy; így a Mongo CAS-rétegben nem alakulhat ki ABA-verseny a lock törlése és újralétrehozása miatt.
-- Azonnali event retry valódi no-op; a teljes event-ID egyediséget a 3. napi append-only auditmodell biztosítja.
+### 1–2. napi alap
+
+- Külön orchesztrációs és `ExperimentRun` mérési réteg.
+- Public read-only, admin control, worker és observer bizalmi határok.
+- Típusos scenario/action terv, threat model és mainnet hard-disable.
+- Tiszta `SimulationRunState` reducer, timeout/recovery és restart-reconcile.
+- Determinisztikus run/action azonosítók.
+- Egyetlen live run lock/lease logika revisiont megőrző tombstone release-zel.
+
+### 3. napi persistencia
+
+- `SimulationRun` projekció immutable metadata- és privát target snapshottal.
+- `SimulationAction` projekció determinisztikus ID-val, claim lease-zel és revisionnel.
+- Privát `SimulationTarget` registry; új target alapból disabled.
+- `SimulationLiveRunLock` singleton és valódi Mongo CAS adapter.
+- Append-only `SimulationAuditEvent` run/action stream, update/replace/delete middleware-tiltással.
+- Standalone MongoDB-kompatibilis event-first/CAS algoritmus, replica-set tranzakció nélkül.
+- Audit insert és projection update közti process-crash automatikus javítása.
+- Hiányzó run projekció teljes újraépítése az auditfolyamból.
+- Audit replay minden eseményt újrafuttat a domain reduceren/reconcile-on; nem bízik meg vakon a snapshotban.
+- Event ID/payload, create metadata/live/deadline és revision konkurencia-konfliktusok felismerése.
+- Persistált live lock service acquire/renew/release CAS retryjal és ABA-védelemmel.
+- Kötelező index-inicializáló kapu; a controller unique indexek nélkül nem fogadhat create/start kérést.
+- Retention- és indexdöntések dokumentálva; audit/run/action adatokon nincs TTL.
 
 ## Fő tervezési döntések
 
-- Az explorer nem tárol fleet SSH-kulcsot. A privát jump hoston futó worker kifelé pollolja a szűk worker API-t.
-- Nincs tetszőleges shell: kizárólag verziózott scenario registry és diszkriminált action union használható.
-- Minden fault kötelező TTL-t, node-local watchdogot és idempotens cleanupot kap.
-- Az observer read-only marad, és külön tokent használ.
-- Egy időben legfeljebb egy élő, node-módosító experiment futhat.
-- Mainnet nincs az engedélyezett hálózattípusban, és worker/wrapper oldalon is külön chain guard szükséges.
-- A publikus API nem ad ki host-, unit-, port-, provider- vagy nyers infrastruktúra-hibainformációt.
+- A jelenlegi standalone Mongo telepítési mód támogatott; a helyesség nem függ `withTransaction()`-től.
+- Az append-only audit az igazságforrás, a `SimulationRun` és később az action rekord gyors projekció.
+- Egy revisionre a unique `{ stream, subjectId, sequence }` index választ egyetlen nyertes eseményt.
+- A projekció csak `{ runKey, state.revision }` CAS feltétellel módosulhat.
+- Projekció-audit eltérésnél a rendszer fail closed; nem gyárt utólag kitalált auditot.
+- A target host/unit/port privát marad, és nincs még hozzá public vagy control route.
+- Nincs SSH, Docker, VPS-hozzáférés vagy valódi hibainjektálás.
 
-## Módosított fájlok
+## A 3. napon módosított fájlok
 
 - `docs/SIMULATOR_HANDOFF.md`
-- `server/src/domain/simulationIdentity.ts`
-- `server/src/domain/simulationIdentity.test.ts`
-- `server/src/domain/liveRunLock.ts`
-- `server/src/domain/liveRunLock.test.ts`
-- `server/src/domain/simulationRunState.ts`
-- `server/src/domain/simulationRunState.test.ts`
+- `docs/simulator/PERSISTENCE_HU.md`
+- `server/src/domain/simulationAudit.ts`
+- `server/src/domain/simulationAudit.test.ts`
+- `server/src/models/SimulationRun.ts`
+- `server/src/models/SimulationAction.ts`
+- `server/src/models/SimulationAuditEvent.ts`
+- `server/src/models/SimulationTarget.ts`
+- `server/src/models/SimulationLiveRunLock.ts`
+- `server/src/models/simulationModels.test.ts`
+- `server/src/services/simulationPersistence.service.ts`
+- `server/src/services/simulationPersistence.service.test.ts`
+- `server/src/services/simulationMongo.repository.ts`
+- `server/src/services/simulationLiveRunLock.service.ts`
+- `server/src/services/simulationLiveRunLock.service.test.ts`
 
 ## Futtatott ellenőrzések és eredményük
 
 - `git diff --check`: zöld.
 - `npm run typecheck`: zöld a shared, server és client workspace-ben.
-- `npm test`: zöld, 21 tesztfájl és 174 teszt sikeres.
-- Új célzott state/identity/lock tesztek: 3 tesztfájl, 41 teszt sikeres.
+- `npm test`: zöld, 25 tesztfájl és 200 teszt sikeres.
+- Új audit/model/persistence/lock tesztek: 4 tesztfájl és 26 teszt sikeres.
 - `npm run build`: zöld, a shared/server TypeScript build és a kliens Vite production build sikeres.
 
 ## Nyitott kérdések / későbbi döntések
 
-- A runtime bemeneti sémához a szerverben már használt Zodot kell alkalmazni; strict, unknown-field reject kötelező.
-- A böngészős admin session konkrét identity providerét a control UI előtt kell kiválasztani.
-- Az SSH executor csak átmeneti megoldás; a mTLS node-agent későbbi külön döntés lehet.
+- A day-4 scenario registry Zoddal váltja ki a jelenlegi belső `Mixed` parameter/payload tárolás előtti bizalmi feltételezést.
+- A worker action reducer és claim API későbbi nap; az action projekció és append-only eventtípusok már készen állnak.
+- Az append-only middleware alkalmazásszintű védelem; adatbázis-admin elleni védelemhez külön Mongo role és backup policy kell.
+- A böngészős admin session identity providerét a control UI előtt kell kiválasztani.
 - A target-regiszter tényleges fleet adatait nem szabad a publikus repóba commitolni.
 
-## Következő pontos feladat – 3. nap
+## Következő pontos feladat – 4. nap
 
-Kösd a tiszta domainréteget MongoDB persistenciához és append-only audithoz:
+Implementáld a zárt scenario registryt és a kizárólag tervet készítő DryRun executort:
 
-1. külön `SimulationRun`, `SimulationAction`, `SimulationAuditEvent`, `SimulationTarget` és `LiveRunLock` sémák;
-2. CAS update a `revision` mezővel;
-3. egyedi event/action/idempotency indexek;
-4. append-only audit service, általános update/delete nélkül;
-5. public/private mezők és retention/index döntések;
-6. persistence service tesztek versenyhelyzetre, duplikációra és restart-reconcile-ra.
+1. erős, `strict()` Zod sémák és unknown-field reject;
+2. első scenario-k: egy/N MN, teljes host, quorumtagok, staker, flapping, latency/jitter/loss, izoláció és clear/recover;
+3. biztonsági limitek target-számra, időtartamra, latencyre és packet lossra;
+4. determinisztikus célpontválasztás seeddel;
+5. allowlistelt `SimulationAction` terv és payload digest;
+6. hatásbecslés, blast radius és a Core-native szimulátor eredményeire mutató adapter;
+7. bizonyítani teszttel, hogy a DryRun semmilyen külső állapotot nem módosít.
 
-Ne készüljön még VPS executor, SSH-hívás, admin UI vagy valódi fault injection. A scenario registry és Zod request-sémák a 4. nap feladatai.
+Ne készüljön még VPS executor, SSH-hívás, admin UI vagy valódi fault injection.
 
 Külső állapot/VPS-művelet történt-e: nem
 
 Aktív fault vagy recovery timer: nincs
 
-Felhasználói jóváhagyás szükséges-e: a 3. napi helyi munkához nem; VPS pilot előtt igen
+Felhasználói jóváhagyás szükséges-e: a 4. napi helyi munkához nem; VPS pilot előtt igen

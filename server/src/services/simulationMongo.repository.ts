@@ -1,0 +1,233 @@
+import type { LiveRunLock } from '../domain/liveRunLock.js';
+import type { SimulationRunState } from '../domain/simulationRunState.js';
+import { SimulationAction } from '../models/SimulationAction.js';
+import { SimulationAuditEvent } from '../models/SimulationAuditEvent.js';
+import { SimulationLiveRunLock } from '../models/SimulationLiveRunLock.js';
+import { SimulationRun } from '../models/SimulationRun.js';
+import { SimulationTarget } from '../models/SimulationTarget.js';
+import type { SimulationRunAuditRecord } from '../domain/simulationAudit.js';
+import type {
+  AppendSimulationAuditResult,
+  SimulationPersistenceRepository,
+  SimulationRunProjection,
+} from './simulationPersistence.service.js';
+
+function projectionFromLean(value: unknown): SimulationRunProjection {
+  const doc = value as SimulationRunProjection;
+  return {
+    runKey: doc.runKey,
+    metadataFingerprint: doc.metadataFingerprint,
+    metadata: doc.metadata,
+    state: doc.state,
+  };
+}
+
+function auditFromLean(value: unknown): SimulationRunAuditRecord {
+  return value as SimulationRunAuditRecord;
+}
+
+function isDuplicateKey(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: number }).code === 11_000;
+}
+
+/** Must complete before any controller accepts a simulation create/start. */
+export async function initializeSimulationPersistenceIndexes(): Promise<void> {
+  await Promise.all([
+    SimulationRun.init(),
+    SimulationAction.init(),
+    SimulationAuditEvent.init(),
+    SimulationTarget.init(),
+    SimulationLiveRunLock.init(),
+  ]);
+}
+
+/** Mongo projection/audit adapter; all race decisions remain in the pure service. */
+export class MongoSimulationPersistenceRepository implements SimulationPersistenceRepository {
+  async findRun(runKey: string): Promise<SimulationRunProjection | null> {
+    const found = await SimulationRun.findOne({ runKey })
+      .select('runKey metadataFingerprint metadata state')
+      .lean();
+    return found === null ? null : projectionFromLean(found);
+  }
+
+  async insertRun(projection: SimulationRunProjection): Promise<'inserted' | 'existing'> {
+    const result = await SimulationRun.updateOne(
+      { runKey: projection.runKey },
+      {
+        $setOnInsert: {
+          runKey: projection.runKey,
+          metadataFingerprint: projection.metadataFingerprint,
+          metadata: projection.metadata,
+          state: projection.state,
+          preflight: [],
+          recovery: { required: false, targets: [], allClear: false },
+          dataQuality: null,
+        },
+      },
+      { upsert: true }
+    );
+    return result.upsertedCount === 1 ? 'inserted' : 'existing';
+  }
+
+  async compareAndSwapRun(
+    runKey: string,
+    expectedRevision: number,
+    nextState: SimulationRunState
+  ): Promise<boolean> {
+    const result = await SimulationRun.updateOne(
+      { runKey, 'state.revision': expectedRevision },
+      { $set: { state: nextState } }
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async findRunAuditByEventId(
+    runKey: string,
+    eventId: string
+  ): Promise<SimulationRunAuditRecord | null> {
+    const found = await SimulationAuditEvent.findOne({ stream: 'run', runKey, eventId }).lean();
+    return found === null ? null : auditFromLean(found);
+  }
+
+  async listRunAudit(runKey: string): Promise<SimulationRunAuditRecord[]> {
+    const events = await SimulationAuditEvent.find({ stream: 'run', runKey })
+      .sort({ sequence: 1 })
+      .lean();
+    return events.map(auditFromLean);
+  }
+
+  async appendRunAudit(event: SimulationRunAuditRecord): Promise<AppendSimulationAuditResult> {
+    try {
+      await SimulationAuditEvent.create(event);
+      return { disposition: 'inserted' };
+    } catch (error) {
+      if (!isDuplicateKey(error)) throw error;
+
+      const byEvent = await SimulationAuditEvent.findOne({
+        stream: 'run',
+        runKey: event.runKey,
+        eventId: event.eventId,
+      }).lean();
+      if (byEvent !== null) {
+        return { disposition: 'duplicate-event', existing: auditFromLean(byEvent) };
+      }
+
+      const bySequence = await SimulationAuditEvent.findOne({
+        stream: 'run',
+        subjectId: event.runKey,
+        sequence: event.sequence,
+      }).lean();
+      if (bySequence !== null) {
+        return { disposition: 'sequence-conflict', existing: auditFromLean(bySequence) };
+      }
+      // A duplicate on neither declared idempotency index indicates a schema
+      // or deployment mismatch and must not be guessed away.
+      throw error;
+    }
+  }
+}
+
+export interface SimulationLiveRunLockRepository {
+  find(): Promise<LiveRunLock | null>;
+  compareAndSwap(expectedRevision: number | null, next: LiveRunLock): Promise<boolean>;
+}
+
+function lockFromLean(value: unknown): LiveRunLock {
+  const lock = value as {
+    status: 'held' | 'released';
+    scope: 'devnet-live';
+    runKey: string | null;
+    ownerId: string | null;
+    acquiredAtMs: number | null;
+    leaseUntilMs: number | null;
+    releasedAtMs?: number | null;
+    revision: number;
+  };
+  if (lock.status === 'held') {
+    if (
+      lock.runKey === null ||
+      lock.ownerId === null ||
+      lock.acquiredAtMs === null ||
+      lock.leaseUntilMs === null
+    ) {
+      throw new Error('persisted held simulation lock is incomplete');
+    }
+    return {
+      scope: lock.scope,
+      status: 'held',
+      runKey: lock.runKey,
+      ownerId: lock.ownerId,
+      acquiredAtMs: lock.acquiredAtMs,
+      leaseUntilMs: lock.leaseUntilMs,
+      revision: lock.revision,
+    };
+  }
+  if (lock.releasedAtMs === null || lock.releasedAtMs === undefined) {
+    throw new Error('persisted released simulation lock has no release time');
+  }
+  return {
+    scope: lock.scope,
+    status: 'released',
+    runKey: null,
+    ownerId: null,
+    acquiredAtMs: null,
+    leaseUntilMs: null,
+    releasedAtMs: lock.releasedAtMs,
+    revision: lock.revision,
+  };
+}
+
+function lockFields(lock: LiveRunLock): Record<string, unknown> {
+  return lock.status === 'held'
+    ? {
+        scope: lock.scope,
+        status: lock.status,
+        runKey: lock.runKey,
+        ownerId: lock.ownerId,
+        acquiredAtMs: lock.acquiredAtMs,
+        leaseUntilMs: lock.leaseUntilMs,
+        releasedAtMs: null,
+        revision: lock.revision,
+      }
+    : {
+        scope: lock.scope,
+        status: lock.status,
+        runKey: null,
+        ownerId: null,
+        acquiredAtMs: null,
+        leaseUntilMs: null,
+        releasedAtMs: lock.releasedAtMs,
+        revision: lock.revision,
+      };
+}
+
+export class MongoSimulationLiveRunLockRepository
+  implements SimulationLiveRunLockRepository
+{
+  async find(): Promise<LiveRunLock | null> {
+    const found = await SimulationLiveRunLock.findOne({ scope: 'devnet-live' }).lean();
+    return found === null ? null : lockFromLean(found);
+  }
+
+  async compareAndSwap(expectedRevision: number | null, next: LiveRunLock): Promise<boolean> {
+    if (expectedRevision === null) {
+      try {
+        const result = await SimulationLiveRunLock.updateOne(
+          { scope: 'devnet-live' },
+          { $setOnInsert: lockFields(next) },
+          { upsert: true }
+        );
+        return result.upsertedCount === 1;
+      } catch (error) {
+        if (isDuplicateKey(error)) return false;
+        throw error;
+      }
+    }
+
+    const result = await SimulationLiveRunLock.updateOne(
+      { scope: 'devnet-live', revision: expectedRevision },
+      { $set: lockFields(next) }
+    );
+    return result.modifiedCount === 1;
+  }
+}
