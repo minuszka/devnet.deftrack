@@ -5,6 +5,8 @@ import { SimulationAuditEvent } from '../models/SimulationAuditEvent.js';
 import { SimulationLiveRunLock } from '../models/SimulationLiveRunLock.js';
 import { SimulationRun } from '../models/SimulationRun.js';
 import { SimulationTarget } from '../models/SimulationTarget.js';
+import { SimulationControlRequest } from '../models/SimulationControlRequest.js';
+import { SimulationRunArtifact } from '../models/SimulationRunArtifact.js';
 import type { SimulationRunAuditRecord } from '../domain/simulationAudit.js';
 import type {
   AppendSimulationAuditResult,
@@ -38,6 +40,8 @@ export async function initializeSimulationPersistenceIndexes(): Promise<void> {
     SimulationAuditEvent.init(),
     SimulationTarget.init(),
     SimulationLiveRunLock.init(),
+    SimulationControlRequest.init(),
+    SimulationRunArtifact.init(),
   ]);
 }
 

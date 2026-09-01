@@ -39,7 +39,7 @@ describe('simulation audit stream', () => {
   it('rebuilds a run projection from creation and transitions', () => {
     const initial = createSimulationRunState({
       runKey: 'sim-a',
-      live: false,
+      live: true,
       createdAtMs: 1,
       runExpiresAtMs: 1_000,
     });

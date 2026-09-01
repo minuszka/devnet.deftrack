@@ -155,6 +155,13 @@ Biztonság:
 
 Elfogadási kapu: a teljes dry-run életciklus CLI-ből végigfut.
 
+Megvalósítva a 6. napi ágon: külön privát Control API, kötelező idempotency,
+append-only control/artifact rekordok, szerveroldali risk-role kapu, read-only
+Mongo/RPC evidence assembler, explicit publikus projekció, admin rate limit és
+nem-böngészős API-szerződés. A `dry-lifecycle` CLI parancs az elfogadási kaput
+egy menetben futtatja. A live végrehajtás a 8. napi lease-es executor előtt
+szándékosan tiltott.
+
 ## 7. nap – mérési és összehasonlító pipeline
 
 Feladatok:

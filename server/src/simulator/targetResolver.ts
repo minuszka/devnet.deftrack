@@ -45,6 +45,7 @@ export type TargetResolutionIssueCode =
   | 'DUPLICATE_PORT_MAPPING'
   | 'MISSING_PROTX_MAPPING'
   | 'MASTERNODE_NOT_ACTIVE'
+  | 'MASTERNODE_HOST_UNRESOLVED'
   | 'MASTERNODE_HOST_MISMATCH'
   | 'MISSING_HOST_OBSERVATION'
   | 'STALE_HOST_OBSERVATION'
@@ -228,7 +229,12 @@ export function resolveSimulationTargetInventory(input: {
         const mn = mnByProTx.get(target.proTxHash.toLowerCase());
         if (mn === undefined || !mn.active) {
           mark('MASTERNODE_NOT_ACTIVE', target.targetId, 'Masternode is not active.', `active proTx entry missing for ${target.proTxHash}`);
-        } else if (mn.hostRef !== null && mn.hostRef !== target.hostRef) {
+        } else if (mn.hostRef === null) {
+          mark(
+            'MASTERNODE_HOST_UNRESOLVED', target.targetId, 'Masternode host identity is unknown.',
+            `observed hostRef is null for ${target.proTxHash}`
+          );
+        } else if (mn.hostRef !== target.hostRef) {
           mark(
             'MASTERNODE_HOST_MISMATCH', target.targetId, 'Masternode host mapping changed.',
             `registry=${target.hostRef}, observed=${mn.hostRef}`

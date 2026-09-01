@@ -112,7 +112,7 @@ describe('simulation run state machine', () => {
       rejected: [],
       scheduled: ['begin_baseline', 'abort_requested'],
       baseline: ['baseline_completed', 'abort_requested'],
-      armed: ['activate_fault', 'begin_recovery', 'abort_requested'],
+      armed: ['activate_fault', 'dry_run_completed', 'begin_recovery', 'abort_requested'],
       fault_active: ['begin_observation', 'begin_recovery', 'abort_requested'],
       observing: ['begin_recovery', 'abort_requested'],
       aborting: ['begin_recovery'],
@@ -195,6 +195,29 @@ describe('simulation run state machine', () => {
     expect(() => transition(stateAt('completed'), 'begin_preflight', 20)).toThrowError(
       expect.objectContaining<Partial<SimulationStateError>>({ code: 'INVALID_TRANSITION' })
     );
+  });
+
+  it('completes a non-live lifecycle without ever marking a fault active', () => {
+    let dry = createSimulationRunState({
+      runKey: 'sim-dry', live: false, createdAtMs: 0, runExpiresAtMs: 1_000,
+    });
+    dry = transition(dry, 'begin_preflight', 1);
+    dry = transition(dry, 'preflight_passed', 2);
+    dry = transition(dry, 'begin_baseline', 3);
+    dry = transition(dry, 'baseline_completed', 4);
+    dry = transition(dry, 'dry_run_completed', 5);
+    expect(dry).toMatchObject({ status: 'completed', faultMayBeActive: false, faultLeaseExpiresAtMs: null });
+    expect(() => transitionSimulationRun(stateAt('armed'), ordinaryEvent('dry_run_completed', 'wrong', 5)))
+      .toThrowError(expect.objectContaining<Partial<SimulationStateError>>({ code: 'INVALID_TRANSITION' }));
+  });
+
+  it('never lets a non-live run activate a fault', () => {
+    let dry = createSimulationRunState({ runKey: 'sim-dry', live: false, createdAtMs: 0, runExpiresAtMs: 1_000 });
+    for (const [type, atMs] of [
+      ['begin_preflight', 1], ['preflight_passed', 2], ['begin_baseline', 3], ['baseline_completed', 4],
+    ] as const) dry = transition(dry, type, atMs);
+    expect(() => transitionSimulationRun(dry, activateEvent('no-fault', 5)))
+      .toThrowError(expect.objectContaining<Partial<SimulationStateError>>({ code: 'INVALID_TRANSITION' }));
   });
 
   it('makes a retried event a true no-op without incrementing revision', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { baselineEvidenceSatisfies, planMeasurementWindows } from './measurementWindows.js';
+import { SIMULATION_CONTROL_POLICY } from './simulationPolicy.js';
 
 describe('simulation measurement windows', () => {
   it('plans three DKG intervals and excludes warm-up/cooldown heights', () => {
@@ -28,13 +29,16 @@ describe('simulation measurement windows', () => {
   it('rejects overlapping or too-short fault windows', () => {
     expect(() => planMeasurementWindows({ baselineEndHeight: 100, faultStartHeight: 100, faultEndHeight: 110 })).toThrow(/after the baseline/);
     expect(() => planMeasurementWindows({ baselineEndHeight: 99, faultStartHeight: 100, faultEndHeight: 101 })).toThrow(/too short/);
-    expect(() => planMeasurementWindows({
-      baselineEndHeight: 99, faultStartHeight: 100, faultEndHeight: 110,
-      policy: { minimumChainLockCoveragePercent: 101 },
-    })).toThrow(/between 0 and 100/);
     const early = planMeasurementWindows({ baselineEndHeight: 10, faultStartHeight: 11, faultEndHeight: 20 });
     expect(baselineEvidenceSatisfies({
       fromHeight: 0, toHeight: 10, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
     }, early).passed).toBe(false);
+  });
+
+  it('uses a frozen code-owned policy which request input cannot weaken', () => {
+    expect(Object.isFrozen(SIMULATION_CONTROL_POLICY.measurement)).toBe(true);
+    expect(SIMULATION_CONTROL_POLICY.measurement.minimumBaselineDkgRounds).toBe(3);
+    const plan = planMeasurementWindows({ baselineEndHeight: 999, faultStartHeight: 1_000, faultEndHeight: 1_010 });
+    expect(plan.minimumBaselineDkgRounds).toBe(3);
   });
 });

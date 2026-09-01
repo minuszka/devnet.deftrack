@@ -1,3 +1,5 @@
+import { SIMULATION_CONTROL_POLICY } from './simulationPolicy.js';
+
 export interface SimulationMeasurementPolicy {
   dkgIntervalBlocks: number;
   minimumBaselineDkgRounds: number;
@@ -29,19 +31,11 @@ export interface MeasurementWindowPlan {
   minimumBaselineChainLocks: number;
 }
 
-export const DEFAULT_MEASUREMENT_POLICY: SimulationMeasurementPolicy = {
-  dkgIntervalBlocks: 24,
-  minimumBaselineDkgRounds: 3,
-  minimumChainLockCoveragePercent: 80,
-  warmupBlocks: 2,
-  cooldownBlocks: 4,
-};
-
 function assertNonNegativeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative safe integer`);
 }
 
-export function minimumBaselineBlocks(policy: SimulationMeasurementPolicy): number {
+function minimumBaselineBlocksFor(policy: SimulationMeasurementPolicy): number {
   assertNonNegativeInteger(policy.dkgIntervalBlocks, 'dkgIntervalBlocks');
   assertNonNegativeInteger(policy.minimumBaselineDkgRounds, 'minimumBaselineDkgRounds');
   if (policy.dkgIntervalBlocks < 1 || policy.minimumBaselineDkgRounds < 1) {
@@ -61,9 +55,8 @@ export function planMeasurementWindows(input: {
   baselineEndHeight: number;
   faultStartHeight: number;
   faultEndHeight: number;
-  policy?: Partial<SimulationMeasurementPolicy>;
 }): MeasurementWindowPlan {
-  const policy = { ...DEFAULT_MEASUREMENT_POLICY, ...input.policy };
+  const policy = SIMULATION_CONTROL_POLICY.measurement;
   for (const [name, value] of Object.entries({
     baselineEndHeight: input.baselineEndHeight,
     faultStartHeight: input.faultStartHeight,
@@ -80,7 +73,7 @@ export function planMeasurementWindows(input: {
   if (input.faultEndHeight < input.faultStartHeight + policy.warmupBlocks) {
     throw new Error('fault window is too short after warm-up exclusion');
   }
-  const baselineBlocks = minimumBaselineBlocks(policy);
+  const baselineBlocks = minimumBaselineBlocksFor(policy);
   const minimumBaselineChainLocks = Math.ceil(
     (baselineBlocks * policy.minimumChainLockCoveragePercent) / 100
   );

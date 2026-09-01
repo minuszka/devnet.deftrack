@@ -28,6 +28,19 @@ function optionalInteger(name: string, fallback: number, min: number, max: numbe
   return value;
 }
 
+function optionalEnum<const T extends readonly string[]>(
+  name: string,
+  values: T,
+  fallback: T[number]
+): T[number] {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (!values.includes(raw)) {
+    throw new Error(`Environment variable ${name} must be one of: ${values.join(', ')}`);
+  }
+  return raw as T[number];
+}
+
 /**
  * Nothing here has a default that points anywhere real. A missing variable is
  * a startup error, not a silent fallback to a production host.
@@ -43,6 +56,20 @@ export const config = {
   // Empty means the admin routes refuse service; an unset secret must fail
   // closed rather than quietly disable the check.
   adminApiKey: process.env.ADMIN_API_KEY ?? '',
+
+  simulator: {
+    // The API key authenticates a machine/CLI. Actor and role are configured
+    // server-side so a caller cannot self-assert safety-admin in a header.
+    adminActorId: process.env.SIMULATION_ADMIN_ACTOR_ID ?? 'admin-api-key',
+    adminRole: optionalEnum(
+      'SIMULATION_ADMIN_ROLE',
+      ['operator', 'safety-admin'] as const,
+      'operator'
+    ),
+    expectedChain: process.env.SIMULATION_EXPECTED_CHAIN ?? '',
+    expectedGenesisHash: process.env.SIMULATION_EXPECTED_GENESIS_HASH ?? '',
+    expectedWrapperVersion: process.env.SIMULATION_EXPECTED_WRAPPER_VERSION ?? '',
+  },
 
   rpc: {
     host: process.env.RPC_HOST ?? '127.0.0.1',

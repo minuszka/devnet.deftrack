@@ -21,6 +21,8 @@ import type {
   SimulationAuditActor,
   SimulationRunMetadata,
 } from '../models/SimulationRun.js';
+import type { DryRunPlan } from '../simulator/scenarioTypes.js';
+import { deriveSimulationRunTiming } from '../simulator/simulationTiming.js';
 
 export interface SimulationRunProjection {
   runKey: string;
@@ -83,15 +85,29 @@ export class SimulationPersistenceService {
     idempotencyKey: string;
     live: boolean;
     createdAtMs: number;
-    runExpiresAtMs: number;
     metadata: SimulationRunMetadata;
+    dryRunPlan: DryRunPlan;
   }): Promise<SimulationRunProjection> {
     const runKey = simulationRunKeyFor(input.idempotencyKey);
+    if (
+      input.dryRunPlan.runKey !== runKey ||
+      input.dryRunPlan.network !== input.metadata.network ||
+      input.dryRunPlan.scenarioId !== input.metadata.scenarioId ||
+      input.dryRunPlan.scenarioVersion !== input.metadata.scenarioVersion ||
+      input.dryRunPlan.seed !== input.metadata.seed ||
+      simulationFingerprint(input.dryRunPlan.parameters) !== simulationFingerprint(input.metadata.parameters)
+    ) {
+      throw new SimulationPersistenceError(
+        'RUN_METADATA_CONFLICT',
+        'DryRun plan does not match immutable run metadata'
+      );
+    }
+    const timing = deriveSimulationRunTiming(input.dryRunPlan, input.createdAtMs);
     const state = createSimulationRunState({
       runKey,
       live: input.live,
       createdAtMs: input.createdAtMs,
-      runExpiresAtMs: input.runExpiresAtMs,
+      runExpiresAtMs: timing.runExpiresAtMs,
     });
     const audit = creationAuditRecord({
       state,
@@ -180,6 +196,12 @@ export class SimulationPersistenceService {
       'CONCURRENT_TRANSITION',
       `simulation run ${runKey} changed repeatedly while repairing its projection`
     );
+  }
+
+  /** Read-only authoritative history for the private control API. */
+  async listRunAudit(runKey: string): Promise<SimulationRunAuditRecord[]> {
+    await this.loadRun(runKey);
+    return this.repository.listRunAudit(runKey);
   }
 
   async transitionRun(input: {

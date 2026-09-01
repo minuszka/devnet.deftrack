@@ -23,6 +23,7 @@ export const SIMULATION_RUN_EVENT_TYPES = [
   'preflight_rejected',
   'begin_baseline',
   'baseline_completed',
+  'dry_run_completed',
   'activate_fault',
   'begin_observation',
   'begin_recovery',
@@ -143,7 +144,11 @@ const ORDINARY_TRANSITIONS: Readonly<
   },
   scheduled: { begin_baseline: 'baseline' },
   baseline: { baseline_completed: 'armed' },
-  armed: { activate_fault: 'fault_active', begin_recovery: 'recovery' },
+  armed: {
+    activate_fault: 'fault_active',
+    dry_run_completed: 'completed',
+    begin_recovery: 'recovery',
+  },
   fault_active: { begin_observation: 'observing', begin_recovery: 'recovery' },
   observing: { begin_recovery: 'recovery' },
   aborting: { begin_recovery: 'recovery' },
@@ -307,6 +312,12 @@ export function transitionSimulationRun(
   }
 
   if (event.type === 'activate_fault') {
+    if (!state.live) {
+      throw new SimulationStateError(
+        'INVALID_TRANSITION',
+        'a dry-run cannot activate a remote fault'
+      );
+    }
     if (
       !Number.isSafeInteger(event.faultLeaseExpiresAtMs) ||
       event.faultLeaseExpiresAtMs <= event.atMs ||
@@ -325,6 +336,13 @@ export function transitionSimulationRun(
       faultLeaseExpiresAtMs: event.faultLeaseExpiresAtMs,
       faultMayBeActive: true,
     });
+  }
+
+  if (event.type === 'dry_run_completed' && state.live) {
+    throw new SimulationStateError(
+      'INVALID_TRANSITION',
+      'a live run cannot use the dry-run completion path'
+    );
   }
 
   if (event.type === 'recovery_succeeded') {

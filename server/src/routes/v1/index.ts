@@ -12,6 +12,8 @@ import commitmentRoutes from './commitments.v1.routes.js';
 import dslRoutes from './dsl.v1.routes.js';
 import fairnessRoutes from './fairness.v1.routes.js';
 import metricsRoutes from './metrics.v1.routes.js';
+import simulationRoutes from './simulations.v1.routes.js';
+import simulationAdminRoutes from './simulationAdmin.v1.routes.js';
 
 const router = Router();
 
@@ -41,6 +43,7 @@ router.use('/fairness/selection', heavyLimiter);
 
 router.use('/quorum-rounds', quorumRoundRoutes);
 router.use('/operators', operatorRoutes);
+router.use('/admin/simulations', simulationAdminRoutes);
 router.use('/admin', adminRoutes);
 router.use('/masternodes', masternodeRoutes);
 router.use('/staking', stakingRoutes);
@@ -50,6 +53,7 @@ router.use('/quorum-commitments', commitmentRoutes);
 router.use('/dsl', dslRoutes);
 router.use('/fairness', fairnessRoutes);
 router.use('/metrics', metricsRoutes);
+router.use('/simulations', simulationRoutes);
 // Blocks and transactions mount at the router root: /blocks, /txs.
 router.use('/', chainRoutes);
 
