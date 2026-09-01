@@ -163,7 +163,9 @@ function assertInput(input: SimulationPreflightInput): void {
     throw new Error('expected genesis hash is invalid');
   }
   if (input.policy.expectedWrapperVersion.trim().length === 0) {
-    throw new Error('expected wrapper version is invalid');
+    // A hard precondition, not a target failure: with no expected version there
+    // is nothing to hold a target to. Name the knob so the operator can fix it.
+    throw new Error('expected wrapper version is not configured; set SIMULATION_EXPECTED_WRAPPER_VERSION');
   }
   if (
     input.observer.staleTargetCount < 0 ||

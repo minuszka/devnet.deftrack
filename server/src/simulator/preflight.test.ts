@@ -195,4 +195,12 @@ describe('simulation preflight', () => {
       severity: 'required',
     });
   });
+
+  it('refuses to evaluate with no expected wrapper version, naming the knob to fix', () => {
+    const input = healthyInput();
+    input.policy.expectedWrapperVersion = '';
+    // A server-side misconfiguration is a hard error, not a per-target failure
+    // that would dead-end the run in `rejected`.
+    expect(() => evaluateSimulationPreflight(input)).toThrow(/SIMULATION_EXPECTED_WRAPPER_VERSION/);
+  });
 });
