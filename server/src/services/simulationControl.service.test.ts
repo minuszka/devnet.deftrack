@@ -103,9 +103,11 @@ class FakeEvidence implements SimulationEvidenceProvider {
   constructor(private readonly scenario: Record<string, unknown>) {}
   async prepareDraft(input: Parameters<SimulationEvidenceProvider['prepareDraft']>[0]): Promise<PreparedSimulationDraft> {
     const runKey = simulationRunKeyFor(input.idempotencyKey);
+    // The target's network must match the run's, or the run metadata is invalid.
+    const networkTarget = { ...target, network: input.network };
     const plan = generateDryRunPlan(
       { runKey, network: input.network, scenario: this.scenario },
-      { network: input.network, currentHeight: 10_000, targets: [target], quorumMemberTargetIds: [target.targetId] }
+      { network: input.network, currentHeight: 10_000, targets: [networkTarget], quorumMemberTargetIds: [networkTarget.targetId] }
     );
     const metadata: SimulationRunMetadata = {
       network: input.network,
@@ -113,7 +115,7 @@ class FakeEvidence implements SimulationEvidenceProvider {
       scenarioVersion: plan.scenarioVersion,
       parameters: plan.parameters,
       seed: plan.seed,
-      targetSnapshot: [target],
+      targetSnapshot: [networkTarget],
       experimentRunKey: null,
       baselineRunKey: null,
       requestedBy: input.requestedBy,
@@ -124,7 +126,7 @@ class FakeEvidence implements SimulationEvidenceProvider {
       dryRunPlan: plan,
       targetInventory: {
         network: input.network, capturedAtMs: input.nowMs, capturedAtHeight: 10_000,
-        snapshots: [target], issues: [], complete: true,
+        snapshots: [networkTarget], issues: [], complete: true,
       },
     };
   }
@@ -195,6 +197,32 @@ describe('simulation control service', () => {
     expect(runRepository.audits.get(created.run.runKey)).toHaveLength(6);
     expect(JSON.stringify([...controlRepository.requests.values()])).not.toContain('lifecycle-create');
     expect([...controlRepository.artifacts.values()].filter((artifact) => artifact.kind === 'dry-run')).toHaveLength(1);
+  });
+
+  async function driveToLiveArmed(service: ReturnType<typeof harness>['service'], network: 'regtest' | 'devnet') {
+    const created = await service.create({
+      idempotencyKey: `${network}-live-create`, network, live: true, scenario: mnStop,
+    });
+    await service.validate({ runKey: created.run.runKey, idempotencyKey: `${network}-live-validate` });
+    await service.arm({
+      runKey: created.run.runKey, idempotencyKey: `${network}-live-arm`, acknowledgedRiskClass: 'medium',
+    });
+    return created.run.runKey;
+  }
+
+  it('refuses to execute a live run that is not on the lab network', async () => {
+    const { service } = harness(mnStop);
+    const runKey = await driveToLiveArmed(service, 'devnet');
+    await expect(service.start({ runKey, idempotencyKey: 'devnet-live-start' }))
+      .rejects.toMatchObject({ code: 'EXECUTOR_NETWORK_FORBIDDEN' });
+  });
+
+  it('lets a live lab-network run through the boundary to the not-yet-built executor', async () => {
+    const { service } = harness(mnStop);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    // The network guard passes; the executor itself does not exist yet.
+    await expect(service.start({ runKey, idempotencyKey: 'regtest-live-start' }))
+      .rejects.toMatchObject({ code: 'EXECUTOR_NOT_AVAILABLE' });
   });
 
   it('binds an idempotency key to one exact create request', async () => {
