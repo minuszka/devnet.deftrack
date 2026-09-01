@@ -1,10 +1,12 @@
 import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { config } from '../config.js';
+import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
 import { ExperimentRun } from '../models/ExperimentRun.js';
 import { HostStatus } from '../models/HostStatus.js';
+import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { MasternodeState } from '../models/MasternodeState.js';
 import { ObservationGap } from '../models/ObservationGap.js';
 import { QuorumRound } from '../models/QuorumRound.js';
@@ -233,7 +235,10 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       return host === undefined || input.nowMs - host.reportedAtMs > OBSERVATION_MAX_AGE_MS;
     }).length;
 
-    const [sync, indexedHeights, resolvedDkgRounds, chainLockedBlocks, gapCount, liveConflicts, experiments] =
+    const [
+      sync, indexedHeights, resolvedDkgRounds, baselineFormedRounds, poseRevivedEvents,
+      chainLockedBlocks, gapCount, liveConflicts, experiments,
+    ] =
       await Promise.all([
         SyncState.findOne({ key: 'blocks' }).select('lastSyncedHeight lastSyncedAt error').lean(),
         Block.find({ height: { $gte: measurementPlan.baseline.fromHeight, $lte: measurementPlan.baseline.toHeight } })
@@ -242,6 +247,18 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
           llmqName: evidence.quorumProfile.llmqName,
           expectedHeight: { $gte: measurementPlan.baseline.fromHeight, $lte: measurementPlan.baseline.toHeight },
           status: { $in: ['formed', 'failed', 'impossible'] },
+        }),
+        // Quiescence evidence: the baseline's own health, and whether the
+        // network was recovering inside it. Counting rounds is not enough to
+        // establish that a window is a baseline -- see baselineEvidenceSatisfies.
+        QuorumRound.find({
+          llmqName: evidence.quorumProfile.llmqName,
+          expectedHeight: { $gte: measurementPlan.baseline.fromHeight, $lte: measurementPlan.baseline.toHeight },
+          status: 'formed',
+        }).select('healthRatio').lean(),
+        MasternodeEvent.countDocuments({
+          type: 'revived',
+          height: { $gte: measurementPlan.baseline.fromHeight, $lte: measurementPlan.baseline.toHeight },
         }),
         Block.countDocuments({
           height: { $gte: measurementPlan.baseline.fromHeight, $lte: measurementPlan.baseline.toHeight },
@@ -333,6 +350,12 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
           indexedBlocks: indexedHeights.length,
           resolvedDkgRounds,
           chainLockedBlocks,
+          medianHealthRatio: medianOf(
+            baselineFormedRounds
+              .map((round) => round.healthRatio)
+              .filter((value): value is number => typeof value === 'number')
+          ),
+          poseRevivedEvents,
         },
       },
     });

@@ -224,4 +224,50 @@ describe('simulation control service', () => {
     })).rejects.toMatchObject({ code: 'APPROVAL_DENIED' });
     expect((await service.status(created.run.runKey)).state.status).toBe('scheduled');
   });
+
+  it('recovers a run that never executed into aborted, not completed', async () => {
+    const { service, runRepository } = harness(mnStop);
+    const created = await service.create({
+      idempotencyKey: 'never-ran-create', network: 'devnet', live: false, scenario: mnStop,
+    });
+    const runKey = created.run.runKey;
+    await service.validate({ runKey, idempotencyKey: 'never-ran-validate' });
+    const armed = await service.arm({
+      runKey, idempotencyKey: 'never-ran-arm', acknowledgedRiskClass: 'medium',
+    });
+    expect(armed.run.state.status).toBe('armed');
+
+    const recovered = await service.recover({ runKey, idempotencyKey: 'never-ran-recover' });
+
+    // The run never executed -- nothing produced a dry_run_completed -- so it
+    // must not claim success. recovery_succeeded resolves its terminal status
+    // from abortRequested, which recover did not set, and every recover call on
+    // a dry run lands here because `armed` is the only status it can be in.
+    const audit = await runRepository.listRunAudit(runKey);
+    expect(audit.map((event) => event.eventType)).not.toContain('dry_run_completed');
+    expect(recovered.run.state.status).toBe('aborted');
+    expect(recovered.run.state.faultMayBeActive).toBe(false);
+
+    // The same shape abort() produces, reached the same way.
+    expect(audit.map((event) => event.eventType)).toEqual([
+      'run_created', 'begin_preflight', 'preflight_passed',
+      'begin_baseline', 'baseline_completed',
+      'abort_requested', 'begin_recovery', 'recovery_succeeded',
+    ]);
+  });
+
+  it('still completes a recovery for a run that did execute', async () => {
+    const { service } = harness(mnStop);
+    const created = await service.create({
+      idempotencyKey: 'executed-create', network: 'devnet', live: false, scenario: mnStop,
+    });
+    const runKey = created.run.runKey;
+    await service.validate({ runKey, idempotencyKey: 'executed-validate' });
+    await service.arm({ runKey, idempotencyKey: 'executed-arm', acknowledgedRiskClass: 'medium' });
+    const done = await service.start({ runKey, idempotencyKey: 'executed-start' });
+
+    // A run that ran to completion is terminal; the abort intent added above
+    // must not reach into this path and turn a finished run into an aborted one.
+    expect(done.run.state.status).toBe('completed');
+  });
 });

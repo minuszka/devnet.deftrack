@@ -20,6 +20,12 @@ export const SIMULATION_CONTROL_POLICY = Object.freeze({
     minimumChainLockCoveragePercent: 80,
     warmupBlocks: 2,
     cooldownBlocks: 4,
+    // A healthy devnet round sits at 1.00 and jitters to about 0.98; the window
+    // this rejects sat at 0.16-0.32. The line is drawn to separate those, and
+    // deliberately strict: a false rejection costs a run, a false acceptance
+    // produces a number that reads as evidence and is not.
+    minimumBaselineHealthRatio: 0.9,
+    maximumBaselinePoseRevivals: 0,
   }),
   lifecycle: Object.freeze<SimulationLifecyclePolicy>({
     preparationWindowMs: 6 * 60 * 60_000,

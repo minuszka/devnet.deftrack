@@ -191,4 +191,71 @@ describe('simulation measurement pipeline', () => {
     expect(report.verdict.measurementValid).toBe(false);
     expect(report.verdict.reasons.join(' ')).toMatch(/baseline has 0\/3 resolved DKG rounds/);
   });
+
+  it('answers the same for the same evidence however long after the window it is asked', () => {
+    const evidence = completeEvidence();
+    const at = (generatedAtMs: number) => computeSimulationMeasurementReport({
+      faultStartHeight: 1_000,
+      faultEndHeight: 1_010,
+      generatedAtMs,
+      impact: impact(),
+      evidence,
+    });
+
+    // The day-7 gate: a report recomputes. It did not, because observer
+    // staleness compared a frozen generatedAtMs against a HostStatus row that
+    // the next agent heartbeat overwrote -- finalize answered valid, and
+    // verify() a day later answered "expected observer hosts are stale".
+    const atFinalize = at(GENERATED_AT_MS);
+    const aDayLater = at(GENERATED_AT_MS + 24 * 60 * 60_000);
+    const aYearLater = at(GENERATED_AT_MS + 365 * 24 * 60 * 60_000);
+
+    expect(aDayLater.verdict).toEqual(atFinalize.verdict);
+    expect(aYearLater.verdict).toEqual(atFinalize.verdict);
+    expect(aDayLater.baseline.dataQuality.reasons).toEqual(atFinalize.baseline.dataQuality.reasons);
+    expect(aYearLater.observation.dataQuality.reasons).toEqual(atFinalize.observation.dataQuality.reasons);
+
+    // generatedAtMs is still carried, because when a report was produced is a
+    // fact about the report; it just no longer decides what the report says.
+    expect(aDayLater.generatedAtMs).not.toBe(atFinalize.generatedAtMs);
+  });
+
+  it('reports health for the run\'s own profile rather than a blend of every schedule', () => {
+    const evidence = completeEvidence();
+    const primary = evidence.primaryLlmqName;
+    // A window as the devnet actually produces one: the run's profile unhealthy,
+    // two unrelated schedules perfectly healthy and interleaved with it. The
+    // repository loads rounds by height with no llmqName filter, so this is the
+    // ordinary case rather than a contrived one.
+    evidence.rounds = [
+      ...[930, 954, 978].map((expectedHeight) => ({
+        llmqName: primary, dkgInterval: 24, expectedHeight,
+        status: 'formed' as const, healthRatio: 0.3, invalidMembers: [],
+      })),
+      ...[936, 960].map((expectedHeight) => ({
+        llmqName: 'llmq_60_75', dkgInterval: 48, expectedHeight,
+        status: 'formed' as const, healthRatio: 1, invalidMembers: [],
+      })),
+      { llmqName: 'llmq_400_60', dkgInterval: 72, expectedHeight: 942,
+        status: 'formed' as const, healthRatio: 1, invalidMembers: [] },
+      ...evidence.rounds.filter((round) => round.expectedHeight === 1_004),
+    ];
+    const report = computeSimulationMeasurementReport({
+      faultStartHeight: 1_000,
+      faultEndHeight: 1_010,
+      generatedAtMs: GENERATED_AT_MS,
+      impact: impact(),
+      evidence,
+    });
+
+    // Blended, this window medians to 0.65 -- a health figure none of the three
+    // profiles ever had, reported for a profile that sat flat at 0.3 throughout.
+    expect(report.baseline.dkg.medianHealthRatio).toBe(0.3);
+    expect(report.baseline.dkg.worstHealthRatio).toBe(0.3);
+
+    // The count still spans the window, so "six rounds ran, three were yours"
+    // stays visible.
+    expect(report.baseline.dkg.rounds.formed).toBe(6);
+    expect(report.baseline.dkg.byProfile.find((row) => row.llmqName === primary)?.rounds.formed).toBe(3);
+  });
 });

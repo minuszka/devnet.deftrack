@@ -36,6 +36,21 @@ export interface RoundStats {
  * the same quorum type, and interleaving two schedules would report a run of
  * failures that neither type ever had.
  */
+/**
+ * Median of a numeric sample, or null when the sample is empty.
+ *
+ * Exported so the baseline quality gate and the report it gates agree by
+ * construction. They compare the same figure, and two implementations of "the
+ * median" would let a run pass a gate against a number the report never shows.
+ */
+export function medianOf(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length % 2 === 1
+    ? sorted[(sorted.length - 1) / 2]!
+    : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2;
+}
+
 export function roundStats(rounds: readonly RoundLike[]): RoundStats {
   const formed = rounds.filter((r) => r.status === 'formed');
   const failed = rounds.filter((r) => r.status === 'failed');
@@ -46,11 +61,7 @@ export function roundStats(rounds: readonly RoundLike[]): RoundStats {
     .map((r) => r.healthRatio)
     .filter((v): v is number => typeof v === 'number')
     .sort((a, b) => a - b);
-  const median = ratios.length
-    ? ratios.length % 2 === 1
-      ? ratios[(ratios.length - 1) / 2]!
-      : (ratios[ratios.length / 2 - 1]! + ratios[ratios.length / 2]!) / 2
-    : null;
+  const median = medianOf(ratios);
 
   let streak = 0;
   let longest = 0;

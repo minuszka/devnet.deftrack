@@ -423,6 +423,26 @@ export class SimulationControlService {
     }
     if (run.state.status !== 'recovery') {
       ensureStatus(run, ['armed', 'fault_active', 'observing', 'aborting', 'failed']);
+
+      // Recovering a run that never executed is an abort, not a completion.
+      //
+      // recovery_succeeded resolves its terminal status from abortRequested
+      // (`state.abortRequested ? 'aborted' : 'cooldown'`), and recover never set
+      // it -- so a run that only ever reached `armed` came out `completed`, with
+      // no dry_run_completed anywhere in its audit chain, claiming success for
+      // work it had not done. For a dry run `armed` is the only attainable
+      // status here, so that was every recover call, not an edge case.
+      //
+      // abort() sets the same intent for the same reason, and this mirrors it:
+      // armed -> aborting -> recovery -> aborted.
+      if (run.state.status === 'armed' && !run.state.abortRequested) {
+        run = await this.runs.transitionRun({
+          runKey: run.runKey,
+          event: eventFor(request, 'abort', 'abort_requested'),
+          actor: request.actor,
+        });
+      }
+
       run = await this.runs.transitionRun({
         runKey: run.runKey,
         event: eventFor(request, 'begin', 'begin_recovery'),

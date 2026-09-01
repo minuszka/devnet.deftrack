@@ -80,6 +80,8 @@ function healthyInput(): SimulationPreflightInput {
         indexedBlocks: plan.minimumBaselineBlocks,
         resolvedDkgRounds: plan.minimumBaselineDkgRounds,
         chainLockedBlocks: plan.minimumBaselineChainLocks,
+        medianHealthRatio: 1,
+        poseRevivedEvents: 0,
       },
     },
   };
