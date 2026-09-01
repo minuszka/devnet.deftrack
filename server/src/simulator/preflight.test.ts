@@ -1,0 +1,166 @@
+import { describe, expect, it } from 'vitest';
+import { planMeasurementWindows } from './measurementWindows.js';
+import { evaluateSimulationPreflight, type SimulationPreflightInput } from './preflight.js';
+import type { TargetInventoryResolution } from './targetResolver.js';
+
+const NOW = 2_000_000;
+const HEIGHT = 6_240;
+const BUILD = 'a'.repeat(64);
+const GENESIS = 'b'.repeat(64);
+
+function inventory(): TargetInventoryResolution {
+  return {
+    network: 'devnet',
+    capturedAtMs: NOW - 1_000,
+    capturedAtHeight: HEIGHT,
+    complete: true,
+    issues: [],
+    snapshots: ['mn-1', 'mn-2'].map((targetId, index) => ({
+      targetId,
+      displayLabel: targetId,
+      operatorId: `operator-${index}`,
+      proTxHash: String(index + 1).padStart(64, '0'),
+      hostRef: `host-${index}`,
+      unitRef: `unit-${index}`,
+      p2pPort: 19_800 + index,
+      role: 'masternode' as const,
+      network: 'devnet' as const,
+      capabilities: ['service-control' as const],
+      expectedBuild: BUILD,
+      capturedAtMs: NOW - 1_000,
+      capturedAtHeight: HEIGHT,
+    })),
+  };
+}
+
+function healthyInput(): SimulationPreflightInput {
+  const plan = planMeasurementWindows({ baselineEndHeight: HEIGHT, faultStartHeight: HEIGHT + 1, faultEndHeight: HEIGHT + 10 });
+  return {
+    nowMs: NOW,
+    policy: {
+      expectedChain: 'devnet-defcon-q60',
+      expectedGenesisHash: GENESIS,
+      expectedWrapperVersion: '1.0.0',
+      maxExplorerLagBlocks: 2,
+      maxExplorerAgeMs: 60_000,
+      maxObserverAgeMs: 60_000,
+      maxTargetSnapshotAgeMs: 60_000,
+      minObserverCoveragePercent: 95,
+      maxStaleTargets: 0,
+      maxWorkerAgeMs: 30_000,
+      expectedQuorumSize: 2,
+    },
+    chain: {
+      chain: 'devnet-defcon-q60', genesisHash: GENESIS,
+      blocks: HEIGHT, headers: HEIGHT, initialBlockDownload: false,
+    },
+    explorer: {
+      indexedHeight: HEIGHT, lastSyncedAtMs: NOW - 1_000, syncError: null, missingHeights: [],
+    },
+    targetInventory: inventory(),
+    selectedTargetIds: ['mn-1'],
+    observer: {
+      coveragePercent: 100, staleTargetCount: 0, lastObservationAtMs: NOW - 1_000, sequenceGapCount: 0,
+    },
+    conflicts: { otherLiveRunKeys: [], otherRunningExperimentKeys: [] },
+    recovery: {
+      workerLastSeenAtMs: NOW - 1_000,
+      targets: [{ targetId: 'mn-1', available: true, faultStateClean: true, wrapperVersion: '1.0.0' }],
+    },
+    quorum: {
+      required: true, stable: true, capturedAtHeight: HEIGHT, memberTargetIds: ['mn-1', 'mn-2'],
+    },
+    baseline: {
+      required: true,
+      plan,
+      evidence: {
+        fromHeight: plan.baseline.fromHeight,
+        toHeight: plan.baseline.toHeight,
+        indexedBlocks: plan.minimumBaselineBlocks,
+        resolvedDkgRounds: plan.minimumBaselineDkgRounds,
+        chainLockedBlocks: plan.minimumBaselineChainLocks,
+      },
+    },
+  };
+}
+
+describe('simulation preflight', () => {
+  it('passes a complete devnet snapshot with one result per declared check', () => {
+    const result = evaluateSimulationPreflight(healthyInput());
+    expect(result.passed).toBe(true);
+    expect(result.checks).toHaveLength(11);
+    expect(result.checks.every((item) => item.passed)).toBe(true);
+    expect(result.dataQuality.confidence).toBe('high');
+  });
+
+  it('fails closed on wrong genesis even when the chain name looks right', () => {
+    const input = healthyInput();
+    input.chain.genesisHash = 'c'.repeat(64);
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((item) => item.checkId === 'network-identity')).toMatchObject({ passed: false, severity: 'required' });
+  });
+
+  it('fails on stale explorer/observer data, conflicts and unavailable recovery', () => {
+    const input = healthyInput();
+    input.explorer.indexedHeight = HEIGHT - 3;
+    input.observer.coveragePercent = 90;
+    input.conflicts.otherLiveRunKeys = ['other'];
+    input.recovery.workerLastSeenAtMs = NOW - 31_000;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.dataQuality.confidence).toBe('low');
+    for (const checkId of ['explorer-synced', 'observer-fresh', 'no-active-experiment', 'recovery-ready']) {
+      expect(result.checks.find((item) => item.checkId === checkId)?.passed).toBe(false);
+    }
+  });
+
+  it('does not let incomplete target mapping reach an armable result', () => {
+    const input = healthyInput();
+    input.targetInventory.complete = false;
+    input.targetInventory.snapshots = [];
+    input.targetInventory.issues = [{
+      code: 'MISSING_PROTX_MAPPING', targetId: 'mn-1',
+      publicMessage: 'missing', privateDetail: 'exact private cause',
+    }];
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((item) => item.checkId === 'target-resolved')?.passed).toBe(false);
+  });
+
+  it('rejects a stale immutable target snapshot', () => {
+    const input = healthyInput();
+    input.targetInventory.capturedAtMs = NOW - input.policy.maxTargetSnapshotAgeMs - 1;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((item) => item.checkId === 'target-resolved')?.passed).toBe(false);
+  });
+
+  it('supports an explicitly approved regtest identity for local testing', () => {
+    const input = healthyInput();
+    input.policy.expectedChain = 'regtest';
+    input.chain.chain = 'regtest';
+    input.targetInventory.network = 'regtest';
+    for (const target of input.targetInventory.snapshots) target.network = 'regtest';
+    expect(evaluateSimulationPreflight(input).checks.find((item) => item.checkId === 'network-identity')?.passed).toBe(true);
+  });
+
+  it('allows an initial preflight with optional baseline/quorum as medium confidence', () => {
+    const input = healthyInput();
+    input.quorum = { required: false, stable: false, capturedAtHeight: null, memberTargetIds: [] };
+    input.baseline.required = false;
+    input.baseline.evidence = null;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(true);
+    expect(result.dataQuality.confidence).toBe('medium');
+    expect(result.checks.filter((item) => !item.passed).every((item) => item.severity === 'warning')).toBe(true);
+  });
+
+  it('requires baseline minimums before arming', () => {
+    const input = healthyInput();
+    input.baseline.evidence!.resolvedDkgRounds -= 1;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((item) => item.checkId === 'baseline-ready')).toMatchObject({ passed: false, severity: 'required' });
+  });
+});

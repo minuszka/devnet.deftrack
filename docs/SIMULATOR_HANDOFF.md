@@ -1,69 +1,67 @@
 # Simulator fejlesztési handoff
 
-Aktuális fázis: 4. nap kész – zárt scenario registry és mellékhatásmentes DryRun
+Aktuális fázis: 5. nap kész – fail-closed preflight, baseline és target resolution
 
 Aktuális branch: `feat/devnet-chaos-orchestrator`
 
-Előző napi commit: `67d3c25 feat: persist simulation runs with append-only audit`
+Előző napi commit: `727a710 feat: add safe simulation dry-run planner`
 
-## Elkészült az 1–3. napon
+## Elkészült az 1–4. napon
 
-- Orchesztrációs és mérési réteg szétválasztása, bizalmi határok és mainnet hard-disable terv.
-- Tiszta run state machine, timeout/recovery/restart reconcile és determinisztikus run/action ID.
-- Egyetlen live run lock revisiont megőrző tombstone release-zel.
-- Standalone MongoDB-kompatibilis event-first, CAS-alapú persistencia.
-- Append-only audit mint igazságforrás; run/action gyors projekciók és audit replay.
-- Privát, alapból disabled target registry; host/unit/port nem public adat.
-- Kötelező correctness indexek és indulási index-kapu.
+- Bizalmi határok, mainnet hard-disable terv és orchesztráció/mérés szétválasztása.
+- Persistálható run state machine, timeout/recovery/restart reconcile.
+- Determinisztikus run/action ID és egyetlen live-run lock ABA-védelemmel.
+- Standalone MongoDB-kompatibilis event-first/CAS persistencia és append-only audit.
+- Privát, alapból disabled target registry.
+- Nyolc zárt scenario, strict Zod validation és biztonsági limitek.
+- DKG/ChainLock küszöb-, host- és staker presetek.
+- Mellékhatásmentes DryRun, stabil actionterv, blast-radius/Q60 margin és Core-szimulátor hivatkozás.
 
-## Elkészült a 4. napon
+## Elkészült az 5. napon
 
-- Nyolc scenario zárt, verziózott registryje és minden szinten `strict()` Zod validáció.
-- Biztonsági limitek célpontszámra, futási időre, flappingre, latencyre, jitterre és packet lossra.
-- DKG `-16/-17`, ChainLock `-19/-20`, 10 MN-es host és staker presetek.
-- Seedelt, sorrendfüggetlen SHA-256 targetválasztás explicit targetlista támogatásával.
-- Kizárólag memóriában működő `generateDryRunPlan()`, repository/RPC/SSH/Docker/clock dependency nélkül.
-- Kód által előállított allowlist payload union; nincs tetszőleges command, script, path, host vagy unit.
-- Stabil action ID, canonical payload digest és teljes plan fingerprint.
-- Blast-radius és Q60 `44/41` küszöbmargó becslés az átadott aktuális quorum snapshot alapján.
-- Core-native szimulátor adapter: csak eredménycsaládokra/artifactokra hivatkozik, nem számol újra.
-- Staker scenario korrektül `not-modeled`; nincs hamis Core-szimulációs állítás.
-- Tesztek az összes scenario-ra, limitekre, presetekre, determinisztikára, privátadat-szivárgásra és input-változatlanságra.
+- Fail-closed `proTxHash → targetId → hostRef → unitRef/P2P port` feloldás.
+- Aktív MN, host height/freshness és pinned SHA-256 node-build összevetés.
+- Duplikált target/proTx/runtime evidence/unit/port felismerése.
+- Enabled/non-maintenance/network scope és 20 targetes resolver-korlát.
+- Determinisztikus random, teljes host, operator és aktuális quorum alapú kiválasztás.
+- `prepareSimulationDraft()`: teljes candidate population + partition peer mapping immutable snapshotja és DryRun integráció.
+- Feloldhatatlan vagy duplikált quorumtag esetén draft sem készül.
+- 11 strukturált preflight check public/private részletekkel.
+- Chain név + genesis identity, IBD/sync, explorer lag/gap, observer, build, konfliktus és recovery kapuk.
+- Stale immutable target snapshot tiltása és policy szerinti teljes quorumméret ellenőrzése.
+- 72 blokk / 3 DKG round / 58 ChainLock alap baseline; 2 blokk warm-up és 4 blokk cooldown exclusion.
+- Data-quality confidence: required hiba `low`, warning/ZMQ gap `medium`, tiszta evidence `high`.
 
-## Fő 4. napi döntések
+## Fontos sorrendi döntés
 
-- A DryRun nem kapott repository vagy executor interfészt sem: így szerkezetileg sem tud külső állapotot módosítani.
-- A `host-10-masternodes` preset az aktuális snapshotban pontosan 10 MN-t követel; drift esetén nem készül terv.
-- A quorumtag-scenario kizárólag az átadott aktuális quorumtagságból választhat.
-- A Q60 margin csak ismert quorum snapshotnál jelenik meg; hiányzó tagságnál `null` és warning lesz.
-- A fault lease minden alkalmazó payload része, de tényleges watchdog/cleanup csak a worker fázisban készül.
-- Az action idők a run kezdetéhez viszonyított offsetek; perzisztens abszolút `notBeforeMs/expiresAtMs` képzés későbbi service feladata.
+A target snapshot a run létrehozása előtt készül, mert a metadata immutable. A preflight ezt ellenőrzi, de nem írja át. A teljes candidate population kerül a privát metadatába, nem csak a kiválasztott targetek: ettől reprodukálható marad a seedelt sample, és a partition peer ID-k sem mutatnak snapshoton kívülre.
 
-## 4. napi fájlok
+Az 5. napi domain tiszta és mellékhatásmentes. A tényleges Mongo/RPC read-only evidence assembly, a run create/transition és az admin végpont a 6. napi Control API-ban készül. Ez nem fault executor: a 6. nap végén sem lesz SSH/systemd/tc/firewall hívás.
 
-- `docs/simulator/SCENARIOS_HU.md`
+## 5. napi fájlok
+
+- `docs/simulator/PREFLIGHT_HU.md`
 - `docs/SIMULATOR_HANDOFF.md`
-- `server/src/simulator/scenarioTypes.ts`
-- `server/src/simulator/scenarioRegistry.ts`
-- `server/src/simulator/targetSelection.ts`
-- `server/src/simulator/coreSimulatorAdapter.ts`
-- `server/src/simulator/dryRunExecutor.ts`
-- a három kapcsolódó `*.test.ts` fájl
+- `server/src/simulator/targetResolver.ts` és tesztje
+- `server/src/simulator/measurementWindows.ts` és tesztje
+- `server/src/simulator/preflight.ts` és tesztje
+- `server/src/simulator/draftPreparation.ts` és tesztje
 
-## Következő pontos feladat – 5. nap
+## Következő pontos feladat – 6. nap
 
-Implementáld a preflightot és az élő, privát target resolutiont úgy, hogy továbbra se legyen fault injection:
+Privát Control API és fejlesztői CLI, végrehajtás nélkül:
 
-1. enabled/maintenance/network/build/capability ellenőrzés a `SimulationTarget` registryből;
-2. friss chain tip, observer és aktuális quorum snapshot lekérése;
-3. host- és provider-blast-radius ellenőrzés, stale snapshot tiltás;
-4. célpont snapshot rögzítése a run immutable metadata részébe;
-5. DryRun terv és preflight eredmény persistálása append-only audit mellett;
-6. fail-closed döntés required check hibánál;
-7. továbbra se készüljön SSH/Docker/systemd/tc végrehajtás.
+1. szigorú admin route-ok: scenario-list, draft create, preflight, dry-run, approve/arm, status/history;
+2. idempotency key minden módosító kéréshez;
+3. read-only Mongo/RPC evidence assembler az 5. napi domainhez;
+4. preflight eredmény és DryRun terv auditálható persistálása;
+5. state transition csak sikeres required preflight és baseline után;
+6. public/private DTO-redakció és admin rate limit;
+7. CLI, amely ugyanazt az API-t használja;
+8. továbbra sincs action worker, SSH vagy valódi fault injection.
 
 Külső állapot/VPS-művelet történt-e: nem
 
 Aktív fault vagy recovery timer: nincs
 
-Felhasználói jóváhagyás szükséges-e: az 5. napi lokális, nem végrehajtó munkához nem; VPS pilot előtt igen
+Felhasználói jóváhagyás szükséges-e: a 6. napi lokális API/CLI munkához nem; VPS pilot előtt igen
