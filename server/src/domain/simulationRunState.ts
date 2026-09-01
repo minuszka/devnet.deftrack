@@ -186,6 +186,17 @@ const TIMEOUT_RECOVERY_STATUSES = new Set<SimulationRunStatus>([
   'observing',
 ]);
 
+/**
+ * Every status a periodic reconcile can move on its own: the timeout-recoverable
+ * ones, plus `aborting`, which reconcile resumes into recovery regardless of any
+ * deadline. A run in any other status is either terminal or waiting on an
+ * operator, and the sweeper leaves it alone.
+ */
+export const RECONCILABLE_SIMULATION_STATUSES: readonly SimulationRunStatus[] = [
+  ...TIMEOUT_RECOVERY_STATUSES,
+  'aborting',
+];
+
 export function isTerminalSimulationStatus(status: SimulationRunStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }

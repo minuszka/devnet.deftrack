@@ -4,6 +4,8 @@ import {
   planMeasurementWindows,
   planMeasurementWindowsForFault,
   planMeasurementWindowsForLlmqFault,
+  roundsSettledForFinalize,
+  type SettlementRound,
 } from './measurementWindows.js';
 import { SIMULATION_CONTROL_POLICY } from './simulationPolicy.js';
 
@@ -113,5 +115,61 @@ describe('simulation measurement windows', () => {
     expect(() => planMeasurementWindowsForLlmqFault({
       primaryLlmqName: 'caller-invented', faultStartHeight: 1_000, faultEndHeight: 1_010,
     })).toThrow(/unknown measurement LLMQ profile/);
+  });
+});
+
+describe('roundsSettledForFinalize', () => {
+  const baseline = { fromHeight: 928, toHeight: 999 };
+  const observation = { fromHeight: 1_002, toHeight: 1_010 };
+  // llmq_defcon: dkgInterval 24, signingActiveQuorumCount 2 -> re-read span 48.
+  const saqc = { llmq_defcon: 2 };
+  const round = (expectedHeight: number, status = 'formed'): SettlementRound => ({
+    llmqName: 'llmq_defcon', dkgInterval: 24, expectedHeight, status,
+  });
+
+  it('is settled when every in-window round is resolved and past the re-read band', () => {
+    const result = roundsSettledForFinalize({
+      rounds: [round(936), round(984), round(1_008)],
+      baseline, observation, tipHeight: 1_200, signingActiveQuorumCountByProfile: saqc,
+    });
+    expect(result).toEqual({ settled: true, reasons: [] });
+  });
+
+  it('refuses while an in-window round is still pending', () => {
+    const result = roundsSettledForFinalize({
+      rounds: [round(936), round(984, 'pending')],
+      baseline, observation, tipHeight: 1_200, signingActiveQuorumCountByProfile: saqc,
+    });
+    expect(result.settled).toBe(false);
+    expect(result.reasons.join()).toMatch(/984 is still pending/);
+  });
+
+  it('refuses while an in-window round is still inside the poller re-read band', () => {
+    // tip 1_020 -> currentRoundHeight 1_008; oldestStillReRead = 1_008 - 48 = 960.
+    // The round at 984 is >= 960, so it is still being overwritten each poll.
+    const result = roundsSettledForFinalize({
+      rounds: [round(984)],
+      baseline, observation, tipHeight: 1_020, signingActiveQuorumCountByProfile: saqc,
+    });
+    expect(result.settled).toBe(false);
+    expect(result.reasons.join()).toMatch(/re-read window at tip 1020/);
+  });
+
+  it('ignores rounds outside the baseline and observation windows', () => {
+    // A round at 1_000 falls in the warm-up gap between the windows; it is not measured.
+    const result = roundsSettledForFinalize({
+      rounds: [round(1_000, 'pending')],
+      baseline, observation, tipHeight: 1_020, signingActiveQuorumCountByProfile: saqc,
+    });
+    expect(result).toEqual({ settled: true, reasons: [] });
+  });
+
+  it('refuses a profile whose re-read window the registry does not know', () => {
+    const result = roundsSettledForFinalize({
+      rounds: [{ llmqName: 'mystery', dkgInterval: 24, expectedHeight: 984, status: 'formed' }],
+      baseline, observation, tipHeight: 1_200, signingActiveQuorumCountByProfile: saqc,
+    });
+    expect(result.settled).toBe(false);
+    expect(result.reasons.join()).toMatch(/no known re-read window/);
   });
 });

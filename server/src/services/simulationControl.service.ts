@@ -31,6 +31,7 @@ export class SimulationControlError extends Error {
       | 'PREFLIGHT_FAILED'
       | 'APPROVAL_DENIED'
       | 'EXECUTOR_NOT_AVAILABLE'
+      | 'EXECUTOR_NETWORK_FORBIDDEN'
       | 'CORRUPT_ARTIFACT',
     message: string,
     public readonly details: unknown = null
@@ -39,6 +40,18 @@ export class SimulationControlError extends Error {
     this.name = 'SimulationControlError';
   }
 }
+
+/**
+ * The only network the executor is ever allowed to act on.
+ *
+ * A live run carries a target snapshot whose hostRef, on any real network, is a
+ * masternode's actual address. The executor binds to that snapshot, so a live
+ * run on anything but the local lab would put it one missing `--network regtest`
+ * away from holding real fleet host identities. This is a design constant, not a
+ * setting: making the lab configurable would be the foot-gun the guard exists to
+ * remove.
+ */
+const EXECUTOR_LAB_NETWORK: SimulationNetwork = 'regtest';
 
 export interface SimulationControlIdentity {
   actor: SimulationAuditActor;
@@ -354,6 +367,22 @@ export class SimulationControlService {
     return { run, preflight: evaluation, approval, idempotentReplay: false };
   }
 
+  /**
+   * The executor boundary. Refuses a live run that is not on the lab network,
+   * before the executor exists, so wiring it in later cannot reach a run whose
+   * target snapshot holds real fleet host identities. A dry run never reaches
+   * this: it touches no host.
+   */
+  private assertExecutorNetwork(run: SimulationRunProjection): void {
+    if (run.metadata.network !== EXECUTOR_LAB_NETWORK) {
+      throw new SimulationControlError(
+        'EXECUTOR_NETWORK_FORBIDDEN',
+        `the executor runs only on ${EXECUTOR_LAB_NETWORK}; refusing a live ${run.metadata.network} run`,
+        { network: run.metadata.network }
+      );
+    }
+  }
+
   async start(input: { runKey: string; idempotencyKey: string }) {
     const request = await this.claim({
       operation: 'start', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {},
@@ -362,6 +391,7 @@ export class SimulationControlService {
     if (run.state.status === 'completed' && !run.state.live) return { run, idempotentReplay: true };
     ensureStatus(run, ['armed']);
     if (run.state.live) {
+      this.assertExecutorNetwork(run);
       throw new SimulationControlError(
         'EXECUTOR_NOT_AVAILABLE',
         'live execution is disabled until the day-8 leased executor exists'
@@ -397,6 +427,7 @@ export class SimulationControlService {
       });
     }
     if (run.state.live) {
+      this.assertExecutorNetwork(run);
       throw new SimulationControlError(
         'EXECUTOR_NOT_AVAILABLE',
         'run is safely held in recovery until the day-8 executor can prove cleanup'
@@ -416,6 +447,7 @@ export class SimulationControlService {
     });
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.live) {
+      this.assertExecutorNetwork(run);
       throw new SimulationControlError(
         'EXECUTOR_NOT_AVAILABLE',
         'live recovery proof is unavailable until the day-8 executor exists'

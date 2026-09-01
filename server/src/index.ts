@@ -30,7 +30,12 @@ import { sendError } from './utils/http.js';
 import { evaluateReadiness } from './domain/readiness.js';
 import { currentParticipants } from './services/experiment.service.js';
 import { metricsService } from './services/metrics.service.js';
-import { initializeSimulationPersistenceIndexes } from './services/simulationMongo.repository.js';
+import {
+  initializeSimulationPersistenceIndexes,
+  MongoSimulationPersistenceRepository,
+} from './services/simulationMongo.repository.js';
+import { SimulationPersistenceService } from './services/simulationPersistence.service.js';
+import { SimulationReconcileService } from './services/simulationReconcile.service.js';
 
 /**
  * Blocks the staker count looks back over. Stated in the response so a reader
@@ -164,6 +169,14 @@ async function main(): Promise<void> {
   zmqService.start();
   seedStatusService.start();
 
+  const simulationReconcileRepository = new MongoSimulationPersistenceRepository();
+  const simulationReconcileService = new SimulationReconcileService(
+    new SimulationPersistenceService(simulationReconcileRepository),
+    (nowMs) => simulationReconcileRepository.findReconcilableRunKeys(nowMs),
+    { logger }
+  );
+  simulationReconcileService.start();
+
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);
   });
@@ -177,6 +190,7 @@ async function main(): Promise<void> {
     chainLockService.stop();
     await zmqService.stop();
     seedStatusService.stop();
+    simulationReconcileService.stop();
     metricsService.stop();
     server.close();
     await disconnectDatabase();

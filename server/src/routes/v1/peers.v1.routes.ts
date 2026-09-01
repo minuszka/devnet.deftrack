@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { PeerObservation } from '../../models/PeerObservation.js';
 import { HostStatus } from '../../models/HostStatus.js';
+import { StakeScriptObservation } from '../../models/StakeScriptObservation.js';
 import { propagationSpread, laggards, type HostSighting } from '../../domain/propagation.js';
 import { requireIngestToken } from '../../middleware/requireIngestToken.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
@@ -108,6 +109,30 @@ router.post(
         },
         { upsert: true }
       );
+
+      // The immutable, window-scoped half the measurement attributes from. The
+      // HostStatus view above is the current union; this records that this host
+      // held these scripts AT this height, so a report over a past window reads
+      // the same rows however long after finalize verify() runs.
+      if (stakeScripts.length > 0 && typeof status.height === 'number') {
+        const reportHeight = status.height;
+        await StakeScriptObservation.bulkWrite(
+          stakeScripts.map((rawScript) => {
+            const script = rawScript.toLowerCase();
+            const observationKey = `${body.host}:${script}:${reportHeight}`;
+            return {
+              updateOne: {
+                filter: { observationKey },
+                update: {
+                  $setOnInsert: { observationKey, host: body.host, script, height: reportHeight, observedAt: ingestedAt },
+                },
+                upsert: true,
+              },
+            };
+          }),
+          { ordered: false }
+        );
+      }
     }
 
     sendData(res, { accepted: body.observations.length, stored });

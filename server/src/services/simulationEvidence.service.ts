@@ -293,7 +293,14 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       policy: {
         expectedChain: config.simulator.expectedChain,
         expectedGenesisHash: config.simulator.expectedGenesisHash,
-        expectedWrapperVersion: config.simulator.expectedWrapperVersion || 'not-installed',
+        // Passed straight through, like expectedChain and expectedGenesisHash
+        // beside it. The old `|| 'not-installed'` substitution turned an
+        // unconfigured server -- an empty env var -- into a sentinel that no
+        // real target's wrapper version can equal, so every live preflight
+        // failed the recovery check and dead-ended in `rejected`, blaming the
+        // targets for a server-side misconfiguration. Unset is now a clear,
+        // actionable hard error from evaluateSimulationPreflight instead.
+        expectedWrapperVersion: config.simulator.expectedWrapperVersion,
         maxExplorerLagBlocks: 2,
         maxExplorerAgeMs: 2 * 60_000,
         maxObserverAgeMs: OBSERVATION_MAX_AGE_MS,

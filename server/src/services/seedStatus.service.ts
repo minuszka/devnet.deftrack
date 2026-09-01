@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rpc } from './rpc.service.js';
 import { HostStatus } from '../models/HostStatus.js';
+import { StakeScriptObservation } from '../models/StakeScriptObservation.js';
 import { localClockService } from './localClock.service.js';
 
 /**
@@ -129,6 +130,27 @@ export class SeedStatusService {
       },
       { upsert: true }
     );
+
+    // Append-only, alongside the current-view overwrite above: this is the
+    // immutable half the measurement attributes blocks from, so the same window
+    // resolves to the same host however long after finalize verify() runs. A
+    // retry at the same height is a $setOnInsert no-op.
+    if (typeof height === 'number' && scripts.size > 0) {
+      const observedAt = new Date();
+      await StakeScriptObservation.bulkWrite(
+        [...scripts].map((script) => {
+          const observationKey = `seed:${script}:${height}`;
+          return {
+            updateOne: {
+              filter: { observationKey },
+              update: { $setOnInsert: { observationKey, host: 'seed', script, height, observedAt } },
+              upsert: true,
+            },
+          };
+        }),
+        { ordered: false }
+      );
+    }
 
     logger.info(`Seed self-report: ${peers.length} peers, ${scripts.size} payout script(s)`);
   }

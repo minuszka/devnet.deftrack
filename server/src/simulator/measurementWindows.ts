@@ -1,5 +1,6 @@
 import { SIMULATION_CONTROL_POLICY } from './simulationPolicy.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
+import { currentRoundHeight } from '../domain/dkgSchedule.js';
 
 export interface SimulationMeasurementPolicy {
   dkgIntervalBlocks: number;
@@ -166,6 +167,64 @@ export function planMeasurementWindowsForLlmqFault(input: {
     ...SIMULATION_CONTROL_POLICY.measurement,
     dkgIntervalBlocks: profile.dkgInterval,
   });
+}
+
+export interface SettlementRound {
+  llmqName: string;
+  dkgInterval: number;
+  expectedHeight: number;
+  status: string;
+}
+
+/**
+ * Whether every DKG round the report will fingerprint has stopped moving.
+ *
+ * The quorum poller `$set`-overwrites a round's status, health and members on
+ * every pass, and keeps re-reading each round until it is
+ * `signingActiveQuorumCount` intervals behind the tip. A finalize that runs
+ * while an in-window round is still pending, or still inside that re-read band,
+ * fingerprints a value that will change -- and because a report is immutable
+ * and its `{runKey, faultStart, faultEnd}` anchor unique, the later truth can
+ * only surface as `verify()` matches:false or an unrecoverable REPORT_CONFLICT.
+ *
+ * So finalize waits, fail-closed and in the open, until every round inside the
+ * baseline or observation window is resolved and past the re-read band. A
+ * profile the registry does not know cannot be proven settled, so it is
+ * refused rather than trusted. `tipHeight` is a liveness input only; it never
+ * enters the report or its fingerprint.
+ */
+export function roundsSettledForFinalize(input: {
+  rounds: readonly SettlementRound[];
+  baseline: MeasurementHeightRange;
+  observation: MeasurementHeightRange;
+  tipHeight: number;
+  signingActiveQuorumCountByProfile: Readonly<Record<string, number>>;
+}): { settled: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  const inWindow = (height: number): boolean =>
+    (height >= input.baseline.fromHeight && height <= input.baseline.toHeight) ||
+    (height >= input.observation.fromHeight && height <= input.observation.toHeight);
+
+  for (const round of input.rounds) {
+    if (!inWindow(round.expectedHeight)) continue;
+    if (round.status === 'pending') {
+      reasons.push(`${round.llmqName} round at height ${round.expectedHeight} is still pending`);
+      continue;
+    }
+    const signingActiveQuorumCount = input.signingActiveQuorumCountByProfile[round.llmqName];
+    if (signingActiveQuorumCount === undefined) {
+      reasons.push(`${round.llmqName} round at height ${round.expectedHeight} has no known re-read window`);
+      continue;
+    }
+    const oldestStillReRead =
+      currentRoundHeight(input.tipHeight, round.dkgInterval) - round.dkgInterval * signingActiveQuorumCount;
+    if (round.expectedHeight >= oldestStillReRead) {
+      reasons.push(
+        `${round.llmqName} round at height ${round.expectedHeight} is still in the poller re-read window at tip ${input.tipHeight}`
+      );
+    }
+  }
+  return { settled: reasons.length === 0, reasons };
 }
 
 export function baselineEvidenceSatisfies(

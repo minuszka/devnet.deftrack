@@ -1,9 +1,11 @@
+import type { FilterQuery } from 'mongoose';
 import type { LiveRunLock } from '../domain/liveRunLock.js';
 import type { SimulationRunState } from '../domain/simulationRunState.js';
+import { reconcilableRunFilter } from '../domain/reconcileSweep.js';
 import { SimulationAction } from '../models/SimulationAction.js';
 import { SimulationAuditEvent } from '../models/SimulationAuditEvent.js';
 import { SimulationLiveRunLock } from '../models/SimulationLiveRunLock.js';
-import { SimulationRun } from '../models/SimulationRun.js';
+import { SimulationRun, type SimulationRunDocument, type SimulationRecoveryResult } from '../models/SimulationRun.js';
 import { SimulationTarget } from '../models/SimulationTarget.js';
 import { SimulationControlRequest } from '../models/SimulationControlRequest.js';
 import { SimulationRunArtifact } from '../models/SimulationRunArtifact.js';
@@ -56,6 +58,21 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
     return found === null ? null : projectionFromLean(found);
   }
 
+  /**
+   * The keys of runs a reconcile sweep should visit this tick. Bounded, oldest
+   * first: a backlog is worked steadily rather than all at once, and the cap
+   * keeps one tick's load fixed. Not on the shared repository interface -- only
+   * the sweeper needs it.
+   */
+  async findReconcilableRunKeys(nowMs: number, limit = 200): Promise<string[]> {
+    const rows = await SimulationRun.find(reconcilableRunFilter(nowMs) as FilterQuery<SimulationRunDocument>)
+      .select('runKey')
+      .sort({ 'state.updatedAtMs': 1 })
+      .limit(limit)
+      .lean<{ runKey: string }[]>();
+    return rows.map((row) => row.runKey);
+  }
+
   async insertRun(projection: SimulationRunProjection): Promise<'inserted' | 'existing'> {
     const result = await SimulationRun.updateOne(
       { runKey: projection.runKey },
@@ -78,11 +95,16 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
   async compareAndSwapRun(
     runKey: string,
     expectedRevision: number,
-    nextState: SimulationRunState
+    nextState: SimulationRunState,
+    recovery?: SimulationRecoveryResult
   ): Promise<boolean> {
+    const set: Record<string, unknown> = { state: nextState };
+    // Only when a recovery outcome is supplied: state-only transitions never
+    // touch the recovery subfield, so they cannot blank it.
+    if (recovery !== undefined) set.recovery = recovery;
     const result = await SimulationRun.updateOne(
       { runKey, 'state.revision': expectedRevision },
-      { $set: { state: nextState } }
+      { $set: set }
     );
     return result.modifiedCount === 1;
   }

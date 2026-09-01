@@ -65,6 +65,10 @@ function evidence(): SimulationMeasurementEvidence {
     observationGaps: [],
     hosts: [{ hostId: HOST, reportedAtMs: NOW_MS - 1_000 }],
     expectedHostIds: [HOST],
+    // Far enough past the last in-window round (4004) that every round has left
+    // the llmq_defcon re-read band (dkgInterval 24 * signingActiveQuorumCount 2
+    // = 48), so finalize's settledness gate passes.
+    tipHeight: 4_200,
   };
 }
 
@@ -137,5 +141,27 @@ describe('SimulationMeasurementService', () => {
     await expect(service.finalize({ runKey: RUN_KEY, anchor, generatedAtMs: NOW_MS }))
       .rejects.toMatchObject({ code: 'REPORT_CONFLICT' } satisfies Partial<SimulationMeasurementError>);
     expect(repository.records.get(first.reportId)?.reportFingerprint).toBe(first.reportFingerprint);
+  });
+
+  it('refuses to finalize while a round is still in the poller re-read band, and writes nothing', async () => {
+    const repository = new MemoryMeasurementRepository();
+    // The tip sits just past the last round, so it has not yet left the
+    // llmq_defcon re-read band -- its status/health are still being overwritten.
+    repository.source.tipHeight = 4_020;
+    const service = new SimulationMeasurementService(repository);
+    await expect(service.finalize({ runKey: RUN_KEY, anchor, generatedAtMs: NOW_MS }))
+      .rejects.toMatchObject({ code: 'EVIDENCE_NOT_SETTLED' } satisfies Partial<SimulationMeasurementError>);
+    expect(repository.records.size).toBe(0);
+  });
+
+  it('refuses to finalize while an in-window round is still pending', async () => {
+    const repository = new MemoryMeasurementRepository();
+    repository.source.rounds = repository.source.rounds.map((round, index) =>
+      index === 0 ? { ...round, status: 'pending' as const } : round
+    );
+    const service = new SimulationMeasurementService(repository);
+    await expect(service.finalize({ runKey: RUN_KEY, anchor, generatedAtMs: NOW_MS }))
+      .rejects.toMatchObject({ code: 'EVIDENCE_NOT_SETTLED' } satisfies Partial<SimulationMeasurementError>);
+    expect(repository.records.size).toBe(0);
   });
 });
