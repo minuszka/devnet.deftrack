@@ -109,6 +109,27 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
     return result.modifiedCount === 1;
   }
 
+  async writeRecoveryForEvent(
+    runKey: string,
+    eventId: string,
+    recovery: SimulationRecoveryResult
+  ): Promise<boolean> {
+    // Guard on the run being at the state this transition produced, not on a
+    // revision: whoever applied the transition -- our CAS or loadRun's repair --
+    // set lastTransition to this event, and that is the moment the findings belong
+    // to. matchedCount, not modifiedCount, so an idempotent re-write still counts.
+    const result = await SimulationRun.updateOne(
+      { runKey, 'state.lastTransition.eventId': eventId },
+      { $set: { recovery } }
+    );
+    return result.matchedCount >= 1;
+  }
+
+  async findRecovery(runKey: string): Promise<SimulationRecoveryResult | null> {
+    const found = await SimulationRun.findOne({ runKey }).select('recovery').lean<{ recovery?: SimulationRecoveryResult } | null>();
+    return found?.recovery ?? null;
+  }
+
   async findRunAuditByEventId(
     runKey: string,
     eventId: string
