@@ -1,0 +1,230 @@
+import { simulationFingerprint } from '../domain/simulationAudit.js';
+import { chainlockProfileNameAtHeight } from '../config/llmq.js';
+import { Block } from '../models/Block.js';
+import { HostStatus } from '../models/HostStatus.js';
+import { MasternodeEvent } from '../models/MasternodeEvent.js';
+import { ObservationGap } from '../models/ObservationGap.js';
+import { PeerObservation } from '../models/PeerObservation.js';
+import { QuorumRound } from '../models/QuorumRound.js';
+import { ServiceEpoch } from '../models/ServiceEpoch.js';
+import { SimulationMeasurementReportModel } from '../models/SimulationMeasurementReport.js';
+import { SimulationRun } from '../models/SimulationRun.js';
+import { SimulationRunArtifact } from '../models/SimulationRunArtifact.js';
+import { Transaction } from '../models/Transaction.js';
+import type { DryRunPlan } from '../simulator/scenarioTypes.js';
+import type {
+  SimulationMeasurementEvidence,
+  MeasurementPoSeEventEvidence,
+} from '../simulator/simulationMeasurement.js';
+import type {
+  SimulationMeasurementContext,
+  SimulationMeasurementRecord,
+  SimulationMeasurementRepository,
+} from './simulationMeasurement.service.js';
+
+const POSE_MEASUREMENT_TYPES: MeasurementPoSeEventEvidence['type'][] = [
+  'banned', 'revived', 'penalty_up', 'penalty_down',
+  'service_missed', 'service_recovered', 'service_suspended', 'service_banned',
+];
+const ESTIMATED_BLOCK_INTERVAL_MS = 150_000;
+
+function isDuplicateKey(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: number }).code === 11_000;
+}
+
+function recordFromLean(value: unknown): SimulationMeasurementRecord {
+  const row = value as SimulationMeasurementRecord;
+  return {
+    reportId: row.reportId,
+    runKey: row.runKey,
+    anchor: row.anchor,
+    evidenceFingerprint: row.evidenceFingerprint,
+    reportFingerprint: row.reportFingerprint,
+    report: row.report,
+    generatedAtMs: row.generatedAtMs,
+  };
+}
+
+function positiveScriptFor(outputs: readonly { valueSat: unknown; scriptHex: string | null }[]): string | null {
+  for (const output of outputs) {
+    const value = Number(
+      typeof output.valueSat === 'object' && output.valueSat !== null && 'toString' in output.valueSat
+        ? output.valueSat.toString()
+        : output.valueSat
+    );
+    if (output.scriptHex && Number.isFinite(value) && value > 0) return output.scriptHex.toLowerCase();
+  }
+  return null;
+}
+
+export class MongoSimulationMeasurementRepository implements SimulationMeasurementRepository {
+  async loadContext(runKey: string): Promise<SimulationMeasurementContext | null> {
+    const [run, artifacts] = await Promise.all([
+      SimulationRun.findOne({ runKey })
+        .select('runKey metadata.targetSnapshot.hostRef')
+        .lean(),
+      SimulationRunArtifact.find({ runKey, kind: 'dry-run' })
+        .sort({ atMs: 1, artifactId: 1 })
+        .select('payload payloadFingerprint')
+        .lean(),
+    ]);
+    if (run === null || artifacts.length === 0) return null;
+    if (artifacts.length !== 1) throw new Error('simulation run has multiple immutable DryRun artifacts');
+    const artifact = artifacts[0]!;
+    if (simulationFingerprint(artifact.payload) !== artifact.payloadFingerprint) {
+      throw new Error('stored DryRun artifact fingerprint is invalid');
+    }
+    const plan = (artifact.payload as { plan?: DryRunPlan }).plan;
+    if (
+      plan === undefined ||
+      plan.runKey !== runKey ||
+      simulationFingerprint({
+        ...plan,
+        planFingerprint: undefined,
+      }) !== plan.planFingerprint
+    ) {
+      throw new Error('stored DryRun plan is invalid');
+    }
+    return {
+      runKey,
+      impact: plan.impact,
+      expectedHostIds: [...new Set(run.metadata.targetSnapshot.map((target) => target.hostRef))].sort(),
+    };
+  }
+
+  async loadEvidence(input: {
+    fromHeight: number;
+    toHeight: number;
+    faultStartHeight: number;
+    expectedHostIds: readonly string[];
+    generatedAtMs: number;
+  }): Promise<SimulationMeasurementEvidence> {
+    const height = { $gte: input.fromHeight, $lte: input.toHeight };
+    const [blocks, coinstakes, rounds, poseEvents, dslEpochs, peerObservations, hosts] = await Promise.all([
+      Block.find({ height }).sort({ height: 1 }).select(
+        'height hash time isProofOfStake hasChainLock chainLockSource chainLockLatencyMs chainLockLatencySec firstSeenAt'
+      ).lean(),
+      Transaction.find({ height, isCoinstake: true }).sort({ height: 1, txid: 1 }).select('height txid vout.valueSat vout.scriptHex').lean(),
+      QuorumRound.find({ expectedHeight: height }).sort({ expectedHeight: 1, llmqName: 1 }).select(
+        'llmqName dkgInterval expectedHeight status healthRatio invalidMembers'
+      ).lean(),
+      MasternodeEvent.find({ height, type: { $in: POSE_MEASUREMENT_TYPES } }).sort({ height: 1, eventKey: 1 }).select(
+        'height type source proTxHash'
+      ).lean(),
+      ServiceEpoch.find({ boundaryHeight: height }).sort({ boundaryHeight: 1, epoch: 1 }).select(
+        'epoch boundaryHeight status missedCount listSize'
+      ).lean(),
+      PeerObservation.find({ height, host: { $in: input.expectedHostIds } }).sort({ height: 1, topic: 1, host: 1 }).select(
+        'host topic hash height receivedAt clockOffsetMs resolutionMs'
+      ).lean(),
+      HostStatus.find({ host: { $in: input.expectedHostIds } }).select('host reportedAt stakeScripts').lean(),
+    ]);
+
+    const ownerByScript = new Map<string, string | null>();
+    for (const host of hosts) {
+      for (const rawScript of host.stakeScripts ?? []) {
+        const script = rawScript.toLowerCase();
+        const previous = ownerByScript.get(script);
+        ownerByScript.set(script, previous === undefined || previous === host.host ? host.host : null);
+      }
+    }
+    const scriptByHeight = new Map<number, string>();
+    for (const transaction of coinstakes) {
+      if (scriptByHeight.has(transaction.height)) continue;
+      const script = positiveScriptFor(transaction.vout);
+      if (script !== null) scriptByHeight.set(transaction.height, script);
+    }
+
+    const observedTimes = blocks
+      .map((block) => block.firstSeenAt?.getTime() ?? null)
+      .filter((value): value is number => value !== null);
+    const fallbackSpanMs = (input.toHeight - input.fromHeight + 10) * ESTIMATED_BLOCK_INTERVAL_MS;
+    const gapFromMs = observedTimes.length > 0 ? Math.min(...observedTimes) : input.generatedAtMs - fallbackSpanMs;
+    const gapToMs = observedTimes.length > 0 ? Math.max(...observedTimes) : input.generatedAtMs;
+    const observationGaps = await ObservationGap.find({
+      detectedAt: { $gte: new Date(gapFromMs), $lte: new Date(gapToMs) },
+    }).sort({ detectedAt: 1 }).select('topic missed detectedAt').lean();
+
+    return {
+      primaryLlmqName: chainlockProfileNameAtHeight(input.faultStartHeight),
+      blocks: blocks.map((block) => {
+        const stakerScript = scriptByHeight.get(block.height) ?? null;
+        return {
+          height: block.height,
+          hash: block.hash,
+          time: block.time,
+          isProofOfStake: block.isProofOfStake,
+          hasChainLock: block.hasChainLock,
+          chainLockSource: block.chainLockSource,
+          chainLockLatencyMs: block.chainLockLatencyMs,
+          chainLockLatencySec: block.chainLockLatencySec,
+          firstSeenAtMs: block.firstSeenAt?.getTime() ?? null,
+          stakerScript,
+          stakerHostId: stakerScript === null ? null : ownerByScript.get(stakerScript) ?? null,
+        };
+      }),
+      rounds: rounds.map((round) => ({
+        llmqName: round.llmqName,
+        dkgInterval: round.dkgInterval,
+        expectedHeight: round.expectedHeight,
+        status: round.status,
+        healthRatio: round.healthRatio,
+        invalidMembers: [...round.invalidMembers],
+      })),
+      poseEvents: poseEvents.map((event) => ({
+        height: event.height,
+        type: event.type as MeasurementPoSeEventEvidence['type'],
+        source: event.source,
+        subjectId: event.proTxHash,
+      })),
+      dslEpochs: dslEpochs.map((epoch) => ({
+        epoch: epoch.epoch,
+        boundaryHeight: epoch.boundaryHeight,
+        status: epoch.status,
+        missedCount: epoch.missedCount,
+        listSize: epoch.listSize,
+      })),
+      peerObservations: peerObservations.map((observation) => ({
+        hostId: observation.host,
+        topic: observation.topic,
+        hash: observation.hash,
+        height: observation.height,
+        receivedAtMs: observation.receivedAt.getTime(),
+        clockOffsetMs: observation.clockOffsetMs,
+        resolutionMs: observation.resolutionMs,
+      })),
+      observationGaps: observationGaps.map((gap) => ({
+        topic: gap.topic,
+        missed: gap.missed,
+        detectedAtMs: gap.detectedAt.getTime(),
+      })),
+      hosts: hosts.map((host) => ({ hostId: host.host, reportedAtMs: host.reportedAt.getTime() })),
+      expectedHostIds: [...input.expectedHostIds],
+    };
+  }
+
+  async insertReport(record: SimulationMeasurementRecord): Promise<'inserted' | 'existing'> {
+    try {
+      await SimulationMeasurementReportModel.create(record);
+      return 'inserted';
+    } catch (error) {
+      if (isDuplicateKey(error)) return 'existing';
+      throw error;
+    }
+  }
+
+  async findReport(reportId: string): Promise<SimulationMeasurementRecord | null> {
+    const found = await SimulationMeasurementReportModel.findOne({ reportId })
+      .select('-_id -createdAt')
+      .lean();
+    return found === null ? null : recordFromLean(found);
+  }
+
+  async findLatestReport(runKey: string): Promise<SimulationMeasurementRecord | null> {
+    const found = await SimulationMeasurementReportModel.findOne({ runKey })
+      .sort({ generatedAtMs: -1, reportId: 1 })
+      .select('-_id -createdAt')
+      .lean();
+    return found === null ? null : recordFromLean(found);
+  }
+}

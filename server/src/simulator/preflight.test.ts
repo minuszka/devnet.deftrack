@@ -64,6 +64,7 @@ function healthyInput(): SimulationPreflightInput {
     },
     conflicts: { otherLiveRunKeys: [], otherRunningExperimentKeys: [] },
     recovery: {
+      required: true,
       workerLastSeenAtMs: NOW - 1_000,
       targets: [{ targetId: 'mn-1', available: true, faultStateClean: true, wrapperVersion: '1.0.0' }],
     },
@@ -156,11 +157,40 @@ describe('simulation preflight', () => {
     expect(result.checks.filter((item) => !item.passed).every((item) => item.severity === 'warning')).toBe(true);
   });
 
+  it('does not require a remote recovery worker for a non-live DryRun', () => {
+    const input = healthyInput();
+    input.recovery = { required: false, workerLastSeenAtMs: null, targets: [] };
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(true);
+    expect(result.checks.find((item) => item.checkId === 'recovery-ready')).toMatchObject({
+      passed: true,
+      severity: 'warning',
+    });
+  });
+
   it('requires baseline minimums before arming', () => {
     const input = healthyInput();
     input.baseline.evidence!.resolvedDkgRounds -= 1;
     const result = evaluateSimulationPreflight(input);
     expect(result.passed).toBe(false);
     expect(result.checks.find((item) => item.checkId === 'baseline-ready')).toMatchObject({ passed: false, severity: 'required' });
+  });
+
+  it('requires every selected quorum-outage target to remain a current member', () => {
+    const input = healthyInput();
+    input.selectedTargetIds = ['mn-1', 'mn-2'];
+    input.recovery.required = false;
+    input.targetInventory.snapshots.push({
+      ...input.targetInventory.snapshots[1]!,
+      targetId: 'mn-3',
+      proTxHash: '3'.padStart(64, '0'),
+    });
+    input.quorum.memberTargetIds = ['mn-1', 'mn-3'];
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((item) => item.checkId === 'quorum-stable')).toMatchObject({
+      passed: false,
+      severity: 'required',
+    });
   });
 });

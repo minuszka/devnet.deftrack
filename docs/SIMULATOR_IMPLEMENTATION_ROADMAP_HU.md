@@ -155,6 +155,13 @@ Biztonság:
 
 Elfogadási kapu: a teljes dry-run életciklus CLI-ből végigfut.
 
+Megvalósítva a 6. napi ágon: külön privát Control API, kötelező idempotency,
+append-only control/artifact rekordok, szerveroldali risk-role kapu, read-only
+Mongo/RPC evidence assembler, explicit publikus projekció, admin rate limit és
+nem-böngészős API-szerződés. A `dry-lifecycle` CLI parancs az elfogadási kaput
+egy menetben futtatja. A live végrehajtás a 8. napi lease-es executor előtt
+szándékosan tiltott.
+
 ## 7. nap – mérési és összehasonlító pipeline
 
 Feladatok:
@@ -166,6 +173,14 @@ Feladatok:
 - A futás ne minősüljön sikeres mérésnek elégtelen telemetry mellett.
 
 Elfogadási kapu: egy teljes szintetikus experiment jelentése determinisztikusan újraszámolható.
+
+Megvalósítva a 7. napi ágon: az aktív LLMQ-profilból automatikusan származtatott
+baseline/run ablakok; DKG, ChainLock, PoSe, DSL, staking és data-quality
+snapshotok; külön chain-time/observed-time mérés; expected/actual eredmény;
+telemetria fail-closed kapu; boundary-hash reorg-védelem; append-only riport és
+explicit publikus DTO. A teljes szintetikus riport sorrendfüggetlenül
+újraszámolható. Az automatikus `finalize` hívást a 8. napi executor köti be,
+mert a hiteles fault anchorokat az ismeri.
 
 ## 8. nap – Docker executor és fault lease
 

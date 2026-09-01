@@ -72,6 +72,7 @@ export interface SimulationPreflightInput {
     otherRunningExperimentKeys: string[];
   };
   recovery: {
+    required: boolean;
     workerLastSeenAtMs: number | null;
     targets: RecoveryTargetEvidence[];
   };
@@ -106,6 +107,7 @@ const OBSERVER_ISSUES = new Set<TargetResolutionIssueCode>([
 ]);
 const ACTIVE_ISSUES = new Set<TargetResolutionIssueCode>([
   'MASTERNODE_NOT_ACTIVE',
+  'MASTERNODE_HOST_UNRESOLVED',
   'MASTERNODE_HOST_MISMATCH',
   'HOST_HEIGHT_STALE',
 ]);
@@ -296,15 +298,17 @@ export function evaluateSimulationPreflight(
       state.wrapperVersion !== input.policy.expectedWrapperVersion;
   });
   const recoveryPassed =
-    !recoveryDuplicates && workerAge >= 0 && workerAge <= input.policy.maxWorkerAgeMs && badRecovery.length === 0;
+    !input.recovery.required ||
+    (!recoveryDuplicates && workerAge >= 0 && workerAge <= input.policy.maxWorkerAgeMs && badRecovery.length === 0);
   checks.push(check(
-    'recovery-ready', 'required', recoveryPassed, atMs,
-    'Recovery worker and target cleanup mechanisms are ready.',
+    'recovery-ready', input.recovery.required ? 'required' : 'warning', recoveryPassed, atMs,
+    input.recovery.required
+      ? 'Recovery worker and target cleanup mechanisms are ready.'
+      : 'Recovery worker is not required for a non-live DryRun.',
     'Recovery cannot be proven for every selected target.',
-    `workerAgeMs=${workerAge}; duplicate=${recoveryDuplicates}; targets=${badRecovery.join(',')}`
+    `required=${input.recovery.required}; workerAgeMs=${workerAge}; duplicate=${recoveryDuplicates}; targets=${badRecovery.join(',')}`
   ));
 
-  const selectedSet = new Set(input.selectedTargetIds);
   const quorumUnique = new Set(input.quorum.memberTargetIds).size === input.quorum.memberTargetIds.length;
   const quorumMapped = input.quorum.memberTargetIds.every((targetId) => snapshotsById.has(targetId));
   const quorumFresh =
@@ -317,7 +321,7 @@ export function evaluateSimulationPreflight(
     quorumMapped &&
     quorumFresh &&
     input.quorum.memberTargetIds.length === input.policy.expectedQuorumSize &&
-    (!input.quorum.required || input.quorum.memberTargetIds.some((id) => selectedSet.has(id)));
+    (!input.quorum.required || input.selectedTargetIds.every((id) => input.quorum.memberTargetIds.includes(id)));
   checks.push(check(
     'quorum-stable', input.quorum.required ? 'required' : 'warning', quorumPassed, atMs,
     'Current quorum membership is stable and mapped.',

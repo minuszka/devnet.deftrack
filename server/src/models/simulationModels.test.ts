@@ -10,6 +10,18 @@ import {
   type SimulationRunMetadata,
 } from './SimulationRun.js';
 import { SimulationTarget } from './SimulationTarget.js';
+import {
+  SimulationControlRequest,
+  simulationControlRequestSchema,
+} from './SimulationControlRequest.js';
+import {
+  SimulationRunArtifact,
+  simulationRunArtifactSchema,
+} from './SimulationRunArtifact.js';
+import {
+  SimulationMeasurementReportModel,
+  simulationMeasurementReportSchema,
+} from './SimulationMeasurementReport.js';
 
 const actor = { actorId: 'admin-1', actorType: 'admin-session' as const, displayName: 'Admin' };
 
@@ -168,6 +180,22 @@ describe('simulation Mongo schemas', () => {
     expect(simulationRunSchema.indexes()).toEqual(
       expect.arrayContaining([[{ 'state.status': 1, createdAt: -1 }, { background: true }]])
     );
+    expect(simulationControlRequestSchema.indexes()).toEqual(
+      expect.arrayContaining([[{ requestKey: 1 }, { unique: true, background: true }]])
+    );
+    expect(simulationRunArtifactSchema.indexes()).toEqual(
+      expect.arrayContaining([
+        [{ runKey: 1, requestKey: 1, kind: 1 }, { unique: true, background: true }],
+      ])
+    );
+    expect(simulationMeasurementReportSchema.indexes()).toEqual(
+      expect.arrayContaining([
+        [
+          { runKey: 1, 'anchor.faultStartHeight': 1, 'anchor.faultEndHeight': 1 },
+          { unique: true, background: true },
+        ],
+      ])
+    );
     for (const [, options] of [
       ...auditIndexes,
       ...simulationActionSchema.indexes(),
@@ -196,5 +224,22 @@ describe('simulation Mongo schemas', () => {
     await expect(
       SimulationAuditEvent.bulkWrite([{ deleteMany: { filter: { runKey: initial.runKey } } }])
     ).rejects.toThrow(/append-only/i);
+  });
+
+  it('keeps control requests and run artifacts append-only', async () => {
+    await expect(SimulationControlRequest.updateOne(
+      { requestKey: 'ctl-1' }, { $set: { role: 'safety-admin' } }
+    ).exec()).rejects.toThrow(/append-only/i);
+    await expect(SimulationControlRequest.deleteMany({}).exec()).rejects.toThrow(/append-only/i);
+    await expect(SimulationRunArtifact.findOneAndUpdate(
+      { artifactId: 'art-1' }, { $set: { payload: {} } }
+    ).exec()).rejects.toThrow(/append-only/i);
+    await expect(SimulationRunArtifact.bulkWrite([
+      { deleteMany: { filter: { runKey: 'sim-model-test' } } },
+    ])).rejects.toThrow(/append-only/i);
+    await expect(SimulationMeasurementReportModel.updateOne(
+      { reportId: 'measure-1' }, { $set: { reportFingerprint: 'rewritten' } }
+    ).exec()).rejects.toThrow(/append-only/i);
+    await expect(SimulationMeasurementReportModel.deleteMany({}).exec()).rejects.toThrow(/append-only/i);
   });
 });

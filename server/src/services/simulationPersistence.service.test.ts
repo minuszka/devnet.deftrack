@@ -4,6 +4,7 @@ import { replaySimulationRunAudit } from '../domain/simulationAudit.js';
 import type { SimulationRunState } from '../domain/simulationRunState.js';
 import { simulationRunKeyFor } from '../domain/simulationIdentity.js';
 import type { SimulationRunMetadata } from '../models/SimulationRun.js';
+import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import {
   SimulationPersistenceService,
   type AppendSimulationAuditResult,
@@ -27,6 +28,57 @@ const metadata = (scenarioId = 'dry-run'): SimulationRunMetadata => ({
 });
 
 const clone = <T>(value: T): T => structuredClone(value);
+
+function plan(idempotencyKey: string, scenarioId = 'dry-run', faultLeaseSeconds = 30): DryRunPlan {
+  const runKey = simulationRunKeyFor(idempotencyKey);
+  return {
+    mode: 'dry-run',
+    runKey,
+    network: 'devnet',
+    scenarioId: scenarioId as DryRunPlan['scenarioId'],
+    scenarioVersion: 1,
+    seed: 'seed-1',
+    parameters: { durationSeconds: 30 },
+    selectedTargetIds: ['mn-1'],
+    selectedRoles: ['masternode'],
+    actions: [{
+      actionId: 'act-test',
+      runKey,
+      sequence: 0,
+      targetId: 'mn-1',
+      kind: 'service-stop',
+      payload: { kind: 'service-stop', faultLeaseSeconds },
+      payloadDigest: 'digest',
+      notBeforeOffsetMs: 0,
+      expiresAfterMs: 120_000,
+      maxAttempts: 3,
+    }],
+    impact: {
+      affectedTargetCount: 1,
+      affectedMasternodeCount: 1,
+      affectedStakerCount: 0,
+      affectedHostCount: 1,
+      affectedCurrentQuorumMembers: 0,
+      currentQuorumSize: null,
+      survivingCurrentQuorumMembers: null,
+      dkgThreshold: 44,
+      chainLockThreshold: 41,
+      dkgMarginAfterFault: null,
+      chainLockMarginAfterFault: null,
+      warnings: [],
+    },
+    coreSimulator: {
+      status: 'not-modeled',
+      repository: 'test',
+      profile: 'q60_44_41',
+      scenarioFamilies: [],
+      artifacts: [],
+      note: 'test',
+    },
+    planFingerprint: 'plan-fingerprint',
+    assurances: ['NO_DATABASE_WRITE', 'NO_RPC_CALL', 'NO_REMOTE_ACTION', 'NO_FAULT_APPLIED'],
+  };
+}
 
 class MemorySimulationRepository implements SimulationPersistenceRepository {
   readonly runs = new Map<string, SimulationRunProjection>();
@@ -87,13 +139,17 @@ class MemorySimulationRepository implements SimulationPersistenceRepository {
   }
 }
 
-async function create(service: SimulationPersistenceService, idempotencyKey = 'request-1') {
+async function create(
+  service: SimulationPersistenceService,
+  idempotencyKey = 'request-1',
+  live = false
+) {
   return service.createRun({
     idempotencyKey,
-    live: false,
+    live,
     createdAtMs: 1,
-    runExpiresAtMs: 1_000,
     metadata: metadata(),
+    dryRunPlan: plan(idempotencyKey),
   });
 }
 
@@ -111,8 +167,8 @@ describe('simulation persistence service', () => {
         idempotencyKey: 'request-1',
         live: false,
         createdAtMs: 1,
-        runExpiresAtMs: 1_000,
         metadata: metadata('other-scenario'),
+        dryRunPlan: plan('request-1', 'other-scenario'),
       })
     ).rejects.toMatchObject({ code: 'RUN_METADATA_CONFLICT' });
     await expect(
@@ -120,8 +176,8 @@ describe('simulation persistence service', () => {
         idempotencyKey: 'request-1',
         live: false,
         createdAtMs: 1,
-        runExpiresAtMs: 2_000,
         metadata: metadata(),
+        dryRunPlan: plan('request-1', 'dry-run', 999),
       })
     ).rejects.toMatchObject({ code: 'RUN_METADATA_CONFLICT' });
   });
@@ -129,7 +185,7 @@ describe('simulation persistence service', () => {
   it('persists transitions with optimistic revisions and idempotent event ids', async () => {
     const repository = new MemorySimulationRepository();
     const service = new SimulationPersistenceService(repository);
-    const created = await create(service);
+    const created = await create(service, 'request-1', true);
     const event = { type: 'begin_preflight' as const, eventId: 'event-1', atMs: 2 };
 
     const first = await service.transitionRun({ runKey: created.runKey, event, actor });
@@ -223,7 +279,7 @@ describe('simulation persistence service', () => {
   it('continues a fault-active run after restart and recovers it at lease expiry', async () => {
     const repository = new MemorySimulationRepository();
     let service = new SimulationPersistenceService(repository);
-    const created = await create(service);
+    const created = await create(service, 'fault-restart', true);
     const events = [
       { type: 'begin_preflight' as const, eventId: 'e1', atMs: 2 },
       { type: 'preflight_passed' as const, eventId: 'e2', atMs: 3 },
@@ -274,11 +330,7 @@ describe('simulation persistence service', () => {
       { type: 'preflight_passed' as const, eventId: 'e2', atMs: 3 },
       { type: 'begin_baseline' as const, eventId: 'e3', atMs: 4 },
       { type: 'baseline_completed' as const, eventId: 'e4', atMs: 5 },
-      { type: 'activate_fault' as const, eventId: 'e5', atMs: 6, faultLeaseExpiresAtMs: 900 },
-      { type: 'begin_observation' as const, eventId: 'e6', atMs: 7 },
-      { type: 'begin_recovery' as const, eventId: 'e7', atMs: 8 },
-      { type: 'recovery_succeeded' as const, eventId: 'e8', atMs: 9 },
-      { type: 'cooldown_completed' as const, eventId: 'e9', atMs: 10 },
+      { type: 'dry_run_completed' as const, eventId: 'e5', atMs: 6 },
     ];
     for (const event of events) {
       await service.transitionRun({ runKey: created.runKey, event, actor });
@@ -286,7 +338,7 @@ describe('simulation persistence service', () => {
 
     const audit = await repository.listRunAudit(created.runKey);
     const replayed = replaySimulationRunAudit(audit);
-    expect(replayed.state).toMatchObject({ status: 'completed', revision: 9 });
+    expect(replayed.state).toMatchObject({ status: 'completed', revision: 5, faultMayBeActive: false });
     expect(replayed.state).toEqual(repository.runs.get(created.runKey)?.state);
   });
 

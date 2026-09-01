@@ -30,6 +30,7 @@ import { sendError } from './utils/http.js';
 import { evaluateReadiness } from './domain/readiness.js';
 import { currentParticipants } from './services/experiment.service.js';
 import { metricsService } from './services/metrics.service.js';
+import { initializeSimulationPersistenceIndexes } from './services/simulationMongo.repository.js';
 
 /**
  * Blocks the staker count looks back over. Stated in the response so a reader
@@ -146,6 +147,7 @@ app.use('/api', (_req, res) => sendError(res, 404, 'not found'));
 
 async function main(): Promise<void> {
   await connectDatabase();
+  await initializeSimulationPersistenceIndexes();
   metricsService.start();
 
   const info = await rpc.getBlockchainInfo();

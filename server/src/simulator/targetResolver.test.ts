@@ -102,6 +102,20 @@ describe('private simulation target resolution', () => {
     );
   });
 
+  it('treats an unidentified observed masternode host as an arm-blocking ambiguity', () => {
+    const registry = [registryTarget(0)];
+    const runtime = evidence(registry);
+    runtime.masternodes[0]!.hostRef = null;
+    const result = resolveSimulationTargetInventory({
+      network: 'devnet', currentHeight: HEIGHT, nowMs: NOW, registry, ...runtime,
+    });
+    expect(result.complete).toBe(false);
+    expect(result.snapshots).toEqual([]);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MASTERNODE_HOST_UNRESOLVED', targetId: 'mn-0' }),
+    ]));
+  });
+
   it('supports deterministic random, host, operator and current-quorum selectors', () => {
     const inventory = resolve(Array.from({ length: 8 }, (_, index) => registryTarget(index)));
     const random = selectResolvedSimulationTargets(inventory, {

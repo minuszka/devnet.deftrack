@@ -1,3 +1,6 @@
+import { SIMULATION_CONTROL_POLICY } from './simulationPolicy.js';
+import { LLMQ_PROFILES } from '../config/llmq.js';
+
 export interface SimulationMeasurementPolicy {
   dkgIntervalBlocks: number;
   minimumBaselineDkgRounds: number;
@@ -29,19 +32,11 @@ export interface MeasurementWindowPlan {
   minimumBaselineChainLocks: number;
 }
 
-export const DEFAULT_MEASUREMENT_POLICY: SimulationMeasurementPolicy = {
-  dkgIntervalBlocks: 24,
-  minimumBaselineDkgRounds: 3,
-  minimumChainLockCoveragePercent: 80,
-  warmupBlocks: 2,
-  cooldownBlocks: 4,
-};
-
 function assertNonNegativeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative safe integer`);
 }
 
-export function minimumBaselineBlocks(policy: SimulationMeasurementPolicy): number {
+function minimumBaselineBlocksFor(policy: SimulationMeasurementPolicy): number {
   assertNonNegativeInteger(policy.dkgIntervalBlocks, 'dkgIntervalBlocks');
   assertNonNegativeInteger(policy.minimumBaselineDkgRounds, 'minimumBaselineDkgRounds');
   if (policy.dkgIntervalBlocks < 1 || policy.minimumBaselineDkgRounds < 1) {
@@ -57,13 +52,11 @@ export function minimumBaselineBlocks(policy: SimulationMeasurementPolicy): numb
   return policy.dkgIntervalBlocks * policy.minimumBaselineDkgRounds;
 }
 
-export function planMeasurementWindows(input: {
+function planMeasurementWindowsWithPolicy(input: {
   baselineEndHeight: number;
   faultStartHeight: number;
   faultEndHeight: number;
-  policy?: Partial<SimulationMeasurementPolicy>;
-}): MeasurementWindowPlan {
-  const policy = { ...DEFAULT_MEASUREMENT_POLICY, ...input.policy };
+}, policy: SimulationMeasurementPolicy): MeasurementWindowPlan {
   for (const [name, value] of Object.entries({
     baselineEndHeight: input.baselineEndHeight,
     faultStartHeight: input.faultStartHeight,
@@ -80,7 +73,7 @@ export function planMeasurementWindows(input: {
   if (input.faultEndHeight < input.faultStartHeight + policy.warmupBlocks) {
     throw new Error('fault window is too short after warm-up exclusion');
   }
-  const baselineBlocks = minimumBaselineBlocks(policy);
+  const baselineBlocks = minimumBaselineBlocksFor(policy);
   const minimumBaselineChainLocks = Math.ceil(
     (baselineBlocks * policy.minimumChainLockCoveragePercent) / 100
   );
@@ -105,6 +98,55 @@ export function planMeasurementWindows(input: {
     minimumBaselineDkgRounds: policy.minimumBaselineDkgRounds,
     minimumBaselineChainLocks,
   };
+}
+
+export function planMeasurementWindows(input: {
+  baselineEndHeight: number;
+  faultStartHeight: number;
+  faultEndHeight: number;
+}): MeasurementWindowPlan {
+  return planMeasurementWindowsWithPolicy(input, SIMULATION_CONTROL_POLICY.measurement);
+}
+
+/**
+ * Plans every measurement range from the immutable fault anchors.  Callers do
+ * not get to choose a shorter baseline independently from the fault window.
+ */
+export function planMeasurementWindowsForFault(input: {
+  faultStartHeight: number;
+  faultEndHeight: number;
+}): MeasurementWindowPlan {
+  assertNonNegativeInteger(input.faultStartHeight, 'faultStartHeight');
+  if (input.faultStartHeight === 0) {
+    throw new Error('fault window must have a preceding baseline height');
+  }
+  return planMeasurementWindows({
+    baselineEndHeight: input.faultStartHeight - 1,
+    faultStartHeight: input.faultStartHeight,
+    faultEndHeight: input.faultEndHeight,
+  });
+}
+
+/** Uses the reviewed Core profile registry; profile cadence is never caller-supplied. */
+export function planMeasurementWindowsForLlmqFault(input: {
+  primaryLlmqName: string;
+  faultStartHeight: number;
+  faultEndHeight: number;
+}): MeasurementWindowPlan {
+  assertNonNegativeInteger(input.faultStartHeight, 'faultStartHeight');
+  if (input.faultStartHeight === 0) {
+    throw new Error('fault window must have a preceding baseline height');
+  }
+  const profile = LLMQ_PROFILES[input.primaryLlmqName];
+  if (profile === undefined) throw new Error(`unknown measurement LLMQ profile: ${input.primaryLlmqName}`);
+  return planMeasurementWindowsWithPolicy({
+    baselineEndHeight: input.faultStartHeight - 1,
+    faultStartHeight: input.faultStartHeight,
+    faultEndHeight: input.faultEndHeight,
+  }, {
+    ...SIMULATION_CONTROL_POLICY.measurement,
+    dkgIntervalBlocks: profile.dkgInterval,
+  });
 }
 
 export function baselineEvidenceSatisfies(

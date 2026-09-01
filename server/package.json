@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "simulator": "node dist/cli/simulator.js",
     "db:explain": "npm run build --silent && node dist/scripts/explainQueries.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src"
