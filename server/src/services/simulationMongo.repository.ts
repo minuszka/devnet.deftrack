@@ -5,7 +5,7 @@ import { reconcilableRunFilter } from '../domain/reconcileSweep.js';
 import { SimulationAction } from '../models/SimulationAction.js';
 import { SimulationAuditEvent } from '../models/SimulationAuditEvent.js';
 import { SimulationLiveRunLock } from '../models/SimulationLiveRunLock.js';
-import { SimulationRun, type SimulationRunDocument } from '../models/SimulationRun.js';
+import { SimulationRun, type SimulationRunDocument, type SimulationRecoveryResult } from '../models/SimulationRun.js';
 import { SimulationTarget } from '../models/SimulationTarget.js';
 import { SimulationControlRequest } from '../models/SimulationControlRequest.js';
 import { SimulationRunArtifact } from '../models/SimulationRunArtifact.js';
@@ -95,11 +95,16 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
   async compareAndSwapRun(
     runKey: string,
     expectedRevision: number,
-    nextState: SimulationRunState
+    nextState: SimulationRunState,
+    recovery?: SimulationRecoveryResult
   ): Promise<boolean> {
+    const set: Record<string, unknown> = { state: nextState };
+    // Only when a recovery outcome is supplied: state-only transitions never
+    // touch the recovery subfield, so they cannot blank it.
+    if (recovery !== undefined) set.recovery = recovery;
     const result = await SimulationRun.updateOne(
       { runKey, 'state.revision': expectedRevision },
-      { $set: { state: nextState } }
+      { $set: set }
     );
     return result.modifiedCount === 1;
   }

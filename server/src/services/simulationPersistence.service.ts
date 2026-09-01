@@ -19,6 +19,7 @@ import {
 } from '../domain/simulationAudit.js';
 import type {
   SimulationAuditActor,
+  SimulationRecoveryResult,
   SimulationRunMetadata,
 } from '../models/SimulationRun.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
@@ -45,7 +46,12 @@ export interface SimulationPersistenceRepository {
   compareAndSwapRun(
     runKey: string,
     expectedRevision: number,
-    nextState: SimulationRunState
+    nextState: SimulationRunState,
+    // Written in the same revision-guarded step as the state, so a recovery
+    // result cannot be clobbered by, or lost to, a concurrent transition. An
+    // implementation that predates this parameter still satisfies the port; it
+    // simply never writes the recovery subfield.
+    recovery?: SimulationRecoveryResult
   ): Promise<boolean>;
   findRunAuditByEventId(runKey: string, eventId: string): Promise<SimulationRunAuditRecord | null>;
   listRunAudit(runKey: string): Promise<SimulationRunAuditRecord[]>;
@@ -320,6 +326,83 @@ export class SimulationPersistenceService {
     throw new SimulationPersistenceError(
       'CONCURRENT_TRANSITION',
       `simulation run ${input.runKey} changed repeatedly during reconciliation`
+    );
+  }
+
+  /**
+   * Record a recovery outcome: the transition it belongs to and the result data,
+   * written together and audited.
+   *
+   * The recovery subfield had no audit image and no CAS -- insertRun wrote only
+   * its empty default, and nothing else touched it -- so a proven cleanup could
+   * be lost to a concurrent transition and left no trace. This gives it both: the
+   * recovery outcome transition is now an audited event, and the same
+   * revision-guarded CAS writes the recovery findings alongside the new state, so
+   * they cannot be clobbered by a concurrent write.
+   *
+   * It follows transitionRun exactly, and deliberately uses the ordinary event
+   * fingerprint, not one folded with the findings: the replay verifier recomputes
+   * that fingerprint from the event alone, so binding the findings into it would
+   * make every later loadRun fail AUDIT_DIVERGENCE. The findings therefore live in
+   * the run document (revision-tied), the transition lives in the audit; one
+   * eventId records one outcome. (Reconstructing the findings from the audit
+   * stream alone would need a dedicated audit field and a replay change -- a
+   * larger, separate step.)
+   */
+  async recordRecoveryResult(input: {
+    runKey: string;
+    event: SimulationRunEvent;
+    recovery: SimulationRecoveryResult;
+    actor: SimulationAuditActor;
+  }): Promise<SimulationRunProjection> {
+    const fingerprint = simulationRunEventFingerprint(input.event);
+
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
+      const current = await this.loadRun(input.runKey);
+      const existing = await this.repository.findRunAuditByEventId(input.runKey, input.event.eventId);
+      if (existing !== null) {
+        if (!sameAuditRequest(existing, input.event.type, fingerprint)) {
+          throw new SimulationPersistenceError(
+            'IDEMPOTENCY_CONFLICT',
+            `recovery event ${input.event.eventId} was already used with different data`
+          );
+        }
+        return current;
+      }
+
+      const nextState = transitionSimulationRun(current.state, input.event);
+      if (nextState === current.state) return current;
+      const audit = transitionAuditRecord({
+        before: current.state,
+        after: nextState,
+        actor: input.actor,
+        requestFingerprint: fingerprint,
+      });
+      const append = await this.repository.appendRunAudit(audit);
+      if (append.disposition === 'duplicate-event') {
+        if (!sameAuditRequest(append.existing, audit.eventType, fingerprint)) {
+          throw new SimulationPersistenceError(
+            'IDEMPOTENCY_CONFLICT',
+            `recovery event ${input.event.eventId} was already used with different data`
+          );
+        }
+        return this.loadRun(input.runKey);
+      }
+      if (append.disposition === 'sequence-conflict') continue;
+
+      const updated = await this.repository.compareAndSwapRun(
+        input.runKey,
+        current.state.revision,
+        nextState,
+        input.recovery
+      );
+      if (updated) return { ...current, state: nextState };
+      return this.loadRun(input.runKey);
+    }
+
+    throw new SimulationPersistenceError(
+      'CONCURRENT_TRANSITION',
+      `simulation run ${input.runKey} changed repeatedly while recording recovery`
     );
   }
 }
