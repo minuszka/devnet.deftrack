@@ -3,9 +3,11 @@ import { z } from 'zod';
 import type {
   HealthTimeline,
   HealthTimelinePoint,
+  MembershipChurnView,
   QuorumRoundDetail,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
+import { churnPredecessorKey, membershipChurn } from '../../domain/membershipChurn.js';
 import { QuorumRound, type QuorumRoundDocument } from '../../models/QuorumRound.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
@@ -59,8 +61,59 @@ type RoundBaseSource = Pick<
 const ROUND_BASE_FIELDS =
   'roundKey llmqName llmqType quorumIndex expectedHeight status formed quorumHash minedBlockHash size minSize threshold dkgInterval effectiveSize numValidMembers healthRatio punishedCount maxPossibleBan consecutiveFailures detectedAt';
 
-function baseView(r: RoundBaseSource) {
+type ChurnSource = Pick<
+  QuorumRoundDocument,
+  'llmqName' | 'expectedHeight' | 'dkgInterval' | 'effectiveSize' | 'members' | 'invalidMembers'
+>;
+
+/** Only what the diff needs: the member array is loaded for its hashes alone. */
+const PREDECESSOR_FIELDS =
+  'llmqName expectedHeight dkgInterval effectiveSize invalidMembers members.proTxHash';
+
+/**
+ * The preceding round of each given round's own profile, in one query.
+ *
+ * Rounds are scheduled every `dkgInterval`, so a predecessor is an exact
+ * (llmqName, expectedHeight) match rather than a scan backwards -- which is
+ * what keeps a whole page to a single lookup. A predecessor that is missing
+ * from the record (below a formation gate, or past the RPC window the collector
+ * can see) simply does not come back, and the churn is reported as unknown
+ * rather than guessed.
+ */
+async function predecessorsFor(rounds: readonly ChurnSource[]): Promise<Map<string, ChurnSource>> {
+  const wanted = new Map<string, { llmqName: string; expectedHeight: number }>();
+  for (const r of rounds) {
+    const height = r.expectedHeight - r.dkgInterval;
+    wanted.set(churnPredecessorKey(r.llmqName, height), { llmqName: r.llmqName, expectedHeight: height });
+  }
+  if (wanted.size === 0) return new Map();
+
+  const found = await QuorumRound.find({ $or: [...wanted.values()] })
+    .select(PREDECESSOR_FIELDS)
+    .lean();
+  return new Map(
+    found.map((r) => [churnPredecessorKey(r.llmqName, r.expectedHeight), r as ChurnSource])
+  );
+}
+
+/** Field-by-field, so nothing the domain adds later rides into a public response. */
+function churnView(round: ChurnSource, predecessors: Map<string, ChurnSource>): MembershipChurnView {
+  const key = churnPredecessorKey(round.llmqName, round.expectedHeight - round.dkgInterval);
+  const churn = membershipChurn(round, predecessors.get(key) ?? null);
   return {
+    previousExpectedHeight: churn.previousExpectedHeight,
+    previousEffectiveSize: churn.previousEffectiveSize,
+    membershipDelta: churn.membershipDelta,
+    joined: churn.joined,
+    left: churn.left,
+    punishedJoiners: churn.punishedJoiners,
+    punishmentExplainedByJoiners: churn.punishmentExplainedByJoiners,
+  };
+}
+
+function baseView(r: RoundBaseSource, membershipChurnView: MembershipChurnView) {
+  return {
+    membershipChurn: membershipChurnView,
     roundKey: r.roundKey,
     llmqName: r.llmqName,
     llmqType: r.llmqType,
@@ -121,8 +174,9 @@ router.get(
       QuorumRound.countDocuments(filter),
     ]);
 
+    const predecessors = await predecessorsFor(rounds);
     const items: QuorumRoundListItem[] = rounds.map((r) => ({
-      ...baseView(r),
+      ...baseView(r, churnView(r, predecessors)),
       invalidMemberCount: r.invalidMembers.length,
       failuresByOperator: failuresByOperator(r),
     }));
@@ -235,7 +289,7 @@ router.get(
     }
 
     const detail: QuorumRoundDetail = {
-      ...baseView(round),
+      ...baseView(round, churnView(round, await predecessorsFor([round]))),
       invalidMembers: round.invalidMembers,
       members: round.members.map((m) => ({
         proTxHash: m.proTxHash,

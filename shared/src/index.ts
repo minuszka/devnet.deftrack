@@ -76,8 +76,39 @@ export interface QuorumRoundView {
   maxPossibleBan: number | null;
   consecutiveFailures: number;
 
+  /**
+   * How this round's membership differs from the round before it, and whether
+   * that difference accounts for what the round punished. A member drawn in for
+   * the first time since the previous round has no DKG mesh yet, so peers that
+   * never reach it vote it bad -- punishment that describes the intervention
+   * that changed the membership, not the profile and not the member.
+   */
+  membershipChurn: MembershipChurnView;
+
   invalidMembers: string[];
   detectedAt: string;
+}
+
+export interface MembershipChurnView {
+  /** Rounds are scheduled every dkgInterval, so the predecessor is exact. */
+  previousExpectedHeight: number;
+  /** null when no record of the preceding round exists. */
+  previousEffectiveSize: number | null;
+  membershipDelta: number | null;
+  /**
+   * Members here that were absent from the preceding round, and members there
+   * that are absent here. Both null when the preceding round left no member
+   * list -- a failed round mines no commitment and therefore has none.
+   */
+  joined: number | null;
+  left: number | null;
+  punishedJoiners: number | null;
+  /**
+   * Every member this round punished had joined since the preceding round, and
+   * at least one was punished. The round's health is then not comparable with
+   * the rounds before it.
+   */
+  punishmentExplainedByJoiners: boolean;
 }
 
 /** List rows omit the member array; it is only worth sending for one round. */
