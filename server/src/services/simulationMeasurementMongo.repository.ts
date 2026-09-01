@@ -101,7 +101,7 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
     generatedAtMs: number;
   }): Promise<SimulationMeasurementEvidence> {
     const height = { $gte: input.fromHeight, $lte: input.toHeight };
-    const [blocks, coinstakes, rounds, poseEvents, dslEpochs, peerObservations, stakeSightings] = await Promise.all([
+    const [blocks, coinstakes, rounds, poseEvents, dslEpochs, peerObservations, stakeSightings, tip] = await Promise.all([
       Block.find({ height }).sort({ height: 1 }).select(
         'height hash time isProofOfStake hasChainLock chainLockSource chainLockLatencyMs chainLockLatencySec firstSeenAt'
       ).lean(),
@@ -130,6 +130,8 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
         host: { $in: input.expectedHostIds },
         height: { $gte: input.fromHeight, $lte: input.toHeight },
       }).sort({ height: 1, script: 1, host: 1 }).select('host script height').lean(),
+      // The live tip, for the finalize settledness gate only. Never fingerprinted.
+      Block.findOne().sort({ height: -1 }).select('height').lean(),
     ]);
 
     // Ambiguity (a script two hosts both claim) resolves to null exactly as the
@@ -232,6 +234,10 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
         .map(([hostId, reportedAtMs]) => ({ hostId, reportedAtMs }))
         .sort((a, b) => a.hostId.localeCompare(b.hostId)),
       expectedHostIds: [...input.expectedHostIds],
+      // Fall back to the window end when the tip cannot be read: that places
+      // every in-window round inside the re-read band, so the settledness gate
+      // fails closed rather than finalizing on a tip it could not confirm.
+      tipHeight: tip?.height ?? input.toHeight,
     };
   }
 

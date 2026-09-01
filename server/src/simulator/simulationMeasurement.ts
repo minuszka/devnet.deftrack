@@ -99,6 +99,15 @@ export interface SimulationMeasurementEvidence {
   observationGaps: MeasurementObservationGapEvidence[];
   hosts: MeasurementHostEvidence[];
   expectedHostIds: string[];
+  /**
+   * The chain tip when the evidence was loaded. A liveness input for the
+   * finalize settledness gate only, so it is set on the loaded top-level
+   * evidence and deliberately NOT carried into the per-range slices that get
+   * fingerprinted -- it decides whether a round has left the poller's re-read
+   * window, and must never enter the report or either fingerprint. Optional for
+   * exactly that reason: the normalized/range evidence omits it.
+   */
+  tipHeight?: number;
 }
 
 export interface DkgMeasurementSnapshot {

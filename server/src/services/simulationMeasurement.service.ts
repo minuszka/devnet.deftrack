@@ -1,12 +1,21 @@
 import { simulationFingerprint } from '../domain/simulationAudit.js';
-import { chainlockProfileNameAtHeight } from '../config/llmq.js';
+import { chainlockProfileNameAtHeight, LLMQ_PROFILES } from '../config/llmq.js';
 import type { SimulationMeasurementAnchor } from '../models/SimulationMeasurementReport.js';
 import {
   computeSimulationMeasurementReport,
   type SimulationMeasurementEvidence,
   type SimulationMeasurementReport,
 } from '../simulator/simulationMeasurement.js';
-import { planMeasurementWindowsForLlmqFault } from '../simulator/measurementWindows.js';
+import { planMeasurementWindowsForLlmqFault, roundsSettledForFinalize } from '../simulator/measurementWindows.js';
+
+/** Every registered profile's signing-active quorum count, for the settledness gate. */
+function signingActiveQuorumCountByProfile(): Record<string, number> {
+  const byProfile: Record<string, number> = {};
+  for (const [name, profile] of Object.entries(LLMQ_PROFILES)) {
+    byProfile[name] = profile.signingActiveQuorumCount;
+  }
+  return byProfile;
+}
 import type { DryRunImpactEstimate } from '../simulator/scenarioTypes.js';
 
 export interface SimulationMeasurementContext {
@@ -46,6 +55,7 @@ export class SimulationMeasurementError extends Error {
       | 'RUN_NOT_FOUND'
       | 'INVALID_ANCHOR'
       | 'CHAIN_REORG'
+      | 'EVIDENCE_NOT_SETTLED'
       | 'REPORT_CONFLICT'
       | 'REPORT_NOT_FOUND',
     message: string
@@ -93,6 +103,12 @@ export class SimulationMeasurementService {
     runKey: string;
     anchor: SimulationMeasurementAnchor;
     generatedAtMs: number;
+    /**
+     * finalize enforces that every in-window round has stopped moving before it
+     * writes an immutable report; verify only recomputes and compares, so it
+     * never re-imposes the gate on evidence that has since settled further.
+     */
+    enforceSettled?: boolean;
   }): Promise<SimulationMeasurementRecord> {
     assertAnchor(input.anchor);
     if (!Number.isSafeInteger(input.generatedAtMs) || input.generatedAtMs < 0) {
@@ -129,6 +145,29 @@ export class SimulationMeasurementService {
         'fault boundary block hashes changed or are not uniquely indexed'
       );
     }
+    if (input.enforceSettled) {
+      // Staking attribution was made immutable at index time, but the DKG rounds
+      // and ChainLock fields the verdict actually reads are still overwritten by
+      // the pollers until the tip moves past their re-read window. Finalizing
+      // before then fingerprints a value that will change, and the anchor is
+      // single-use: refuse, in the open, rather than burn it on evidence in flight.
+      if (evidence.tipHeight === undefined) {
+        throw new SimulationMeasurementError('EVIDENCE_NOT_SETTLED', 'chain tip is unavailable, cannot confirm rounds have settled');
+      }
+      const settlement = roundsSettledForFinalize({
+        rounds: evidence.rounds,
+        baseline: windows.baseline,
+        observation: windows.observation,
+        tipHeight: evidence.tipHeight,
+        signingActiveQuorumCountByProfile: signingActiveQuorumCountByProfile(),
+      });
+      if (!settlement.settled) {
+        throw new SimulationMeasurementError(
+          'EVIDENCE_NOT_SETTLED',
+          `measurement evidence is still settling: ${settlement.reasons.join('; ')}`
+        );
+      }
+    }
     const report = computeSimulationMeasurementReport({
       faultStartHeight: input.anchor.faultStartHeight,
       faultEndHeight: input.anchor.faultEndHeight,
@@ -153,7 +192,7 @@ export class SimulationMeasurementService {
     anchor: SimulationMeasurementAnchor;
     generatedAtMs: number;
   }): Promise<SimulationMeasurementRecord> {
-    const proposed = await this.compute(input);
+    const proposed = await this.compute({ ...input, enforceSettled: true });
     const disposition = await this.repository.insertReport(proposed);
     if (disposition === 'inserted') return proposed;
     const existing = await this.repository.findReport(proposed.reportId);
