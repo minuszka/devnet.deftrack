@@ -22,13 +22,59 @@ describe('simulation measurement windows', () => {
   it('accepts exact minimum evidence and explains every shortage', () => {
     const plan = planMeasurementWindows({ baselineEndHeight: 999, faultStartHeight: 1_000, faultEndHeight: 1_010 });
     expect(baselineEvidenceSatisfies({
-      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
+      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58, medianHealthRatio: 1, poseRevivedEvents: 0,
     }, plan)).toEqual({ passed: true, reasons: [] });
     const failed = baselineEvidenceSatisfies({
-      fromHeight: 929, toHeight: 999, indexedBlocks: 70, resolvedDkgRounds: 2, chainLockedBlocks: 50,
+      fromHeight: 929, toHeight: 999, indexedBlocks: 70, resolvedDkgRounds: 2, chainLockedBlocks: 50, medianHealthRatio: 1, poseRevivedEvents: 0,
     }, plan);
     expect(failed.passed).toBe(false);
     expect(failed.reasons).toHaveLength(4);
+  });
+
+  it('rejects a baseline the network was still recovering through', () => {
+    const plan = planMeasurementWindows({ baselineEndHeight: 999, faultStartHeight: 1_000, faultEndHeight: 1_010 });
+
+    // The window CLAUDE.md holds up as the canonical example of where not to
+    // measure: 46 masternodes revived, and three rounds that all formed while
+    // health sat at 0.16, 0.32 and 0.24. Every count is satisfied -- span,
+    // range, blocks, rounds, ChainLocks -- which is exactly why counting alone
+    // let it through and the report went on to answer "match".
+    const recovering = baselineEvidenceSatisfies({
+      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
+      medianHealthRatio: 0.24, poseRevivedEvents: 46,
+    }, plan);
+    expect(recovering.passed).toBe(false);
+    expect(recovering.reasons.join(' ')).toMatch(/baseline DKG health is 0\.24/);
+    expect(recovering.reasons.join(' ')).toMatch(/46 PoSe revival/);
+
+    // Each half stands on its own: a quiet window at poor health is still not a
+    // baseline, and a healthy window containing a revival is still not quiet.
+    expect(baselineEvidenceSatisfies({
+      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
+      medianHealthRatio: 0.24, poseRevivedEvents: 0,
+    }, plan).passed).toBe(false);
+    expect(baselineEvidenceSatisfies({
+      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
+      medianHealthRatio: 1, poseRevivedEvents: 1,
+    }, plan).passed).toBe(false);
+
+    // And ordinary jitter is not a rejection: a devnet round sits at 1.00 and
+    // dips to about 0.98, which must still pass or the gate costs runs it
+    // should not.
+    expect(baselineEvidenceSatisfies({
+      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
+      medianHealthRatio: 0.98, poseRevivedEvents: 0,
+    }, plan)).toEqual({ passed: true, reasons: [] });
+
+    // A baseline in which nothing resolved cannot be judged on health, and is
+    // already refused by the round count rather than by a health figure it does
+    // not have.
+    const nothingResolved = baselineEvidenceSatisfies({
+      fromHeight: 928, toHeight: 999, indexedBlocks: 72, resolvedDkgRounds: 0, chainLockedBlocks: 58,
+      medianHealthRatio: null, poseRevivedEvents: 0,
+    }, plan);
+    expect(nothingResolved.passed).toBe(false);
+    expect(nothingResolved.reasons.join(' ')).not.toMatch(/DKG health/);
   });
 
   it('rejects overlapping or too-short fault windows', () => {
@@ -36,7 +82,7 @@ describe('simulation measurement windows', () => {
     expect(() => planMeasurementWindows({ baselineEndHeight: 99, faultStartHeight: 100, faultEndHeight: 101 })).toThrow(/too short/);
     const early = planMeasurementWindows({ baselineEndHeight: 10, faultStartHeight: 11, faultEndHeight: 20 });
     expect(baselineEvidenceSatisfies({
-      fromHeight: 0, toHeight: 10, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58,
+      fromHeight: 0, toHeight: 10, indexedBlocks: 72, resolvedDkgRounds: 3, chainLockedBlocks: 58, medianHealthRatio: 1, poseRevivedEvents: 0,
     }, early).passed).toBe(false);
   });
 

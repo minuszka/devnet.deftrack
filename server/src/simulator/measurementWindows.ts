@@ -7,6 +7,10 @@ export interface SimulationMeasurementPolicy {
   minimumChainLockCoveragePercent: number;
   warmupBlocks: number;
   cooldownBlocks: number;
+  /** A baseline whose own DKG health is below this was not a network at rest. */
+  minimumBaselineHealthRatio: number;
+  /** PoSe revivals tolerated inside a baseline window. Zero: a revival is recovery. */
+  maximumBaselinePoseRevivals: number;
 }
 
 export interface BaselineEvidence {
@@ -15,6 +19,17 @@ export interface BaselineEvidence {
   indexedBlocks: number;
   resolvedDkgRounds: number;
   chainLockedBlocks: number;
+  /**
+   * The primary profile's median health across the baseline; null when nothing
+   * resolved. A baseline is a claim about the network at rest, so its own
+   * health has to be part of whether it counts as one.
+   */
+  medianHealthRatio: number | null;
+  /**
+   * PoSe revivals inside the window. A revival is the network recovering, and
+   * a window containing one is not quiet.
+   */
+  poseRevivedEvents: number;
 }
 
 export interface MeasurementHeightRange {
@@ -30,6 +45,8 @@ export interface MeasurementWindowPlan {
   minimumBaselineBlocks: number;
   minimumBaselineDkgRounds: number;
   minimumBaselineChainLocks: number;
+  minimumBaselineHealthRatio: number;
+  maximumBaselinePoseRevivals: number;
 }
 
 function assertNonNegativeInteger(value: number, name: string): void {
@@ -97,6 +114,8 @@ function planMeasurementWindowsWithPolicy(input: {
     minimumBaselineBlocks: baselineBlocks,
     minimumBaselineDkgRounds: policy.minimumBaselineDkgRounds,
     minimumBaselineChainLocks,
+    minimumBaselineHealthRatio: policy.minimumBaselineHealthRatio,
+    maximumBaselinePoseRevivals: policy.maximumBaselinePoseRevivals,
   };
 }
 
@@ -151,7 +170,7 @@ export function planMeasurementWindowsForLlmqFault(input: {
 
 export function baselineEvidenceSatisfies(
   evidence: BaselineEvidence,
-  plan: Pick<MeasurementWindowPlan, 'baseline' | 'minimumBaselineBlocks' | 'minimumBaselineDkgRounds' | 'minimumBaselineChainLocks'>
+  plan: Pick<MeasurementWindowPlan, 'baseline' | 'minimumBaselineBlocks' | 'minimumBaselineDkgRounds' | 'minimumBaselineChainLocks' | 'minimumBaselineHealthRatio' | 'maximumBaselinePoseRevivals'>
 ): { passed: boolean; reasons: string[] } {
   const reasons: string[] = [];
   const plannedSpan = plan.baseline.toHeight - plan.baseline.fromHeight + 1;
@@ -173,5 +192,29 @@ export function baselineEvidenceSatisfies(
   if (evidence.chainLockedBlocks < plan.minimumBaselineChainLocks) {
     reasons.push(`baseline has ${evidence.chainLockedBlocks}/${plan.minimumBaselineChainLocks} ChainLocked blocks`);
   }
+
+  // Quiescence, not just quantity.
+  //
+  // Every check above counts, and counting is not enough: CLAUDE.md's own
+  // canonical bad window -- 46 masternodes revived at height 2404, three rounds
+  // that all formed at health 0.16, 0.32 and 0.24 with 42 members punished --
+  // satisfies all of them. Fed in as a baseline it passed, and the report went
+  // on to answer "expected versus actual: match" against a delta of +0.74.
+  //
+  // The rule the project already knows is "do not measure in the first rounds
+  // after a revive or a restart". These two checks are that rule, enforced. A
+  // baseline is a claim that the network was at rest; a window in which it was
+  // visibly recovering cannot support that claim however many blocks it has.
+  if (evidence.medianHealthRatio !== null && evidence.medianHealthRatio < plan.minimumBaselineHealthRatio) {
+    reasons.push(
+      `baseline DKG health is ${evidence.medianHealthRatio.toFixed(2)}, below the ${plan.minimumBaselineHealthRatio.toFixed(2)} a baseline must itself hold`
+    );
+  }
+  if (evidence.poseRevivedEvents > plan.maximumBaselinePoseRevivals) {
+    reasons.push(
+      `baseline contains ${evidence.poseRevivedEvents} PoSe revival(s), so the network was recovering rather than at rest`
+    );
+  }
+
   return { passed: reasons.length === 0, reasons };
 }

@@ -323,7 +323,29 @@ function evidenceForRange(
   });
 }
 
-function dkgSnapshot(rounds: readonly MeasurementRoundEvidence[]): DkgMeasurementSnapshot {
+/**
+ * Round statistics for a window, headline figures scoped to one profile.
+ *
+ * roundStats states that its input "must belong to a single profile", and the
+ * repository loads rounds by height with no llmqName filter, so evidence.rounds
+ * always carries every schedule the devnet runs. Reading a rate or a median
+ * across that mix produces a number no profile ever had: a window holding
+ * llmq_defcon at 0.30 three times beside llmq_60_75 and llmq_400_60 at 1.00
+ * reports a median of 0.65, and a delta of -0.35 for a profile whose health did
+ * not move at all.
+ *
+ * The expected-versus-actual comparison further down already scopes itself to
+ * primaryLlmqName; this makes the headline agree with it.
+ *
+ * longestFailureStreak and membersPunished stay as they are on purpose. The
+ * streak is a maximum over per-profile streaks, so it is a value some profile
+ * genuinely had, and the punished set is a union of real members -- a fact about
+ * the network rather than about one schedule.
+ */
+function dkgSnapshot(
+  rounds: readonly MeasurementRoundEvidence[],
+  primaryLlmqName: string
+): DkgMeasurementSnapshot {
   const byName = new Map<string, MeasurementRoundEvidence[]>();
   for (const round of rounds) {
     const list = byName.get(round.llmqName) ?? [];
@@ -337,13 +359,18 @@ function dkgSnapshot(rounds: readonly MeasurementRoundEvidence[]): DkgMeasuremen
       ...roundStats(list),
     }))
     .sort((a, b) => a.dkgInterval - b.dkgInterval || a.llmqName.localeCompare(b.llmqName));
+  const primary = byProfile.find((row) => row.llmqName === primaryLlmqName) ?? null;
   const aggregate = roundStats(rounds);
   const punished = new Set(rounds.flatMap((row) => row.invalidMembers));
   return {
+    // The count stays across profiles on purpose: "three rounds ran here, none
+    // of them yours" is worth seeing, and a test pins it. Only the rates and
+    // medians below are scoped, because those are the figures that invent a
+    // value no profile had when they are blended.
     rounds: aggregate.rounds,
-    formationRate: aggregate.formationRate,
-    medianHealthRatio: aggregate.medianHealthRatio,
-    worstHealthRatio: aggregate.worstHealthRatio,
+    formationRate: primary?.formationRate ?? null,
+    medianHealthRatio: primary?.medianHealthRatio ?? null,
+    worstHealthRatio: primary?.worstHealthRatio ?? null,
     longestFailureStreak: byProfile.reduce((maximum, row) => Math.max(maximum, row.longestFailureStreak), 0),
     membersPunished: punished.size,
     byProfile,
@@ -472,9 +499,17 @@ function dataQualitySnapshot(
   for (const host of evidence.hosts) {
     latestHostReport.set(host.hostId, Math.max(latestHostReport.get(host.hostId) ?? 0, host.reportedAtMs));
   }
+  // Measured against the observing fleet, not against a wall clock.
+  //
+  // evidence.hosts now carries each host's last report from inside the window,
+  // so the question is whether a host kept up with its peers while the window
+  // ran -- which the same range always answers the same way. Comparing to
+  // generatedAtMs instead made the answer depend on when the report was asked
+  // for: a heartbeat after finalize, verify() called every host stale.
+  const windowLastReportMs = Math.max(0, ...latestHostReport.values());
   const staleHosts = expectedHosts.filter((hostId) => {
     const reportedAtMs = latestHostReport.get(hostId);
-    return reportedAtMs === undefined || Math.abs(generatedAtMs - reportedAtMs) > policy.maximumHostAgeMs;
+    return reportedAtMs === undefined || windowLastReportMs - reportedAtMs > policy.maximumHostAgeMs;
   }).length;
 
   const expectedHostSet = new Set(expectedHosts);
@@ -548,7 +583,7 @@ export function createSimulationMeasurementSnapshot(input: {
   const evidence = evidenceForRange(input.evidence, input.range);
   return {
     range: input.range,
-    dkg: dkgSnapshot(evidence.rounds),
+    dkg: dkgSnapshot(evidence.rounds, input.evidence.primaryLlmqName),
     chainLock: chainLockSnapshot(evidence.blocks),
     pose: poseSnapshot(evidence.poseEvents),
     dsl: dslSnapshot(evidence.dslEpochs),
@@ -663,6 +698,10 @@ export function computeSimulationMeasurementReport(input: {
         : primary.rounds.formed + primary.rounds.failed + primary.rounds.impossible;
     })(),
     chainLockedBlocks: baseline.chainLock.lockedBlocks,
+    // Already scoped to the primary profile by dkgSnapshot, so this is the
+    // health of the schedule the run is about rather than a blend.
+    medianHealthRatio: baseline.dkg.medianHealthRatio,
+    poseRevivedEvents: baseline.pose.events.revived,
   }, windows);
   const verdictReasons = [
     ...baselineGate.reasons.map((reason) => `baseline: ${reason}`),

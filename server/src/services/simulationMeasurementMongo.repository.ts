@@ -198,7 +198,28 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
         missed: gap.missed,
         detectedAtMs: gap.detectedAt.getTime(),
       })),
-      hosts: hosts.map((host) => ({ hostId: host.host, reportedAtMs: host.reportedAt.getTime() })),
+      // Observer presence, derived from the measured range rather than read
+      // from the current view.
+      //
+      // HostStatus is overwritten per host on every agent post -- its own model
+      // comment says so -- and a report built from it does not recompute: one
+      // heartbeat after finalize, verify() paired a frozen generatedAtMs with a
+      // live reportedAt and answered measurementValid:false for a report that
+      // had just answered true. PeerObservation is the immutable half the same
+      // comment points at, it is keyed by (height, host), and it is already
+      // loaded above for coverage.
+      //
+      // So a host's presence is now the last moment it was seen reporting
+      // INSIDE the window, which is the question the staleness check was always
+      // trying to ask, and which the same range always answers the same way.
+      hosts: [...peerObservations.reduce((byHost, observation) => {
+        const previous = byHost.get(observation.host);
+        const receivedAtMs = observation.receivedAt.getTime();
+        if (previous === undefined || receivedAtMs > previous) byHost.set(observation.host, receivedAtMs);
+        return byHost;
+      }, new Map<string, number>())]
+        .map(([hostId, reportedAtMs]) => ({ hostId, reportedAtMs }))
+        .sort((a, b) => a.hostId.localeCompare(b.hostId)),
       expectedHostIds: [...input.expectedHostIds],
     };
   }

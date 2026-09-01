@@ -114,6 +114,8 @@ export function toPublicSimulationMeasurementResult(
       minimumBaselineBlocks: source.report.windows.minimumBaselineBlocks,
       minimumBaselineDkgRounds: source.report.windows.minimumBaselineDkgRounds,
       minimumBaselineChainLocks: source.report.windows.minimumBaselineChainLocks,
+      minimumBaselineHealthRatio: source.report.windows.minimumBaselineHealthRatio,
+      maximumBaselinePoseRevivals: source.report.windows.maximumBaselinePoseRevivals,
     },
     baseline: snapshot(source.report.baseline),
     observation: snapshot(source.report.observation),
