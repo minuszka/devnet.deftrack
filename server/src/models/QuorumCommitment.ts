@@ -45,7 +45,12 @@ export interface QuorumCommitmentDocument extends Document {
    * signersCount <= validMembersCount made that formula report zero through
    * real punishment.)
    */
-  punishedCount: number;
+  /**
+   * Selected members minus validMembersCount -- the figure Core punishes over.
+   * Null when the quorum member list could not be resolved: unknown is a real
+   * answer here, and better than a fabricated count.
+   */
+  punishedCount: number | null;
 
   detectedAt: Date;
 }
@@ -63,7 +68,7 @@ const quorumCommitmentSchema = new Schema<QuorumCommitmentDocument>({
 
   validMembersCount: { type: Number, default: 0 },
   signersCount: { type: Number, default: 0 },
-  punishedCount: { type: Number, default: 0 },
+  punishedCount: { type: Number, default: null },
 
   detectedAt: { type: Date, default: () => new Date() },
 });
