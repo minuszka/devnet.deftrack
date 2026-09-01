@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SimulationRunAuditRecord } from '../domain/simulationAudit.js';
-import { replaySimulationRunAudit } from '../domain/simulationAudit.js';
-import type { SimulationRunState } from '../domain/simulationRunState.js';
+import { replaySimulationRunAudit, simulationRunEventFingerprint, transitionAuditRecord } from '../domain/simulationAudit.js';
+import { transitionSimulationRun, type SimulationRunState } from '../domain/simulationRunState.js';
 import { simulationRunKeyFor } from '../domain/simulationIdentity.js';
 import type { SimulationRecoveryResult, SimulationRunMetadata } from '../models/SimulationRun.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
@@ -112,6 +112,17 @@ class MemorySimulationRepository implements SimulationPersistenceRepository {
     this.runs.set(runKey, { ...current, state: clone(nextState) });
     if (recovery !== undefined) this.recoveries.set(runKey, clone(recovery));
     return true;
+  }
+
+  async writeRecoveryForEvent(runKey: string, eventId: string, recovery: SimulationRecoveryResult): Promise<boolean> {
+    const current = this.runs.get(runKey);
+    if (current === undefined || current.state.lastTransition?.eventId !== eventId) return false;
+    this.recoveries.set(runKey, clone(recovery));
+    return true;
+  }
+
+  async findRecovery(runKey: string): Promise<SimulationRecoveryResult | null> {
+    return clone(this.recoveries.get(runKey) ?? null);
   }
 
   async findRunAuditByEventId(
@@ -415,5 +426,30 @@ describe('simulation persistence service', () => {
     await expect(service.recordRecoveryResult({
       runKey: created.runKey, event: { ...event, atMs: 8 }, recovery: recoveryResult(false), actor,
     })).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+  });
+
+  it('recovers the findings when the transition was applied without them by a lost race', async () => {
+    const repository = new MemorySimulationRepository();
+    const service = new SimulationPersistenceService(repository);
+    const created = await create(service, 'recovery-lost-race', true);
+    await driveToRecovery(service, created.runKey);
+
+    // Reproduce the lost race: the recovery_succeeded transition is applied and
+    // audited by another writer (or loadRun's projection repair), which writes the
+    // state but NOT the recovery -- exactly the path that silently dropped the findings.
+    const event = { type: 'recovery_succeeded' as const, eventId: 'rec-1', atMs: 7 };
+    const atRecovery = await service.loadRun(created.runKey);
+    const nextState = transitionSimulationRun(atRecovery.state, event);
+    await repository.appendRunAudit(transitionAuditRecord({
+      before: atRecovery.state, after: nextState, actor, requestFingerprint: simulationRunEventFingerprint(event),
+    }));
+    await repository.compareAndSwapRun(created.runKey, atRecovery.state.revision, nextState); // no recovery
+    expect(repository.recoveries.get(created.runKey)).toBeUndefined(); // findings lost
+
+    // The fix: recordRecoveryResult places the findings even though the transition
+    // is already down, rather than returning success with nothing recorded.
+    const result = await service.recordRecoveryResult({ runKey: created.runKey, event, recovery: recoveryResult(true), actor });
+    expect(result.state.status).toBe('cooldown');
+    expect(repository.recoveries.get(created.runKey)).toMatchObject({ allClear: true, finishedAtMs: 7_000 });
   });
 });

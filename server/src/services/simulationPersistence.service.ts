@@ -56,6 +56,15 @@ export interface SimulationPersistenceRepository {
   findRunAuditByEventId(runKey: string, eventId: string): Promise<SimulationRunAuditRecord | null>;
   listRunAudit(runKey: string): Promise<SimulationRunAuditRecord[]>;
   appendRunAudit(event: SimulationRunAuditRecord): Promise<AppendSimulationAuditResult>;
+  /**
+   * Write the recovery findings for a run, guarded on it still being at the state
+   * a given transition produced. Returns whether the guard matched -- so a caller
+   * whose own state CAS lost the race can still place the findings, and never
+   * onto a run that has moved on. Idempotent.
+   */
+  writeRecoveryForEvent(runKey: string, eventId: string, recovery: SimulationRecoveryResult): Promise<boolean>;
+  /** The recovery subfield as stored, for confirming it after a lost race. */
+  findRecovery(runKey: string): Promise<SimulationRecoveryResult | null>;
 }
 
 export class SimulationPersistenceError extends Error {
@@ -349,6 +358,28 @@ export class SimulationPersistenceService {
    * stream alone would need a dedicated audit field and a replay change -- a
    * larger, separate step.)
    */
+  /**
+   * Guarantee the findings are recorded once the recovery transition has been
+   * applied -- by our own CAS or, on a lost race, by loadRun's projection repair,
+   * which only writes the state and would otherwise leave the findings behind.
+   * The guarded write places them iff the run is still at the state this event
+   * produced; if it has moved on, the findings must already match, or the race
+   * genuinely lost them and that is a conflict, never a silent success.
+   */
+  private async ensureRecoveryRecorded(
+    runKey: string,
+    event: SimulationRunEvent,
+    recovery: SimulationRecoveryResult
+  ): Promise<void> {
+    if (await this.repository.writeRecoveryForEvent(runKey, event.eventId, recovery)) return;
+    const stored = await this.repository.findRecovery(runKey);
+    if (stored !== null && simulationFingerprint(stored) === simulationFingerprint(recovery)) return;
+    throw new SimulationPersistenceError(
+      'IDEMPOTENCY_CONFLICT',
+      `recovery for ${event.eventId} could not be recorded and does not match what is stored`
+    );
+  }
+
   async recordRecoveryResult(input: {
     runKey: string;
     event: SimulationRunEvent;
@@ -367,6 +398,9 @@ export class SimulationPersistenceService {
             `recovery event ${input.event.eventId} was already used with different data`
           );
         }
+        // The transition is already applied -- by a prior attempt whose state CAS
+        // lost, or a concurrent identical call -- so the findings may not be down yet.
+        await this.ensureRecoveryRecorded(input.runKey, input.event, input.recovery);
         return current;
       }
 
@@ -386,6 +420,7 @@ export class SimulationPersistenceService {
             `recovery event ${input.event.eventId} was already used with different data`
           );
         }
+        await this.ensureRecoveryRecorded(input.runKey, input.event, input.recovery);
         return this.loadRun(input.runKey);
       }
       if (append.disposition === 'sequence-conflict') continue;
@@ -397,6 +432,10 @@ export class SimulationPersistenceService {
         input.recovery
       );
       if (updated) return { ...current, state: nextState };
+      // Our CAS lost: the audit event is already written, so the transition will
+      // be applied by loadRun's repair -- which does not write recovery. Place the
+      // findings ourselves, guarded on that transition, before returning.
+      await this.ensureRecoveryRecorded(input.runKey, input.event, input.recovery);
       return this.loadRun(input.runKey);
     }
 

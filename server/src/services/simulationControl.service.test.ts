@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SimulationRunAuditRecord } from '../domain/simulationAudit.js';
 import type { SimulationRunState } from '../domain/simulationRunState.js';
 import { simulationRunKeyFor } from '../domain/simulationIdentity.js';
-import type { SimulationRunMetadata, SimulationTargetSnapshot } from '../models/SimulationRun.js';
+import type { SimulationRecoveryResult, SimulationRunMetadata, SimulationTargetSnapshot } from '../models/SimulationRun.js';
 import { generateDryRunPlan } from '../simulator/dryRunExecutor.js';
 import type { PreparedSimulationDraft } from '../simulator/draftPreparation.js';
 import type { SimulationPreflightEvaluation } from '../simulator/preflight.js';
@@ -48,6 +48,16 @@ class MemoryRunRepository implements SimulationPersistenceRepository {
   }
   async findRunAuditByEventId(key: string, eventId: string) {
     return clone((this.audits.get(key) ?? []).find((event) => event.eventId === eventId) ?? null);
+  }
+  recoveries = new Map<string, SimulationRecoveryResult>();
+  async writeRecoveryForEvent(runKey: string, eventId: string, recovery: SimulationRecoveryResult): Promise<boolean> {
+    const current = this.runs.get(runKey);
+    if (current === undefined || current.state.lastTransition?.eventId !== eventId) return false;
+    this.recoveries.set(runKey, clone(recovery));
+    return true;
+  }
+  async findRecovery(runKey: string): Promise<SimulationRecoveryResult | null> {
+    return clone(this.recoveries.get(runKey) ?? null);
   }
   async listRunAudit(key: string) { return clone(this.audits.get(key) ?? []); }
   async appendRunAudit(event: SimulationRunAuditRecord): Promise<AppendSimulationAuditResult> {

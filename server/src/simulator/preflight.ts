@@ -162,9 +162,11 @@ function assertInput(input: SimulationPreflightInput): void {
   if (!/^[0-9a-f]{64}$/i.test(input.policy.expectedGenesisHash)) {
     throw new Error('expected genesis hash is invalid');
   }
-  if (input.policy.expectedWrapperVersion.trim().length === 0) {
-    // A hard precondition, not a target failure: with no expected version there
-    // is nothing to hold a target to. Name the knob so the operator can fix it.
+  if (input.recovery.required && input.policy.expectedWrapperVersion.trim().length === 0) {
+    // Only a hard precondition when a run actually checks recovery: that is the
+    // one place the version is compared (the badRecovery filter). A dry run never
+    // asks for recovery, so it must not be blocked -- or worse, 500'd -- for a
+    // wrapper it does not use. Name the knob so a live operator can fix it.
     throw new Error('expected wrapper version is not configured; set SIMULATION_EXPECTED_WRAPPER_VERSION');
   }
   if (
