@@ -34,3 +34,7 @@ backups/
 # escaped or git reads the line as a negation pattern.
 \!!!!!!!!!!!!!!!!!!!/
 KICKOFF_PROMPT.md
+
+# The pre-built defcond the lab image copies in (docker/Dockerfile expects it at
+# the context root). Several hundred MB, and this repository is public.
+/defcond
