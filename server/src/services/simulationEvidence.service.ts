@@ -12,7 +12,7 @@ import { SimulationRun } from '../models/SimulationRun.js';
 import { SimulationTarget } from '../models/SimulationTarget.js';
 import { SyncState } from '../models/SyncState.js';
 import { prepareSimulationDraft, type PreparedSimulationDraft } from '../simulator/draftPreparation.js';
-import { planMeasurementWindows } from '../simulator/measurementWindows.js';
+import { planMeasurementWindowsForLlmqFault } from '../simulator/measurementWindows.js';
 import { evaluateSimulationPreflight, type SimulationPreflightEvaluation } from '../simulator/preflight.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import {
@@ -215,8 +215,8 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       1,
       Math.ceil(maxPlannedOffsetMs(input.plan) / ESTIMATED_BLOCK_INTERVAL_MS)
     );
-    const measurementPlan = planMeasurementWindows({
-      baselineEndHeight,
+    const measurementPlan = planMeasurementWindowsForLlmqFault({
+      primaryLlmqName: evidence.quorumProfile.llmqName,
       faultStartHeight,
       faultEndHeight: faultStartHeight + 2 + estimatedFaultBlocks,
     });

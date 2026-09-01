@@ -174,6 +174,14 @@ Feladatok:
 
 Elfogadási kapu: egy teljes szintetikus experiment jelentése determinisztikusan újraszámolható.
 
+Megvalósítva a 7. napi ágon: az aktív LLMQ-profilból automatikusan származtatott
+baseline/run ablakok; DKG, ChainLock, PoSe, DSL, staking és data-quality
+snapshotok; külön chain-time/observed-time mérés; expected/actual eredmény;
+telemetria fail-closed kapu; boundary-hash reorg-védelem; append-only riport és
+explicit publikus DTO. A teljes szintetikus riport sorrendfüggetlenül
+újraszámolható. Az automatikus `finalize` hívást a 8. napi executor köti be,
+mert a hiteles fault anchorokat az ismeri.
+
 ## 8. nap – Docker executor és fault lease
 
 Feladatok:

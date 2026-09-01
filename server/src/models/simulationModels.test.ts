@@ -18,6 +18,10 @@ import {
   SimulationRunArtifact,
   simulationRunArtifactSchema,
 } from './SimulationRunArtifact.js';
+import {
+  SimulationMeasurementReportModel,
+  simulationMeasurementReportSchema,
+} from './SimulationMeasurementReport.js';
 
 const actor = { actorId: 'admin-1', actorType: 'admin-session' as const, displayName: 'Admin' };
 
@@ -184,6 +188,14 @@ describe('simulation Mongo schemas', () => {
         [{ runKey: 1, requestKey: 1, kind: 1 }, { unique: true, background: true }],
       ])
     );
+    expect(simulationMeasurementReportSchema.indexes()).toEqual(
+      expect.arrayContaining([
+        [
+          { runKey: 1, 'anchor.faultStartHeight': 1, 'anchor.faultEndHeight': 1 },
+          { unique: true, background: true },
+        ],
+      ])
+    );
     for (const [, options] of [
       ...auditIndexes,
       ...simulationActionSchema.indexes(),
@@ -225,5 +237,9 @@ describe('simulation Mongo schemas', () => {
     await expect(SimulationRunArtifact.bulkWrite([
       { deleteMany: { filter: { runKey: 'sim-model-test' } } },
     ])).rejects.toThrow(/append-only/i);
+    await expect(SimulationMeasurementReportModel.updateOne(
+      { reportId: 'measure-1' }, { $set: { reportFingerprint: 'rewritten' } }
+    ).exec()).rejects.toThrow(/append-only/i);
+    await expect(SimulationMeasurementReportModel.deleteMany({}).exec()).rejects.toThrow(/append-only/i);
   });
 });

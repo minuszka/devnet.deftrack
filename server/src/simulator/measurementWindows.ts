@@ -1,4 +1,5 @@
 import { SIMULATION_CONTROL_POLICY } from './simulationPolicy.js';
+import { LLMQ_PROFILES } from '../config/llmq.js';
 
 export interface SimulationMeasurementPolicy {
   dkgIntervalBlocks: number;
@@ -51,12 +52,11 @@ function minimumBaselineBlocksFor(policy: SimulationMeasurementPolicy): number {
   return policy.dkgIntervalBlocks * policy.minimumBaselineDkgRounds;
 }
 
-export function planMeasurementWindows(input: {
+function planMeasurementWindowsWithPolicy(input: {
   baselineEndHeight: number;
   faultStartHeight: number;
   faultEndHeight: number;
-}): MeasurementWindowPlan {
-  const policy = SIMULATION_CONTROL_POLICY.measurement;
+}, policy: SimulationMeasurementPolicy): MeasurementWindowPlan {
   for (const [name, value] of Object.entries({
     baselineEndHeight: input.baselineEndHeight,
     faultStartHeight: input.faultStartHeight,
@@ -98,6 +98,55 @@ export function planMeasurementWindows(input: {
     minimumBaselineDkgRounds: policy.minimumBaselineDkgRounds,
     minimumBaselineChainLocks,
   };
+}
+
+export function planMeasurementWindows(input: {
+  baselineEndHeight: number;
+  faultStartHeight: number;
+  faultEndHeight: number;
+}): MeasurementWindowPlan {
+  return planMeasurementWindowsWithPolicy(input, SIMULATION_CONTROL_POLICY.measurement);
+}
+
+/**
+ * Plans every measurement range from the immutable fault anchors.  Callers do
+ * not get to choose a shorter baseline independently from the fault window.
+ */
+export function planMeasurementWindowsForFault(input: {
+  faultStartHeight: number;
+  faultEndHeight: number;
+}): MeasurementWindowPlan {
+  assertNonNegativeInteger(input.faultStartHeight, 'faultStartHeight');
+  if (input.faultStartHeight === 0) {
+    throw new Error('fault window must have a preceding baseline height');
+  }
+  return planMeasurementWindows({
+    baselineEndHeight: input.faultStartHeight - 1,
+    faultStartHeight: input.faultStartHeight,
+    faultEndHeight: input.faultEndHeight,
+  });
+}
+
+/** Uses the reviewed Core profile registry; profile cadence is never caller-supplied. */
+export function planMeasurementWindowsForLlmqFault(input: {
+  primaryLlmqName: string;
+  faultStartHeight: number;
+  faultEndHeight: number;
+}): MeasurementWindowPlan {
+  assertNonNegativeInteger(input.faultStartHeight, 'faultStartHeight');
+  if (input.faultStartHeight === 0) {
+    throw new Error('fault window must have a preceding baseline height');
+  }
+  const profile = LLMQ_PROFILES[input.primaryLlmqName];
+  if (profile === undefined) throw new Error(`unknown measurement LLMQ profile: ${input.primaryLlmqName}`);
+  return planMeasurementWindowsWithPolicy({
+    baselineEndHeight: input.faultStartHeight - 1,
+    faultStartHeight: input.faultStartHeight,
+    faultEndHeight: input.faultEndHeight,
+  }, {
+    ...SIMULATION_CONTROL_POLICY.measurement,
+    dkgIntervalBlocks: profile.dkgInterval,
+  });
 }
 
 export function baselineEvidenceSatisfies(

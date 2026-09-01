@@ -1,10 +1,10 @@
-Aktuális nap/fázis: 6. nap kész – admin Control API és CLI, végrehajtás nélkül
-Branch és HEAD: `feat/simulator-control-api-day6` – `feat: add simulator control API and CLI`
-Elkészült: privát create/validate/dry-run/arm/start/abort/recover/status/history API; minden módosításhoz idempotency; append-only control request és artifact; Mongo/RPC evidence assembler; szerveroldali operator/safety-admin risk-kapu; kötelező publikus mezőprojekció és DTO-redakció; tervből származtatott run-expiry; nem felülírható baseline policy; null hostRef fail-closed; fejlesztői CLI és teljes `dry-lifecycle` parancs; admin rate limit és nem-böngészős, később CSRF-adapterrel bővíthető szerződés
-Módosított fájlok: `.env.example`; `docs/SIMULATOR_IMPLEMENTATION_ROADMAP_HU.md`; `docs/SIMULATOR_HANDOFF.md`; `docs/simulator/CONTROL_API_HU.md`; `server/package.json`; simulator policy/timing/approval/public DTO/target/preflight/state fájlok és tesztjeik; simulation persistence/control/evidence service-ek és Mongo modellek; privát és publikus v1 route-ok; CLI
-Futtatott tesztek és eredményük: `npm run typecheck && npm test && npm run build` zöld; 37 tesztfájl, 265 teszt; shared/server/client typecheck és production build sikeres
-Nyitott hibák: ismert kódhiba nincs; live start és live recovery szándékosan fail-closed a 8. napi lease-es executor elkészültéig
-Következő pontos feladat: 7. nap – mérési és összehasonlító pipeline; a 13. napi VPS pilot előtt külön felhasználói jóváhagyás szükséges
+Aktuális nap/fázis: 7. nap kész – mérési és összehasonlító pipeline
+Branch és HEAD: `feat/simulator-measurement-pipeline-day7` – `feat: add deterministic simulation measurement pipeline`
+Elkészült: aktív LLMQ-profilhoz kötött automatikus baseline/run ablak; DKG/ChainLock/PoSe/DSL/staking/data-quality snapshot; chain-time és observed-time különválasztása; peer coverage, stale host és ZMQ-gap kapu; DryRun expected kontra actual; elégtelen telemetry mellett fail-closed verdict; boundary block hash reorg-védelem; determinisztikus evidence/report fingerprint; append-only Mongo riport; belső finalize/verify service; explicit allowlistelt publikus `GET /api/v1/simulations/:runKey/report`; teljes szintetikus újraszámolási teszt
+Módosított fájlok: `docs/SIMULATOR_IMPLEMENTATION_ROADMAP_HU.md`; `docs/SIMULATOR_HANDOFF.md`; `docs/simulator/MEASUREMENT_PIPELINE_HU.md`; measurement window/domain/DTO fájlok és tesztjeik; `SimulationMeasurementReport` modell; measurement service és Mongo repository; publikus simulations route; simulation index-inicializálás és modellteszt
+Futtatott tesztek és eredményük: `npm run typecheck && npm test && npm run build` zöld; 40 tesztfájl, 276 teszt; shared/server/client typecheck és production build sikeres
+Nyitott hibák: ismert kódhiba nincs; automatikus report-finalize még szándékosan nincs runtime state transitionre kötve, mert a hiteles fault start/end block anchor a 8. napi executorból érkezik
+Következő pontos feladat: 8. nap – Docker executor és TTL/lease-alapú automatikus fault recovery; kizárólag lokális Docker/regtest, VPS-művelet nélkül
 Külső állapot/VPS-művelet történt-e: nem
 Aktív fault vagy recovery timer: nincs
-Felhasználói jóváhagyás szükséges-e: a 7. napi lokális munkához nem; bármilyen VPS-művelethez és a 13. napi pilothoz igen
+Felhasználói jóváhagyás szükséges-e: a 8. napi lokális Docker-munkához nem; bármilyen VPS-művelethez és a 13. napi pilothoz igen
