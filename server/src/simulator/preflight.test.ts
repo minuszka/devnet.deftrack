@@ -196,11 +196,21 @@ describe('simulation preflight', () => {
     });
   });
 
-  it('refuses to evaluate with no expected wrapper version, naming the knob to fix', () => {
-    const input = healthyInput();
+  it('refuses to evaluate with no expected wrapper version only when recovery is checked', () => {
+    const input = healthyInput(); // recovery.required = true
     input.policy.expectedWrapperVersion = '';
-    // A server-side misconfiguration is a hard error, not a per-target failure
-    // that would dead-end the run in `rejected`.
+    // A live run that checks recovery needs the version to compare against; an
+    // unset one is a server misconfiguration named clearly, not a target failure.
     expect(() => evaluateSimulationPreflight(input)).toThrow(/SIMULATION_EXPECTED_WRAPPER_VERSION/);
+  });
+
+  it('does not require an expected wrapper version when recovery is not checked (dry run)', () => {
+    const input = healthyInput();
+    input.recovery = { required: false, workerLastSeenAtMs: null, targets: [] };
+    input.policy.expectedWrapperVersion = '';
+    // The version is only consumed in the recovery check, so a run that does not
+    // ask for recovery must evaluate normally rather than 500 on a wrapper it never uses.
+    expect(() => evaluateSimulationPreflight(input)).not.toThrow();
+    expect(evaluateSimulationPreflight(input).passed).toBe(true);
   });
 });
