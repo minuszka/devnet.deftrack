@@ -13,7 +13,7 @@ import { QuorumRound } from '../models/QuorumRound.js';
 import { QuorumCommitment } from '../models/QuorumCommitment.js';
 import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { closedEpochAt, epochKeyFor, isCommittable } from '../domain/dslSchedule.js';
-import { commitmentPunishedCount, selectedQuorumSize } from '../domain/commitmentPunishment.js';
+import { commitmentPunishedCount } from '../domain/commitmentPunishment.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
 import { quorumReorgReset } from '../domain/reorg.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
@@ -33,6 +33,35 @@ const TRANSACTION_QUORUM_COMMITMENT = 6;
 const TRANSACTION_POSE_SERVICE_COMMITMENT = 10;
 
 const PROGRESS_EVERY = 25;
+
+/**
+ * How many members a quorum actually seated, from `quorum info`.
+ *
+ * This is the number Core punishes over, and nothing in the commitment carries
+ * it: the profile size is an upper bound the chain rarely reaches, and the
+ * validMembers bitfield is allocated at that same profile size regardless of
+ * how many members were selected. Cached because one quorum is referenced by
+ * several commitments, and answered as null -- unknown -- when the RPC cannot
+ * resolve it, so a failure never turns into a fabricated punishment count.
+ */
+const memberCountCache = new Map<string, number | null>();
+
+async function quorumMemberCount(llmqType: number, quorumHash: string): Promise<number | null> {
+  const key = `${llmqType}:${quorumHash}`;
+  const cached = memberCountCache.get(key);
+  if (cached !== undefined) return cached;
+
+  let count: number | null = null;
+  try {
+    const info = await rpc.call<{ members?: unknown[] }>("quorum", ["info", llmqType, quorumHash]);
+    if (Array.isArray(info?.members)) count = info.members.length;
+  } catch {
+    // An aged-out or unknown quorum is not an error worth failing a block over;
+    // the punishment count simply stays unknown.
+  }
+  memberCountCache.set(key, count);
+  return count;
+}
 
 const dec = (value: number | string): mongoose.Types.Decimal128 =>
   mongoose.Types.Decimal128.fromString(String(value));
@@ -394,10 +423,13 @@ export class SyncService {
       const valid = c.validMembersCount ?? 0;
       const signers = c.signersCount ?? 0;
       const profile = Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType);
-      // How many members the DKG actually selected -- bounded by the commitment's
-      // own validMembers bitfield, never taken from the profile's nominal size.
-      // See domain/commitmentPunishment.ts for why both traps matter.
-      const selectedSize = selectedQuorumSize(profile?.size ?? null, c.validMembers);
+      // How many members the DKG actually selected. Core punishes over this list
+      // (`for i < members.size()`), and neither the profile size nor the
+      // validMembers bitfield gives it: llmq_400_60 seats 400 nominally, forms
+      // with 80 here, and allocates a 400-bit bitfield either way. `quorum info`
+      // returns the real member list and resolves for historical quorums too;
+      // when it cannot, the count stays null rather than becoming a guess.
+      const memberCount = quorumHash === null ? null : await quorumMemberCount(llmqType, quorumHash);
 
       commitmentOps.push({
         updateOne: {
@@ -415,7 +447,7 @@ export class SyncService {
               minedBlockHash: block.hash,
               validMembersCount: valid,
               signersCount: signers,
-              punishedCount: commitmentPunishedCount(valid, selectedSize),
+              punishedCount: commitmentPunishedCount(valid, memberCount),
               detectedAt: new Date(),
             },
           },
