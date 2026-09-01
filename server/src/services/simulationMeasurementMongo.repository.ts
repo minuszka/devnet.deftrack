@@ -1,7 +1,6 @@
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { chainlockProfileNameAtHeight } from '../config/llmq.js';
 import { Block } from '../models/Block.js';
-import { HostStatus } from '../models/HostStatus.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { ObservationGap } from '../models/ObservationGap.js';
 import { PeerObservation } from '../models/PeerObservation.js';
@@ -10,7 +9,9 @@ import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { SimulationMeasurementReportModel } from '../models/SimulationMeasurementReport.js';
 import { SimulationRun } from '../models/SimulationRun.js';
 import { SimulationRunArtifact } from '../models/SimulationRunArtifact.js';
+import { StakeScriptObservation } from '../models/StakeScriptObservation.js';
 import { Transaction } from '../models/Transaction.js';
+import { resolveScriptOwners } from '../domain/stakeAttribution.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import type {
   SimulationMeasurementEvidence,
@@ -100,7 +101,7 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
     generatedAtMs: number;
   }): Promise<SimulationMeasurementEvidence> {
     const height = { $gte: input.fromHeight, $lte: input.toHeight };
-    const [blocks, coinstakes, rounds, poseEvents, dslEpochs, peerObservations, hosts] = await Promise.all([
+    const [blocks, coinstakes, rounds, poseEvents, dslEpochs, peerObservations, stakeSightings] = await Promise.all([
       Block.find({ height }).sort({ height: 1 }).select(
         'height hash time isProofOfStake hasChainLock chainLockSource chainLockLatencyMs chainLockLatencySec firstSeenAt'
       ).lean(),
@@ -117,17 +118,27 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
       PeerObservation.find({ height, host: { $in: input.expectedHostIds } }).sort({ height: 1, topic: 1, host: 1 }).select(
         'host topic hash height receivedAt clockOffsetMs resolutionMs'
       ).lean(),
-      HostStatus.find({ host: { $in: input.expectedHostIds } }).select('host reportedAt stakeScripts').lean(),
+      // Host attribution from the same immutable, window-scoped source as
+      // presence above, not from the live HostStatus view. HostStatus.stakeScripts
+      // is overwritten on every agent post, so a report built from it did not
+      // recompute: the same coinstake resolved to a different host -- and a
+      // different fingerprint -- depending on when finalize/verify ran, and a
+      // re-finalize on the same anchor could throw an unrecoverable REPORT_CONFLICT.
+      // StakeScriptObservation is append-only and keyed by (height, host); the
+      // same window always reads the same rows.
+      StakeScriptObservation.find({
+        host: { $in: input.expectedHostIds },
+        height: { $gte: input.fromHeight, $lte: input.toHeight },
+      }).sort({ height: 1, script: 1, host: 1 }).select('host script height').lean(),
     ]);
 
-    const ownerByScript = new Map<string, string | null>();
-    for (const host of hosts) {
-      for (const rawScript of host.stakeScripts ?? []) {
-        const script = rawScript.toLowerCase();
-        const previous = ownerByScript.get(script);
-        ownerByScript.set(script, previous === undefined || previous === host.host ? host.host : null);
-      }
-    }
+    // Ambiguity (a script two hosts both claim) resolves to null exactly as the
+    // old cross-host collision did; a script no host reported in the window is
+    // left unattributed rather than credited to whoever posted last.
+    const ownerByScript = resolveScriptOwners(stakeSightings, {
+      fromHeight: input.fromHeight,
+      toHeight: input.toHeight,
+    });
     const scriptByHeight = new Map<number, string>();
     for (const transaction of coinstakes) {
       if (scriptByHeight.has(transaction.height)) continue;
