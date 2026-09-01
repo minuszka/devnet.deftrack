@@ -51,7 +51,7 @@ Elfogadási kapu: minden scenario csak allowlistelt, típusos paramétert fogadh
 
 Állapotok:
 
-`draft -> preflight -> baseline -> armed -> fault_active -> observing -> recovery -> cooldown -> completed/failed`
+`draft -> preflight -> scheduled -> baseline -> armed -> fault_active -> observing -> recovery -> cooldown -> completed`, kiegészítve a `rejected`, `aborting`, `aborted` és `failed` ágakkal.
 
 Feladatok:
 
