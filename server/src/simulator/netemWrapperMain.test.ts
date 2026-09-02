@@ -91,7 +91,15 @@ describe('runWrapperCycle', () => {
       { op: 'garbage' },
       { op: 'apply', container: 'mn02', kind: 'loss', args: ['5%'], runTag: 'r', ttlMs: 30_000 },
     ];
-    const queue = { async enqueue() {}, async drain() { return drained.splice(0); } };
+    const queue = {
+      async enqueue() {},
+      async claim() {
+        return drained.splice(0).map((payload) => ({
+          payload, attempts: 1, ack: async () => {}, retry: async () => {}, reject: async () => {},
+        }));
+      },
+      async recoverInflight() { return 0; },
+    };
     const result = await runWrapperCycle({ runner, queue, logger: silent });
     expect(result).toMatchObject({ dispatched: 2, failed: 1, cleared: 0 });
     expect(actions.filter((a) => a.op === 'apply').map((a) => a.container).sort()).toEqual(['mn01', 'mn02']);
@@ -108,12 +116,16 @@ describe('fileCommandQueue', () => {
     const dir = await mkdtemp(join(tmpdir(), 'wrapper-queue-'));
     try {
       const queue = fileCommandQueue(dir);
-      expect(await queue.drain()).toEqual([]); // empty is fine
+      expect(await queue.claim()).toEqual([]); // empty is fine
       await queue.enqueue({ op: 'clear', jobId: 'a' });
       await queue.enqueue({ op: 'clear', jobId: 'b' });
-      const drained = await queue.drain();
-      expect(drained).toEqual([{ op: 'clear', jobId: 'a' }, { op: 'clear', jobId: 'b' }]);
-      expect(await queue.drain()).toEqual([]); // consumed
+      const claimed = await queue.claim();
+      expect(claimed.map((c) => c.payload)).toEqual([{ op: 'clear', jobId: 'a' }, { op: 'clear', jobId: 'b' }]);
+      // Claimed, not consumed: still in flight until acked.
+      expect(await queue.claim()).toEqual([]);
+      for (const c of claimed) await c.ack();
+      expect(await queue.recoverInflight()).toBe(0); // nothing stranded
+      expect(await queue.claim()).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

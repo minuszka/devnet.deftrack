@@ -136,57 +136,173 @@ export function fileWrapperStore(path: string): WrapperStore {
 
 /**
  * The orchestrator's channel to the single-owner wrapper: a directory of JSON
- * command files. The orchestrator enqueues; the wrapper drains and applies them,
- * so the wrapper stays the only writer of the fault state -- no second writer to
- * race. enqueue writes a temp file and renames, so the wrapper never reads a
- * half-written command.
+ * command files, claimed rather than consumed.
+ *
+ * The first version read a file, DELETED it, and only then handed the command on
+ * to be applied. A crash in that gap lost the command outright while the
+ * orchestrator had already recorded the fault as active -- at-most-once delivery
+ * for an instruction that must land. With several targets it could also leave a
+ * fault half-applied across the set.
+ *
+ * A command now moves pending -> inflight -> gone, by rename, and is removed only
+ * once the wrapper says it was applied. A crash leaves it in `inflight`, and boot
+ * returns it to `pending` instead of forgetting it.
+ *
+ * That makes delivery AT-LEAST-once, which is sound here for a specific reason
+ * rather than by hope: every command the wrapper takes is idempotent. Re-applying
+ * a live netem job is a no-op (planApply), clearing an absent one is a no-op
+ * (planClear), and `docker stop`/`docker start` both exit 0 when the container is
+ * already in the wanted state. Delivering twice costs nothing; delivering zero
+ * times leaves a node stopped that nothing will start.
  */
+export interface ClaimedCommand {
+  /** The decoded payload. Validation is the caller's job, as before. */
+  payload: unknown;
+  /** How many times this command has already been attempted. */
+  attempts: number;
+  /** Applied: remove it for good. */
+  ack(): Promise<void>;
+  /** Not applied, but might be next time: return it to pending. */
+  retry(): Promise<void>;
+  /** It can never be applied: quarantine it with the reason. */
+  reject(reason: string): Promise<void>;
+}
+
 export interface CommandQueue {
   enqueue(command: unknown): Promise<void>;
-  /** Decoded command payloads in submission order; the files are consumed. */
-  drain(): Promise<unknown[]>;
+  /**
+   * Take the pending commands in submission order, moving each to `inflight`.
+   * Each must be acked, retried or rejected; anything left behind is recovered
+   * at the next boot.
+   */
+  claim(): Promise<ClaimedCommand[]>;
+  /** Return whatever a crash stranded in `inflight` to `pending`. */
+  recoverInflight(): Promise<number>;
+}
+
+/** Attempts beyond this and the command is quarantined rather than retried for ever. */
+export const MAX_COMMAND_ATTEMPTS = 5;
+
+interface CommandEnvelope {
+  attempts: number;
+  command: unknown;
+}
+
+function parseEnvelope(raw: string): CommandEnvelope {
+  const value: unknown = JSON.parse(raw);
+  if (value !== null && typeof value === 'object' && 'command' in value && 'attempts' in value) {
+    const envelope = value as { attempts: unknown; command: unknown };
+    return {
+      attempts: Number.isSafeInteger(envelope.attempts) ? (envelope.attempts as number) : 0,
+      command: envelope.command,
+    };
+  }
+  // A bare payload: written before the envelope existed, or by hand.
+  return { attempts: 0, command: value };
 }
 
 export function fileCommandQueue(dir: string): CommandQueue {
   let seq = 0;
+  const pendingDir = join(dir, 'pending');
+  const inflightDir = join(dir, 'inflight');
+  const rejectedDir = join(dir, 'rejected');
+
+  async function writeEnvelope(target: string, name: string, envelope: CommandEnvelope): Promise<void> {
+    await mkdir(target, { recursive: true });
+    const tmp = join(target, `.${name}.tmp`);
+    await writeFile(tmp, JSON.stringify(envelope), 'utf8');
+    await rename(tmp, join(target, name));
+  }
+
+  async function names(target: string): Promise<string[]> {
+    try {
+      return (await readdir(target)).filter((entry) => entry.endsWith('.json')).sort();
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
   return {
     async enqueue(command: unknown): Promise<void> {
-      await mkdir(dir, { recursive: true });
       // Timestamp then a per-queue sequence, so two commands in the same
-      // millisecond still drain in submission order; the random tail only breaks
+      // millisecond still claim in submission order; the random tail only breaks
       // ties between separate writers.
       const name = `${Date.now().toString().padStart(16, '0')}-${(seq++).toString().padStart(9, '0')}-${randomBytes(4).toString('hex')}.json`;
-      const tmp = join(dir, `.${name}.tmp`);
-      await writeFile(tmp, JSON.stringify(command), 'utf8');
-      await rename(tmp, join(dir, name));
+      await writeEnvelope(pendingDir, name, { attempts: 0, command });
     },
-    async drain(): Promise<unknown[]> {
-      let names: string[];
-      try {
-        names = (await readdir(dir)).filter((entry) => entry.endsWith('.json')).sort();
-      } catch (error) {
-        if ((error as { code?: string }).code === 'ENOENT') return [];
-        throw error;
-      }
-      const commands: unknown[] = [];
-      for (const name of names) {
-        const path = join(dir, name);
-        const raw = await readFile(path, 'utf8');
-        let parsed: unknown;
+
+    async claim(): Promise<ClaimedCommand[]> {
+      const claimed: ClaimedCommand[] = [];
+      for (const name of await names(pendingDir)) {
+        const from = join(pendingDir, name);
+        let envelope: CommandEnvelope;
         try {
-          // Parse BEFORE deleting: a corrupt file must cost only itself. Throwing
-          // here would discard every command already read in this batch, and a
-          // lost service-stop is a node that never goes down -- or never comes up.
-          parsed = JSON.parse(raw);
+          // Parse BEFORE moving: a corrupt file must cost only itself, never the
+          // batch beside it.
+          envelope = parseEnvelope(await readFile(from, 'utf8'));
         } catch {
-          await mkdir(join(dir, 'rejected'), { recursive: true });
-          await rename(path, join(dir, 'rejected', name));
+          await mkdir(rejectedDir, { recursive: true });
+          await rename(from, join(rejectedDir, name));
           continue;
         }
-        await rm(path, { force: true });
-        commands.push(parsed);
+        await mkdir(inflightDir, { recursive: true });
+        const inflight = join(inflightDir, name);
+        try {
+          await rename(from, inflight);
+        } catch {
+          continue; // another claimer took it
+        }
+        // Persist the attempt BEFORE handing it over, so a command that kills the
+        // wrapper every time is counted each time and eventually quarantined
+        // instead of being recovered for ever.
+        const attempts = envelope.attempts + 1;
+        await writeFile(inflight, JSON.stringify({ attempts, command: envelope.command }), 'utf8');
+        claimed.push({
+          payload: envelope.command,
+          attempts,
+          async ack(): Promise<void> {
+            await rm(inflight, { force: true });
+          },
+          async retry(): Promise<void> {
+            if (attempts >= MAX_COMMAND_ATTEMPTS) {
+              await mkdir(rejectedDir, { recursive: true });
+              await rename(inflight, join(rejectedDir, name));
+              return;
+            }
+            await writeEnvelope(pendingDir, name, { attempts, command: envelope.command });
+            await rm(inflight, { force: true });
+          },
+          async reject(): Promise<void> {
+            await mkdir(rejectedDir, { recursive: true });
+            await rename(inflight, join(rejectedDir, name));
+          },
+        });
       }
-      return commands;
+      return claimed;
+    },
+
+    async recoverInflight(): Promise<number> {
+      const stranded = await names(inflightDir);
+      let requeued = 0;
+      for (const name of stranded) {
+        const from = join(inflightDir, name);
+        let attempts = 0;
+        try {
+          attempts = parseEnvelope(await readFile(from, 'utf8')).attempts;
+        } catch {
+          attempts = MAX_COMMAND_ATTEMPTS; // unreadable: quarantine rather than loop
+        }
+        if (attempts >= MAX_COMMAND_ATTEMPTS) {
+          await mkdir(rejectedDir, { recursive: true });
+          await rename(from, join(rejectedDir, name)).catch(() => {});
+          continue;
+        }
+        await mkdir(pendingDir, { recursive: true });
+        await rename(from, join(pendingDir, name)).catch(() => {});
+        requeued++;
+      }
+      return requeued;
     },
   };
 }

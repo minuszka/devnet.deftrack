@@ -42,13 +42,32 @@ export async function runWrapperCycle(input: {
 }): Promise<{ dispatched: number; failed: number; cleared: number }> {
   let dispatched = 0;
   let failed = 0;
-  for (const raw of await input.queue.drain()) {
+  for (const claimed of await input.queue.claim()) {
+    let command;
     try {
-      await dispatchWrapperCommand(input.runner, parseWrapperCommand(raw));
+      command = parseWrapperCommand(claimed.payload);
+    } catch (error) {
+      // Malformed: no number of retries will make it parse, so it is quarantined
+      // rather than left to circle.
+      failed++;
+      await claimed.reject(String(error));
+      input.logger.error(`wrapper command rejected: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    try {
+      await dispatchWrapperCommand(input.runner, command);
+      // Acked only once it has actually been applied. The command file survives
+      // a crash in between and is re-claimed at the next boot; every command the
+      // wrapper takes is idempotent, so arriving twice costs nothing while
+      // arriving zero times leaves a node stopped that nothing will start.
+      await claimed.ack();
       dispatched++;
     } catch (error) {
       failed++;
-      input.logger.error(`wrapper command rejected: ${error instanceof Error ? error.message : String(error)}`);
+      await claimed.retry();
+      input.logger.error(
+        `wrapper command failed (attempt ${claimed.attempts}): ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
   const { cleared } = await input.runner.tick();
@@ -119,6 +138,11 @@ async function main(): Promise<void> {
   // Then recover: after a crash the real state is unknown, so undo every recorded
   // job. It never rejects; anything it could not undo is retained as expired and
   // the next cycle retries it.
+  // Anything a crash stranded mid-application goes back to pending before the
+  // first cycle claims.
+  const requeued = await queue.recoverInflight();
+  if (requeued > 0) logger.info(`returned ${requeued} in-flight command(s) to pending`);
+
   const recovered = await runner.bootCleanup();
   logger.info(`boot recovery undid ${recovered.cleared}, retained ${recovered.failed}`);
 
