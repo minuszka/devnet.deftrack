@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   InvalidNetemTargetError,
+  UnscheduledLiveFaultError,
   UnsupportedLiveFaultError,
+  assertSingleFaultClass,
   composeNetemArgs,
+  faultApplyCommandsForPlan,
+  faultRecoveryTargetsForPlan,
   indexTargetsById,
-  netemApplyCommandsForPlan,
-  netemRecoveryTargetsForPlan,
 } from './liveExecutorPlan.js';
-import { netemJobId, tcApplyArgs } from './netemLease.js';
+import { netemJobId, serviceJobId, tcApplyArgs } from './netemLease.js';
+import { MAX_TTL_MS } from './netemRunner.js';
 import type { PlannedActionPayload, PlannedSimulationAction, DryRunPlan } from './scenarioTypes.js';
 import type { SimulationTargetSnapshot } from '../models/SimulationRun.js';
 
@@ -22,7 +25,7 @@ function target(overrides: Partial<SimulationTargetSnapshot> = {}): SimulationTa
     p2pPort: 19799,
     role: 'masternode',
     network: 'regtest',
-    capabilities: ['netem-p2p'],
+    capabilities: ['netem-p2p', 'service-control'],
     expectedBuild: null,
     capturedAtMs: 0,
     capturedAtHeight: 0,
@@ -30,7 +33,12 @@ function target(overrides: Partial<SimulationTargetSnapshot> = {}): SimulationTa
   };
 }
 
-function action(targetId: string, payload: PlannedActionPayload, sequence = 0): PlannedSimulationAction {
+function action(
+  targetId: string,
+  payload: PlannedActionPayload,
+  sequence = 0,
+  notBeforeOffsetMs = 0
+): PlannedSimulationAction {
   return {
     actionId: `${targetId}:${sequence}`,
     runKey: 'run-1',
@@ -39,7 +47,7 @@ function action(targetId: string, payload: PlannedActionPayload, sequence = 0): 
     kind: payload.kind,
     payload,
     payloadDigest: 'digest',
-    notBeforeOffsetMs: 0,
+    notBeforeOffsetMs,
     expiresAfterMs: 60_000,
     maxAttempts: 1,
   };
@@ -56,6 +64,11 @@ const netemPayload = (overrides: Partial<Extract<PlannedActionPayload, { kind: '
     faultLeaseSeconds: 200,
     ...overrides,
   });
+
+const stopPayload: PlannedActionPayload = { kind: 'service-stop', faultLeaseSeconds: 200 };
+const partitionPayload: PlannedActionPayload = {
+  kind: 'partition-apply', p2pPortRef: 'devnet-p2p', peerTargetIds: ['mn-2'], faultLeaseSeconds: 60,
+};
 
 const planWith = (actions: PlannedSimulationAction[]): DryRunPlan => ({ actions } as unknown as DryRunPlan);
 
@@ -87,7 +100,7 @@ describe('composeNetemArgs', () => {
   });
 });
 
-describe('netemApplyCommandsForPlan', () => {
+describe('faultApplyCommandsForPlan', () => {
   const targets = indexTargetsById([target({ targetId: 'mn-1', hostRef: 'mn01' }), target({ targetId: 'mn-2', hostRef: 'mn02' })]);
 
   it('turns each netem-apply into a composed apply and skips the scheduled clear', () => {
@@ -96,60 +109,113 @@ describe('netemApplyCommandsForPlan', () => {
       action('mn-1', { kind: 'fault-clear', scope: 'run' }, 1),
       action('mn-2', netemPayload({ latencyMs: 50, jitterMs: 0, lossPercent: 0, correlationPercent: 0 }), 2),
     ]);
-    const commands = netemApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 30_000 });
-    expect(commands).toEqual([
+    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 30_000 })).toEqual([
       { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', ttlMs: 30_000 },
       { op: 'apply', container: 'mn02', kind: 'netem', args: ['delay', '50ms'], runTag: 'run-1', ttlMs: 30_000 },
     ]);
   });
 
+  it('turns each service-stop into one stop command and skips its paired start', () => {
+    const plan = planWith([
+      action('mn-1', stopPayload),
+      action('mn-1', { kind: 'service-start' }, 1, 30_000), // the paired undo: recovery and the TTL own it
+      action('mn-2', stopPayload, 2),
+    ]);
+    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 30_000 })).toEqual([
+      { op: 'service-stop', container: 'mn01', runTag: 'run-1', ttlMs: 30_000 },
+      { op: 'service-stop', container: 'mn02', runTag: 'run-1', ttlMs: 30_000 },
+    ]);
+  });
+
   it('returns nothing for a clear-only plan rather than throwing', () => {
     const plan = planWith([action('mn-1', { kind: 'fault-clear', scope: 'run' })]);
-    expect(netemApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 })).toEqual([]);
+    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 })).toEqual([]);
   });
 
   it('fails closed on a fault kind it cannot apply', () => {
-    const plan = planWith([action('mn-1', { kind: 'service-stop', faultLeaseSeconds: 60 })]);
-    expect(() => netemApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+    const plan = planWith([action('mn-1', partitionPayload)]);
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
       .toThrow(UnsupportedLiveFaultError);
-    const partition = planWith([action('mn-1', { kind: 'partition-apply', p2pPortRef: 'devnet-p2p', peerTargetIds: ['mn-2'], faultLeaseSeconds: 60 })]);
-    expect(() => netemApplyCommandsForPlan({ plan: partition, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
       .toThrow(/partition-apply/);
+  });
+
+  it('refuses a staged or repeated outage rather than collapsing a schedule into one stop', () => {
+    // restart-flapping: a stop at an offset, and a second cycle on the same target.
+    const staged = planWith([action('mn-1', stopPayload, 0, 30_000)]);
+    expect(() => faultApplyCommandsForPlan({ plan: staged, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+      .toThrow(UnscheduledLiveFaultError);
+    const repeated = planWith([action('mn-1', stopPayload, 0), action('mn-1', stopPayload, 2)]);
+    expect(() => faultApplyCommandsForPlan({ plan: repeated, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+      .toThrow(UnscheduledLiveFaultError);
+  });
+
+  it('refuses a lease beyond the wrapper ceiling, so it surfaces before a command is written', () => {
+    const plan = planWith([action('mn-1', stopPayload)]);
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: MAX_TTL_MS + 1 }))
+      .toThrow(/ceiling/);
   });
 
   it('rejects a target that is unknown, off-network, or lacks the capability', () => {
     const plan = planWith([action('mn-9', netemPayload())]);
-    expect(() => netemApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 })).toThrow(InvalidNetemTargetError);
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 })).toThrow(InvalidNetemTargetError);
 
     const offNet = indexTargetsById([target({ targetId: 'mn-1', network: 'devnet' })]);
-    expect(() => netemApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: offNet, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: offNet, runTag: 'run-1', ttlMs: 1_000 }))
       .toThrow(/not the lab/);
 
-    const noCap = indexTargetsById([target({ targetId: 'mn-1', capabilities: ['service-control'] })]);
-    expect(() => netemApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: noCap, runTag: 'run-1', ttlMs: 1_000 }))
+    const noNetem = indexTargetsById([target({ targetId: 'mn-1', capabilities: ['service-control'] })]);
+    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: noNetem, runTag: 'run-1', ttlMs: 1_000 }))
       .toThrow(/netem-p2p/);
+
+    const noService = indexTargetsById([target({ targetId: 'mn-1', capabilities: ['netem-p2p'] })]);
+    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', stopPayload)]), targetsById: noService, runTag: 'run-1', ttlMs: 1_000 }))
+      .toThrow(/service-control/);
   });
 });
 
-describe('netemRecoveryTargetsForPlan', () => {
+describe('assertSingleFaultClass', () => {
+  it('refuses a plan mixing the two classes -- docker start would wipe the qdisc', () => {
+    expect(() => assertSingleFaultClass(planWith([action('mn-1', netemPayload()), action('mn-1', stopPayload, 1)])))
+      .toThrow(UnsupportedLiveFaultError);
+    expect(() => assertSingleFaultClass(planWith([action('mn-1', netemPayload())]))).not.toThrow();
+    expect(() => assertSingleFaultClass(planWith([action('mn-1', stopPayload)]))).not.toThrow();
+  });
+});
+
+describe('faultRecoveryTargetsForPlan', () => {
   const targets = indexTargetsById([target({ targetId: 'mn-1', hostRef: 'mn01' }), target({ targetId: 'mn-2', hostRef: 'mn02' })]);
 
-  it('clears each faulted target by the same job id the apply used', () => {
+  it('clears a netem fault by the same job id the apply used', () => {
     const payload = netemPayload();
-    const plan = planWith([action('mn-1', payload)]);
-    const [recovery] = netemRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
+    const { targets: recovery } = faultRecoveryTargetsForPlan({ plan: planWith([action('mn-1', payload)]), targetsById: targets, runTag: 'run-1' });
     const expectedJobId = netemJobId('run-1', { container: 'mn01', kind: 'netem', args: composeNetemArgs(payload) });
-    expect(recovery).toEqual({ targetId: 'mn-1', container: 'mn01', clear: { op: 'clear', jobId: expectedJobId } });
+    expect(recovery).toEqual([{ targetId: 'mn-1', container: 'mn01', faultClass: 'netem', clear: { op: 'clear', jobId: expectedJobId } }]);
   });
 
-  it('deduplicates identical faults and stays lenient on kinds it never applied', () => {
+  it('clears a service fault by the same job id the stop used', () => {
+    const { targets: recovery } = faultRecoveryTargetsForPlan({ plan: planWith([action('mn-1', stopPayload)]), targetsById: targets, runTag: 'run-1' });
+    expect(recovery).toEqual([
+      { targetId: 'mn-1', container: 'mn01', faultClass: 'service', clear: { op: 'clear', jobId: serviceJobId('run-1', 'mn01') } },
+    ]);
+  });
+
+  it('deduplicates identical faults and counts what it cannot speak for', () => {
     const plan = planWith([
       action('mn-1', netemPayload()),
       action('mn-1', netemPayload(), 1), // identical -> one clear
-      action('mn-2', { kind: 'service-stop', faultLeaseSeconds: 60 }, 2), // never applied -> skipped, not thrown
+      action('mn-2', partitionPayload, 2), // never applied -> counted, not thrown
     ]);
-    const recovery = netemRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
+    const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
     expect(recovery).toHaveLength(1);
     expect(recovery[0]!.targetId).toBe('mn-1');
+    expect(skipped).toBe(1);
+  });
+
+  it('never throws where apply would, so recovery cannot strand a run mid-teardown', () => {
+    const plan = planWith([action('mn-9', netemPayload()), action('mn-1', stopPayload, 1, 30_000)]);
+    const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
+    expect(recovery).toEqual([]);
+    expect(skipped).toBe(2); // unknown target, and a staged outage
   });
 });

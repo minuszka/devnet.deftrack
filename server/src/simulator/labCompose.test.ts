@@ -92,6 +92,20 @@ describe('generateLabCompose', () => {
     expect(Object.keys(spec.networks)).toEqual(['lab']);
   });
 
+  it('pins the container name to the service name, which is what a target hostRef is', () => {
+    const spec = generateLabCompose({ nodes: 3 });
+    for (const [name, service] of Object.entries(spec.services)) {
+      // Without this the real container is <project>-mn01-1 while hostRef is mn01,
+      // so every executor command misses -- and a miss reads as benign for a clear,
+      // which would let a fault that never landed look applied.
+      expect(service.container_name).toBe(name);
+      // Nothing may resurrect a node the simulator deliberately stopped, and the
+      // grace must match the `docker stop -t 30` the wrapper issues.
+      expect(service.restart).toBe('no');
+      expect(service.stop_grace_period).toBe('30s');
+    }
+  });
+
   it('rejects a node count outside the supported range', () => {
     expect(() => generateLabCompose({ nodes: 1 })).toThrow(/2\.\.40/);
     expect(() => generateLabCompose({ nodes: 41 })).toThrow(/2\.\.40/);
