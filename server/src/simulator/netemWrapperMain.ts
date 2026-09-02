@@ -1,5 +1,12 @@
 import { NetemFaultRunner, dispatchWrapperCommand, parseWrapperCommand, type RunnerLogger } from './netemRunner.js';
-import { dockerNetemExecutor, fileCommandQueue, fileWrapperStore, type CommandQueue } from './netemWrapperHost.js';
+import {
+  dockerNetemExecutor,
+  dockerRunningContainers,
+  fileCommandQueue,
+  fileWrapperStore,
+  type CommandQueue,
+} from './netemWrapperHost.js';
+import { buildWrapperHeartbeat, writeWrapperHeartbeat } from './wrapperHeartbeat.js';
 
 /**
  * The node-local netem wrapper's process entrypoint.
@@ -26,6 +33,12 @@ export async function runWrapperCycle(input: {
   runner: NetemFaultRunner;
   queue: CommandQueue;
   logger: RunnerLogger;
+  /**
+   * Publish liveness after the sweep. Optional, and its failure is logged and
+   * stepped over: a heartbeat is what the preflight reads, never what the
+   * recovery guarantee depends on, so it must not be able to break a cycle.
+   */
+  publish?: () => Promise<void>;
 }): Promise<{ dispatched: number; failed: number; cleared: number }> {
   let dispatched = 0;
   let failed = 0;
@@ -39,6 +52,13 @@ export async function runWrapperCycle(input: {
     }
   }
   const { cleared } = await input.runner.tick();
+  if (input.publish !== undefined) {
+    try {
+      await input.publish();
+    } catch (error) {
+      input.logger.error(`heartbeat publish failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   return { dispatched, failed, cleared };
 }
 
@@ -46,12 +66,34 @@ async function main(): Promise<void> {
   const statePath = process.env.NETEM_WRAPPER_STATE ?? '/var/lib/netem-wrapper/state.json';
   const commandDir = process.env.NETEM_WRAPPER_COMMANDS ?? '/var/lib/netem-wrapper/commands';
   const intervalMs = Number(process.env.NETEM_WRAPPER_INTERVAL_MS ?? 5_000);
+  const heartbeatPath = process.env.NETEM_WRAPPER_HEARTBEAT ?? '';
+  const wrapperVersion = process.env.NETEM_WRAPPER_VERSION ?? '';
   const logger: RunnerLogger = { info: (m) => console.info(m), error: (m) => console.error(m) };
 
   const runner = new NetemFaultRunner(dockerNetemExecutor(process.env.DOCKER_BIN ?? 'docker'), fileWrapperStore(statePath), {
     logger,
   });
   const queue = fileCommandQueue(commandDir);
+
+  // The wrapper's own claim about itself, which is what the live preflight reads.
+  // Unset means it publishes nothing, and a live run then fails recovery-ready --
+  // fail-closed for the true reason, rather than because the evidence was
+  // hardcoded to "unknown".
+  const runningContainers = dockerRunningContainers(process.env.DOCKER_BIN ?? 'docker');
+  const publish =
+    heartbeatPath === ''
+      ? undefined
+      : async (): Promise<void> => {
+          await writeWrapperHeartbeat(
+            heartbeatPath,
+            buildWrapperHeartbeat({
+              atMs: Date.now(),
+              wrapperVersion,
+              state: await runner.snapshot(),
+              runningContainers: await runningContainers(),
+            })
+          );
+        };
 
   // Arm the cycle FIRST. Boot recovery is the moment the guarantee is needed most,
   // so nothing it does may decide whether the watchdog runs: a state file naming a
@@ -64,7 +106,7 @@ async function main(): Promise<void> {
   const timer = setInterval(() => {
     if (inFlight) return;
     inFlight = true;
-    void runWrapperCycle({ runner, queue, logger })
+    void runWrapperCycle({ runner, queue, logger, publish })
       .catch((error) => {
         logger.error(`wrapper cycle failed: ${error instanceof Error ? error.message : String(error)}`);
       })

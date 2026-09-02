@@ -266,6 +266,15 @@ export class LabFaultRunner {
     this.timer = null;
   }
 
+  /**
+   * The record as it stands, read inside the same queue as every write -- so it
+   * never observes a half-applied change, and the heartbeat it feeds cannot claim
+   * a container is clean while a stop is mid-flight.
+   */
+  async snapshot(): Promise<WrapperState> {
+    return this.serialise(() => this.store.load());
+  }
+
   /** Whether the TTL sweep is running. The recovery guarantee is exactly this being true. */
   get watchdogArmed(): boolean {
     return this.timer !== null;

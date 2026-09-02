@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { planMeasurementWindows } from './measurementWindows.js';
 import { evaluateSimulationPreflight, type SimulationPreflightInput } from './preflight.js';
 import type { TargetInventoryResolution } from './targetResolver.js';
+import { recoveryEvidenceFromHeartbeat } from './wrapperHeartbeat.js';
+import type { SimulationTargetSnapshot } from '../models/SimulationRun.js';
 
 const NOW = 2_000_000;
 const HEIGHT = 6_240;
@@ -212,5 +214,70 @@ describe('simulation preflight', () => {
     // ask for recovery must evaluate normally rather than 500 on a wrapper it never uses.
     expect(() => evaluateSimulationPreflight(input)).not.toThrow();
     expect(evaluateSimulationPreflight(input).passed).toBe(true);
+  });
+});
+
+describe('recovery evidence comes from the wrapper heartbeat', () => {
+  const labTarget = (targetId: string, hostRef: string): SimulationTargetSnapshot => ({
+    targetId, displayLabel: targetId, operatorId: null, proTxHash: null, hostRef,
+    unitRef: 'u', p2pPort: 19799, role: 'masternode', network: 'regtest',
+    capabilities: ['netem-p2p', 'service-control'],
+    expectedBuild: null, capturedAtMs: 0, capturedAtHeight: 0,
+  });
+
+  const withRecovery = (recovery: SimulationPreflightInput['recovery']): SimulationPreflightInput => ({
+    ...healthyInput(),
+    recovery,
+  });
+
+  it('passes recovery-ready for a live run when a fresh heartbeat covers the target', () => {
+    // The whole point of the fix: this check used to be unpassable for a live run,
+    // because the evidence was hardcoded to null/[] with required=true.
+    const evidence = recoveryEvidenceFromHeartbeat({
+      heartbeat: {
+        atMs: NOW - 1_000,
+        wrapperVersion: '1.0.0',
+        containers: [{ container: 'mn01', running: true, faultStateClean: true }],
+      },
+      targets: [labTarget('mn-1', 'mn01')],
+    });
+    const result = evaluateSimulationPreflight(withRecovery({ required: true, ...evidence }));
+    expect(result.checks.find((item) => item.checkId === 'recovery-ready')).toMatchObject({
+      passed: true, severity: 'required',
+    });
+  });
+
+  it('fails for the true reason when no wrapper is publishing', () => {
+    const evidence = recoveryEvidenceFromHeartbeat({ heartbeat: null, targets: [labTarget('mn-1', 'mn01')] });
+    const result = evaluateSimulationPreflight(withRecovery({ required: true, ...evidence }));
+    const check = result.checks.find((item) => item.checkId === 'recovery-ready');
+    expect(check).toMatchObject({ passed: false, severity: 'required' });
+    // The detail names the worker, not the targets -- it is a wrapper that is
+    // absent, and the run record must not blame the fleet for it.
+    expect(check?.privateDetail).toContain('workerAgeMs=Infinity');
+  });
+
+  it('fails when the wrapper is a different build from the one configured', () => {
+    const evidence = recoveryEvidenceFromHeartbeat({
+      heartbeat: {
+        atMs: NOW - 1_000, wrapperVersion: 'not-the-expected-build',
+        containers: [{ container: 'mn01', running: true, faultStateClean: true }],
+      },
+      targets: [labTarget('mn-1', 'mn01')],
+    });
+    const result = evaluateSimulationPreflight(withRecovery({ required: true, ...evidence }));
+    expect(result.checks.find((item) => item.checkId === 'recovery-ready')?.passed).toBe(false);
+  });
+
+  it('fails when the wrapper still holds a fault against the target', () => {
+    const evidence = recoveryEvidenceFromHeartbeat({
+      heartbeat: {
+        atMs: NOW - 1_000, wrapperVersion: '1.0.0',
+        containers: [{ container: 'mn01', running: true, faultStateClean: false }],
+      },
+      targets: [labTarget('mn-1', 'mn01')],
+    });
+    const result = evaluateSimulationPreflight(withRecovery({ required: true, ...evidence }));
+    expect(result.checks.find((item) => item.checkId === 'recovery-ready')?.passed).toBe(false);
   });
 });

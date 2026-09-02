@@ -16,6 +16,7 @@ import { SyncState } from '../models/SyncState.js';
 import { prepareSimulationDraft, type PreparedSimulationDraft } from '../simulator/draftPreparation.js';
 import { planMeasurementWindowsForLlmqFault } from '../simulator/measurementWindows.js';
 import { evaluateSimulationPreflight, type SimulationPreflightEvaluation } from '../simulator/preflight.js';
+import { readWrapperHeartbeat, recoveryEvidenceFromHeartbeat } from '../simulator/wrapperHeartbeat.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import {
   resolveSimulationTargetInventory,
@@ -288,6 +289,13 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       .map((hash) => targetIdsByProTx.get(hash.toLowerCase()))
       .filter((targetId): targetId is string => targetId !== undefined);
 
+    // Only a live run needs recovery evidence, and only a configured lab
+    // publishes it; a dry run must not pay a file read for a check it skips.
+    const wrapperHeartbeat =
+      input.run.state.live && config.simulator.labWrapperHeartbeatPath !== ''
+        ? await readWrapperHeartbeat(config.simulator.labWrapperHeartbeatPath)
+        : null;
+
     return evaluateSimulationPreflight({
       nowMs: input.nowMs,
       policy: {
@@ -337,10 +345,16 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         otherLiveRunKeys: liveConflicts.map((run) => run.runKey),
         otherRunningExperimentKeys: experiments.map((run) => run.runKey),
       },
+      // Read from the wrapper's own heartbeat rather than hardcoded. These were
+      // `null` and `[]` with `required: live`, which made recovery-ready fail by
+      // construction for every live run -- so no live run could be armed at all,
+      // and the rejection blamed the targets for a server-side gap.
       recovery: {
         required: input.run.state.live,
-        workerLastSeenAtMs: null,
-        targets: [],
+        ...recoveryEvidenceFromHeartbeat({
+          heartbeat: wrapperHeartbeat,
+          targets: input.run.metadata.targetSnapshot,
+        }),
       },
       quorum: {
         required: input.run.metadata.scenarioId === 'quorum-member-outage',

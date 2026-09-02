@@ -75,6 +75,10 @@ export const config = {
     // default that could reach a host. It acts only on the local Docker lab.
     labExecutorEnabled: optionalBool('SIMULATION_LAB_EXECUTOR_ENABLED', false),
     labWrapperCommandDir: process.env.SIMULATION_LAB_WRAPPER_COMMANDS ?? '',
+    // Where the node-local wrapper publishes its heartbeat. Empty means the live
+    // preflight has no recovery evidence and a live run fails recovery-ready --
+    // fail-closed, and now for the true reason.
+    labWrapperHeartbeatPath: process.env.SIMULATION_LAB_WRAPPER_HEARTBEAT ?? '',
     labDockerBin: process.env.SIMULATION_LAB_DOCKER_BIN ?? 'docker',
   },
 
