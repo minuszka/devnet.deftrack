@@ -53,7 +53,7 @@ export class DdPageRounds extends LitElement {
       }
       button {
         font-family: var(--font-mono);
-        font-size: 11px;
+        font-size: var(--fs-xs);
         font-weight: 600;
         letter-spacing: 0.06em;
         text-transform: uppercase;
@@ -84,7 +84,7 @@ export class DdPageRounds extends LitElement {
         padding: 10px 14px;
         border-top: 1px solid var(--line-soft);
         font-family: var(--font-mono);
-        font-size: 11.5px;
+        font-size: var(--fs-sm);
         color: var(--ink-3);
       }
       /* Sits against the punished count, because that is the number a reader
@@ -95,7 +95,7 @@ export class DdPageRounds extends LitElement {
         border: 1px solid var(--warn);
         border-radius: var(--radius);
         color: var(--warn);
-        font-size: 10px;
+        font-size: var(--fs-xs);
         font-weight: 600;
         letter-spacing: 0.06em;
         text-transform: uppercase;

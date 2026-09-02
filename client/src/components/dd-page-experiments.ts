@@ -31,11 +31,11 @@ export class DdPageExperiments extends LitElement {
         grid-template-columns: 170px 1fr;
         gap: 6px 14px;
         padding: 14px;
-        font-size: 13px;
+        font-size: var(--fs-sm);
       }
       .kv dt {
         font-family: var(--font-mono);
-        font-size: 11px;
+        font-size: var(--fs-xs);
         letter-spacing: 0.1em;
         text-transform: uppercase;
         color: var(--ink-3);
@@ -61,7 +61,7 @@ export class DdPageExperiments extends LitElement {
         padding: 10px 14px;
         border-top: 1px solid var(--line-soft);
         color: var(--ink-3);
-        font-size: 12px;
+        font-size: var(--fs-sm);
         line-height: 1.55;
       }
       .bad {

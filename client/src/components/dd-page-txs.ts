@@ -15,12 +15,12 @@ const shared = css`
     padding: 10px 14px;
     border-top: 1px solid var(--line-soft);
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
     color: var(--ink-3);
   }
   button {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -37,7 +37,7 @@ const shared = css`
   }
   .kind {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -196,12 +196,12 @@ export class DdPageTx extends LitElement {
         gap: 6px 20px;
         margin: 0;
         padding: 12px 14px;
-        font-size: 13px;
+        font-size: var(--fs-sm);
       }
       dt {
         color: var(--ink-3);
         font-family: var(--font-mono);
-        font-size: 11.5px;
+        font-size: var(--fs-sm);
       }
       dd {
         margin: 0;

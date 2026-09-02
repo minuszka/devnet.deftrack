@@ -25,6 +25,7 @@ export class DdPageOverview extends LitElement {
     _running: { state: true },
     _error: { state: true },
     _loading: { state: true },
+    _copied: { state: true },
   };
 
   private _timeline: HealthTimeline | null = null;
@@ -36,6 +37,7 @@ export class DdPageOverview extends LitElement {
   private _running: ExperimentRow[] = [];
   private _error = '';
   private _loading = true;
+  private _copied: string | null = null;
   private _timer: number | null = null;
 
   static override styles = [
@@ -44,149 +46,102 @@ export class DdPageOverview extends LitElement {
     tableStyles,
     pageStyles,
     css`
-      .q60 {
-        display: flex;
-        align-items: baseline;
-        gap: 10px;
-        flex-wrap: wrap;
-        margin: 0 0 14px;
-        padding: 10px 14px;
-        border: 1px solid var(--line-soft);
-        border-left: 3px solid var(--warn);
-        border-radius: 6px;
-        font-size: 13px;
-      }
-      /* Two strips stack the way the state bar and the Q60 line already do --
-         touching -- and the 14px of air comes only after the last of them. */
-      .q60:has(+ .run) {
+      .page > .page-head {
         margin-bottom: 0;
       }
-      .q60.live {
-        border-left-color: var(--accent);
-      }
-      .q60 .tag,
-      .run .tag {
-        font-family: var(--font-mono);
-        font-size: 10.5px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--ink-3);
-      }
-      .q60 .mono,
-      .run .mono {
-        font-family: var(--font-mono);
-      }
-
-      /* A run that is open right now is an intervention in progress: every
-         figure below is being measured under it, so it is announced beside
-         the Q60 line, and the gear turns for as long as the run is open. */
-      .run {
-        display: flex;
+      .refresh {
+        display: inline-flex;
         align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-        margin: 0 0 14px;
-        padding: 10px 14px;
-        border: 1px solid var(--line-soft);
-        border-left: 3px solid var(--warn);
-        border-radius: 6px;
-        font-size: 13px;
-      }
-      .run .gear {
-        width: 14px;
-        height: 14px;
-        flex: none;
-        color: var(--warn);
-        animation: spin 2.4s linear infinite;
-      }
-      /* The title always starts a line of its own under the tag, and the
-         particulars sit under the title in the secondary colour. */
-      .run .body {
-        flex: 1 1 100%;
-        min-width: 0;
-      }
-      .run .since {
-        display: block;
-        margin-top: 3px;
-        color: var(--ink-2);
-      }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .run .gear {
-          animation: none;
-        }
-      }
-      .more {
-        padding: 10px 14px;
-        border-top: 1px solid var(--line-soft);
+        gap: var(--sp-2);
         font-family: var(--font-mono);
-        font-size: 11.5px;
+        font-size: var(--fs-xs);
+        color: var(--ink-3);
+        letter-spacing: 0.06em;
       }
 
-      /* State bar. One colour per situation, so "cannot form yet" never looks
-         like "failed unexpectedly". */
-      .state {
-        display: flex;
-        align-items: flex-start;
-        gap: 14px;
-        padding: 12px 14px;
+      /* The operational summary: one alert, then the strips that qualify it.
+         Stacked tight, because together they are one reading; the tiles below
+         are a different one. */
+      .summary {
+        display: grid;
+        gap: var(--sp-2);
+      }
+
+      /* The alert. Severity on the edge and in the chip's word, the finding as
+         a title, what it means as a sentence, the numbers it rests on as facts. */
+      .alert {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: var(--sp-2) var(--sp-4);
+        align-items: start;
+        padding: var(--sp-4) var(--sp-5);
         border: 1px solid var(--line);
-        border-left-width: 3px;
+        border-left: 4px solid var(--ink-3);
+        border-radius: var(--radius-md);
         background: var(--surface);
+        box-shadow: var(--shadow);
       }
-      .state.bootstrap {
-        border-left-color: var(--ink-3);
-      }
-      .state.healthy {
+      .alert.healthy {
         border-left-color: var(--good);
       }
-      .state.investigate {
+      .alert.investigate {
         border-left-color: var(--crit);
-        background: var(--surface-2);
+        background: color-mix(in srgb, var(--crit) 6%, var(--surface));
       }
-      .state-chip {
+      .alert-chip {
+        margin-top: 3px;
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         font-weight: 700;
         letter-spacing: 0.14em;
         text-transform: uppercase;
-        padding: 4px 9px;
+        padding: 5px 10px;
         border: 1px solid currentColor;
+        border-radius: var(--radius);
         white-space: nowrap;
-      }
-      .state.bootstrap .state-chip {
+        line-height: 1;
         color: var(--ink-2);
       }
-      .state.healthy .state-chip {
+      .alert.healthy .alert-chip {
         color: var(--good);
       }
-      .state.investigate .state-chip {
+      .alert.investigate .alert-chip {
         color: var(--crit);
       }
-      .state-body {
-        flex: 1;
+      .alert-body {
         min-width: 0;
       }
-      .state-headline {
-        font-size: 14px;
+      .alert-title {
+        font-size: var(--fs-lg);
         font-weight: 600;
-        line-height: 1.4;
+        line-height: 1.3;
       }
-      .state-detail {
+      .alert-detail {
         color: var(--ink-2);
-        font-size: 12.5px;
-        margin-top: 3px;
+        font-size: var(--fs-sm);
         line-height: 1.5;
+        margin-top: var(--sp-1);
+      }
+      .alert-meta {
+        display: flex;
+        gap: var(--sp-4);
+        flex-wrap: wrap;
+        margin-top: var(--sp-3);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: var(--ink-3);
+        letter-spacing: 0.03em;
+      }
+      .alert-meta b {
+        color: var(--ink-2);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
       }
 
       /* Bootstrap progress: how far off a quorum still is, as a quantity
          rather than as a red percentage. */
       .bar {
-        margin-top: 9px;
+        margin-top: var(--sp-3);
         height: 6px;
         background: var(--surface-3);
         border: 1px solid var(--line);
@@ -196,6 +151,149 @@ export class DdPageOverview extends LitElement {
         display: block;
         height: 100%;
         background: var(--accent-dim);
+        transition: width var(--t-slow) var(--ease);
+      }
+
+      /* Strips: the Q60 line and a running experiment share one shape. */
+      .strip {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-3) var(--sp-4);
+        flex-wrap: wrap;
+        padding: var(--sp-3) var(--sp-5);
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--warn);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        font-size: var(--fs-sm);
+      }
+      .strip .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--sp-2);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        white-space: nowrap;
+      }
+      .strip .mono {
+        font-family: var(--font-mono);
+      }
+      /* The healthy state, said loudly: the profile this project was built to
+         test is signing, and the line breathes to say it is still doing so. */
+      .strip.live {
+        border-left-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+      }
+      .strip.live .tag {
+        color: var(--accent);
+      }
+      .strip.live .line {
+        font-size: var(--fs-base);
+      }
+      /* A run that is open right now is an intervention in progress: every
+         figure below is being measured under it, so it reads as a live task,
+         with the gear turning for as long as the run is open. */
+      .strip.task {
+        align-items: flex-start;
+      }
+      .strip.task .tag {
+        color: var(--warn);
+        padding-top: 3px;
+      }
+      .strip.task .gear {
+        width: 15px;
+        height: 15px;
+        flex: none;
+        animation: spin 2.4s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .task-body {
+        flex: 1 1 320px;
+        min-width: 0;
+        display: grid;
+        gap: var(--sp-2);
+      }
+      .task-title {
+        font-size: var(--fs-base);
+        font-weight: 600;
+        line-height: 1.35;
+      }
+      .chips {
+        display: flex;
+        gap: var(--sp-2);
+        flex-wrap: wrap;
+      }
+      .chip {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        padding: 3px 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        color: var(--ink-2);
+        background: var(--bg-raised);
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .more {
+        padding: var(--sp-3) var(--sp-4);
+        border-top: 1px solid var(--line-soft);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        letter-spacing: 0.04em;
+      }
+
+      /* Table emphasis: the two numbers a reader is here for. */
+      td.health {
+        font-weight: 700;
+        color: var(--ink);
+      }
+      td.health.low {
+        color: var(--warn);
+      }
+      td.health.bad {
+        color: var(--crit);
+      }
+      td.punished.some {
+        color: var(--crit);
+        font-weight: 700;
+      }
+      td.evidence {
+        color: var(--ink-2);
+        white-space: normal;
+        min-width: 220px;
+      }
+      .hashcell {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--sp-1);
+      }
+      .copy {
+        font: inherit;
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        background: none;
+        color: var(--ink-3);
+        border: 1px solid transparent;
+        border-radius: var(--radius);
+        padding: 2px 6px;
+        cursor: pointer;
+        transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+      }
+      .copy:hover {
+        color: var(--accent);
+        border-color: var(--line-strong);
+      }
+      .copy.done {
+        color: var(--accent);
       }
 
       /* Compact round timeline, shown while a health-ratio chart would be an
@@ -203,17 +301,17 @@ export class DdPageOverview extends LitElement {
       .timeline {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: var(--sp-2);
         flex-wrap: wrap;
-        padding: 14px;
+        padding: var(--sp-4);
         font-family: var(--font-mono);
-        font-size: 12px;
+        font-size: var(--fs-sm);
       }
       .timeline .step {
         display: inline-flex;
         align-items: baseline;
         gap: 6px;
-        padding: 4px 8px;
+        padding: 5px 9px;
         border: 1px solid var(--line-strong);
         background: var(--surface-2);
       }
@@ -231,6 +329,29 @@ export class DdPageOverview extends LitElement {
       }
       .timeline .arrow {
         color: var(--ink-3);
+      }
+
+      /* Loading: the shapes of what is coming, so nothing jumps when it does. */
+      .sk-alert {
+        height: 92px;
+      }
+      .sk-strip {
+        height: 46px;
+      }
+      .sk-tile {
+        height: 118px;
+      }
+      .sk-chart {
+        height: 380px;
+      }
+      .err {
+        padding: var(--sp-3) var(--sp-4);
+        border: 1px solid color-mix(in srgb, var(--crit) 45%, transparent);
+        background: var(--crit-wash);
+        color: var(--crit);
+        border-radius: var(--radius-md);
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
       }
     `,
   ];
@@ -289,21 +410,42 @@ export class DdPageOverview extends LitElement {
     const s = this._timeline?.summary;
     const status = this._status();
     return html`
-      <div class="page-head">
-        <div>
-          <div class="page-title">Overview</div>
-          <div class="page-sub">
-            Did the last rounds form, was anybody punished, and who failed — the three questions this
-            devnet exists to answer.
+      <div class="page">
+        <div class="page-head">
+          <div>
+            <div class="page-title">Overview</div>
+            <div class="page-sub">
+              Did the last rounds form, was anybody punished, and who failed — the three questions this
+              devnet exists to answer.
+            </div>
           </div>
+          <span class="refresh"><span class="live-dot" aria-hidden="true"></span>live · refreshes every 30 s</span>
         </div>
-      </div>
 
-      ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
-      ${this._loading && !s ? html`<div class="note">Loading…</div>` : nothing}
-      ${s ? this._stateBar(status) : nothing} ${this._q60Banner()} ${this._experimentBanner()}
-      ${s ? this._tiles(s, status) : nothing}
-      ${this._rounds.length > 0 ? this._chartOrTimeline() : nothing} ${this._recent(status)}
+        ${this._error ? html`<div class="err" role="alert">${this._error}</div>` : nothing}
+        ${this._loading && !s ? this._skeleton() : nothing}
+        ${s || this._clocks || this._running.length > 0
+          ? html`<div class="summary">
+              ${s ? this._alert(status) : nothing} ${this._q60Banner()} ${this._experimentBanner()}
+            </div>`
+          : nothing}
+        ${s ? this._tiles(s, status) : nothing}
+        ${this._rounds.length > 0 ? this._chartOrTimeline() : nothing}
+        ${this._loading && this._rounds.length === 0 ? nothing : this._recent(status)}
+      </div>
+    `;
+  }
+
+  private _skeleton(): TemplateResult {
+    return html`
+      <div class="summary" aria-busy="true" aria-label="Loading the overview">
+        <span class="skeleton sk-alert"></span>
+        <span class="skeleton sk-strip"></span>
+      </div>
+      <section class="tiles">
+        ${[0, 1, 2, 3].map(() => html`<span class="skeleton sk-tile"></span>`)}
+      </section>
+      <span class="skeleton sk-chart"></span>
     `;
   }
 
@@ -319,17 +461,17 @@ export class DdPageOverview extends LitElement {
     const tip = this._health?.chainTip ?? this._clocks?.points.at(-1)?.height ?? 0;
 
     if (s.firstV2LockedHeight !== null) {
-      return html`<section class="q60 live">
-        <span class="tag">Q60 live</span>
-        <span
+      return html`<section class="strip live" role="status">
+        <span class="tag"><span class="live-dot" aria-hidden="true"></span>Q60 live</span>
+        <span class="line"
           ><span class="mono">${s.v2}</span> signs the chain since block
           <a class="mono" href="/block/${s.firstV2LockedHeight}">${num(s.firstV2LockedHeight)}</a> —
-          ${num(this._clocks?.signers.counts.v2 ?? 0)} lock(s) observed in the current window.</span
+          <b class="mono">${num(this._clocks?.signers.counts.v2 ?? 0)}</b> lock(s) observed in the current window.</span
         >
       </section>`;
     }
     if (tip >= s.activationHeight) {
-      return html`<section class="q60">
+      return html`<section class="strip" role="status">
         <span class="tag">Q60 activation</span>
         <span
           >Activation height <span class="mono">${num(s.activationHeight)}</span> passed at tip
@@ -339,7 +481,7 @@ export class DdPageOverview extends LitElement {
       </section>`;
     }
     const blocksLeft = s.activationHeight - tip;
-    return html`<section class="q60">
+    return html`<section class="strip" role="status">
       <span class="tag">Q60 switchover</span>
       <span
         ><span class="mono">${s.v1}</span> signs until block
@@ -359,45 +501,62 @@ export class DdPageOverview extends LitElement {
   private _experimentBanner(): TemplateResult | typeof nothing {
     if (this._running.length === 0) return nothing;
     return html`${this._running.map(
-      (r) => html`<section class="run">
-        <svg
-          class="gear"
-          viewBox="0 0 24 24"
-          role="img"
-          aria-label="running"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="3" />
-          <path
-            d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
-          />
-        </svg>
-        <span class="tag">Experiment running</span>
-        <span class="body">
-          <a href="/experiments/${r.runKey}">${r.title}</a>
-          <span class="since">
-            since block <span class="mono">${num(r.startHeight)}</span>${r.intervention
-              ? html`, ${r.intervention.kind}, ${num(r.intervention.targets.length)} target(s)`
-              : nothing}, started ${ago(r.startedAt)}.
+      (r) => html`<section class="strip task" role="status">
+        <span class="tag">
+          <svg
+            class="gear"
+            viewBox="0 0 24 24"
+            role="img"
+            aria-label="running"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
+            />
+          </svg>
+          Experiment running
+        </span>
+        <span class="task-body">
+          <a class="task-title" href="/experiments/${r.runKey}">${r.title}</a>
+          <span class="chips">
+            <span class="chip">since block ${num(r.startHeight)}</span>
+            ${r.intervention
+              ? html`<span class="chip">${r.intervention.kind}</span>
+                  <span class="chip">${num(r.intervention.targets.length)} target(s)</span>`
+              : nothing}
+            <span class="chip">started ${ago(r.startedAt)}</span>
+            <span class="chip mono">${r.runKey}</span>
           </span>
         </span>
       </section>`
     )}`;
   }
 
-  private _stateBar(status: NetworkStatus): TemplateResult {
+  private _alert(status: NetworkStatus): TemplateResult {
+    const s = this._timeline?.summary;
     return html`
-      <section class="state ${status.state}">
-        <span class="state-chip">${status.label}</span>
-        <div class="state-body">
-          <div class="state-headline">${status.headline}</div>
-          <div class="state-detail">${status.detail}</div>
+      <section class="alert ${status.state}" role=${status.state === 'investigate' ? 'alert' : 'status'}>
+        <span class="alert-chip">${status.label}</span>
+        <div class="alert-body">
+          <div class="alert-title">${status.headline}</div>
+          <div class="alert-detail">${status.detail}</div>
+          <div class="alert-meta">
+            <span>eligible masternodes <b>${num(status.enabledMasternodes)}</b></span>
+            ${status.minSize > 0 ? html`<span>profile minimum <b>${num(status.minSize)}</b></span>` : nothing}
+            ${s ? html`<span>7d formed <b>${num(s.formed)}</b> · failed <b>${num(s.failed)}</b></span>` : nothing}
+            ${status.nextRoundHeight !== null
+              ? html`<span>next round <b>H ${num(status.nextRoundHeight)}</b></span>`
+              : nothing}
+          </div>
           ${status.state === 'bootstrap' && status.minSize > 0
-            ? html`<div class="bar"><i style="width:${(status.progress * 100).toFixed(1)}%"></i></div>`
+            ? html`<div class="bar" role="progressbar" aria-valuenow=${Math.round(status.progress * 100)} aria-valuemin="0" aria-valuemax="100">
+                <i style="width:${(status.progress * 100).toFixed(1)}%"></i>
+              </div>`
             : nothing}
         </div>
       </section>
@@ -445,6 +604,7 @@ export class DdPageOverview extends LitElement {
       `;
     }
 
+    const median = s.medianHealthRatio;
     return html`
       <section class="tiles">
         <dd-stat
@@ -461,8 +621,9 @@ export class DdPageOverview extends LitElement {
         ></dd-stat>
         <dd-stat
           label="Median health"
-          value=${ratio(s.medianHealthRatio)}
+          value=${ratio(median)}
           sub=${s.worstHealthRatio === null ? 'no formed round yet' : `worst ${ratio(s.worstHealthRatio)}`}
+          tone=${median === null ? '' : median >= 0.95 ? 'good' : median >= 0.8 ? 'warn' : 'crit'}
         ></dd-stat>
         <dd-stat
           label="Masternodes"
@@ -512,7 +673,10 @@ export class DdPageOverview extends LitElement {
 
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">Health ratio per round</div></div>
+        <div class="card-head">
+          <div class="card-title">Health ratio per round</div>
+          <div class="page-sub mono">${num(points.length)} rounds · 7 days</div>
+        </div>
         <div class="card-body flush">
           <dd-health-chart
             .points=${points}
@@ -543,6 +707,27 @@ export class DdPageOverview extends LitElement {
       : 'no commitment mined';
   }
 
+  private async _copy(hash: string, key: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(hash);
+      this._copied = key;
+      window.setTimeout(() => {
+        if (this._copied === key) this._copied = null;
+      }, 1200);
+    } catch {
+      // No clipboard here; the full hash is still in the cell's title.
+    }
+  }
+
+  private _healthClass(r: QuorumRoundListItem): string {
+    if (r.healthRatio === null) return 'health';
+    const size = r.effectiveSize ?? 0;
+    const floor = size > 0 ? r.minSize / size : 0;
+    if (r.healthRatio < floor) return 'health bad';
+    if (r.healthRatio < 0.9) return 'health low';
+    return 'health';
+  }
+
   private _recent(status: NetworkStatus): TemplateResult {
     return html`
       <section class="card">
@@ -555,15 +740,15 @@ export class DdPageOverview extends LitElement {
             <table>
               <thead>
                 <tr>
-                  <th>Round</th>
-                  <th class="r">Height</th>
-                  <th class="c">Formed</th>
-                  <th class="r">Valid members</th>
-                  <th class="r">Health</th>
-                  <th class="r">Punished</th>
-                  <th>Evidence</th>
-                  <th>Quorum hash</th>
-                  <th class="r">Seen</th>
+                  <th scope="col">Round</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col" class="c">Formed</th>
+                  <th scope="col" class="r">Valid members</th>
+                  <th scope="col" class="r">Health</th>
+                  <th scope="col" class="r">Punished</th>
+                  <th scope="col">Evidence</th>
+                  <th scope="col">Quorum hash</th>
+                  <th scope="col" class="r">Seen</th>
                 </tr>
               </thead>
               <tbody>
@@ -572,7 +757,7 @@ export class DdPageOverview extends LitElement {
                   : this._rounds.map(
                       (r) => html`
                         <tr>
-                          <td class="mono">${r.roundKey}</td>
+                          <td class="mono strong">${r.roundKey}</td>
                           <td class="r mono">${num(r.expectedHeight)}</td>
                           <td class="c"><span class="pill ${r.status}">${r.status}</span></td>
                           <td class="r mono">
@@ -580,11 +765,25 @@ export class DdPageOverview extends LitElement {
                               ? '—'
                               : `${num(r.numValidMembers)}/${num(r.effectiveSize)}`}
                           </td>
-                          <td class="r mono">${ratio(r.healthRatio)}</td>
-                          <td class="r mono">${num(r.punishedCount)}</td>
-                          <td>${this._evidence(r, status)}</td>
-                          <td class="mono">${shortHash(r.quorumHash)}</td>
-                          <td class="r mono">${ago(r.detectedAt)}</td>
+                          <td class="r mono ${this._healthClass(r)}">${ratio(r.healthRatio)}</td>
+                          <td class="r mono punished ${r.punishedCount > 0 ? 'some' : ''}">${num(r.punishedCount)}</td>
+                          <td class="evidence">${this._evidence(r, status)}</td>
+                          <td>
+                            ${r.quorumHash
+                              ? html`<span class="hashcell">
+                                  <span class="hash" title=${r.quorumHash}>${shortHash(r.quorumHash, 10, 8)}</span>
+                                  <button
+                                    class="copy ${this._copied === r.roundKey ? 'done' : ''}"
+                                    type="button"
+                                    aria-label="Copy quorum hash ${r.quorumHash}"
+                                    @click=${() => void this._copy(r.quorumHash ?? '', r.roundKey)}
+                                  >
+                                    ${this._copied === r.roundKey ? 'copied' : 'copy'}
+                                  </button>
+                                </span>`
+                              : html`<span class="subtle">—</span>`}
+                          </td>
+                          <td class="r mono subtle">${ago(r.detectedAt)}</td>
                         </tr>
                       `
                     )}

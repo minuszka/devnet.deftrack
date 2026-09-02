@@ -50,7 +50,7 @@ export class DdPageStaking extends LitElement {
       }
       .eyebrow {
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         letter-spacing: 0.16em;
         text-transform: uppercase;
         color: var(--ink-3);
@@ -58,7 +58,7 @@ export class DdPageStaking extends LitElement {
       }
       .verdict {
         font-family: var(--font-mono);
-        font-size: 12px;
+        font-size: var(--fs-sm);
         color: var(--ink-2);
       }
       .tag {
@@ -66,7 +66,7 @@ export class DdPageStaking extends LitElement {
         margin-left: 6px;
         padding: 1px 8px;
         border-radius: 999px;
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         letter-spacing: 0.06em;
         text-transform: uppercase;
         font-weight: 600;
@@ -103,7 +103,7 @@ export class DdPageStaking extends LitElement {
         border-left: 1px solid var(--bg);
         overflow: hidden;
         font-family: var(--font-mono);
-        font-size: 10px;
+        font-size: var(--fs-xs);
         font-weight: 600;
         color: #0b0e0c;
         white-space: nowrap;
@@ -144,14 +144,14 @@ export class DdPageStaking extends LitElement {
         top: -13px;
         left: -12px;
         font-family: var(--font-mono);
-        font-size: 8.5px;
+        font-size: var(--fs-xs);
         letter-spacing: 0.08em;
         color: var(--ink-3);
       }
       .fair-note {
         padding: 8px 16px 14px;
         font-family: var(--font-mono);
-        font-size: 11px;
+        font-size: var(--fs-xs);
         color: var(--ink-3);
         display: flex;
         gap: 16px;
@@ -180,14 +180,14 @@ export class DdPageStaking extends LitElement {
         padding: 7px 8px;
         border-radius: var(--radius);
         font-family: var(--font-mono);
-        font-size: 12px;
+        font-size: var(--fs-sm);
       }
       .lrow:hover {
         background: var(--accent-wash);
       }
       .rank {
         color: var(--ink-3);
-        font-size: 11px;
+        font-size: var(--fs-xs);
         text-align: right;
       }
       .who {
@@ -224,11 +224,11 @@ export class DdPageStaking extends LitElement {
       .toggle {
         display: inline-flex;
         gap: 4px;
-        font-size: 11px;
+        font-size: var(--fs-xs);
       }
       .toggle button {
         font-family: var(--font-mono);
-        font-size: 11px;
+        font-size: var(--fs-xs);
         background: none;
         border: 0;
         padding: 2px 4px;
@@ -242,7 +242,7 @@ export class DdPageStaking extends LitElement {
 
       .foot {
         font-family: var(--font-mono);
-        font-size: 11px;
+        font-size: var(--fs-xs);
         color: var(--ink-3);
         padding: 10px 16px 14px;
         border-top: 1px solid var(--line);

@@ -30,7 +30,7 @@ export class DdPageFairness extends LitElement {
         padding: 10px 14px;
         border-top: 1px solid var(--line-soft);
         color: var(--ink-3);
-        font-size: 12px;
+        font-size: var(--fs-sm);
         line-height: 1.55;
       }
       .bar {
@@ -286,7 +286,7 @@ export class DdPageFairness extends LitElement {
           <div class="page-sub mono">${num(d.neverSelectedCount)}</div>
         </div>
         <div class="card-body">
-          <div class="mono" style="font-size:12px;line-height:1.9">
+          <div class="mono" style="font-size: var(--fs-sm);line-height:1.9">
             ${d.neverSelected.map((h) => html`${h}… `)}
           </div>
         </div>
