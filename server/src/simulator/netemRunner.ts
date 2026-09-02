@@ -6,9 +6,12 @@ import {
   planClear,
   sweepExpired,
   type FaultAction,
+  type NetemKind,
   type NetemSpec,
   type WrapperState,
 } from './netemLease.js';
+
+const NETEM_KINDS: readonly NetemKind[] = ['latency', 'loss', 'jitter'];
 
 /**
  * Runs one fault action against a container. The real implementation shells out
@@ -137,5 +140,52 @@ export class NetemFaultRunner {
     for (const action of actions) {
       await this.execute(action);
     }
+  }
+}
+
+/**
+ * A command the orchestrator hands the wrapper. The wrapper is the single owner
+ * of the fault state, so applying and clearing come in as commands rather than
+ * as concurrent writes to the state file -- there is no second writer to race.
+ */
+export type WrapperCommand =
+  | { op: 'apply'; container: string; kind: NetemKind; args: string[]; runTag: string; ttlMs: number }
+  | { op: 'clear'; jobId: string };
+
+/**
+ * Validate a decoded command. The channel is the orchestrator's, but a malformed
+ * or truncated file must be rejected loudly, never acted on half-read.
+ */
+export function parseWrapperCommand(raw: unknown): WrapperCommand {
+  if (raw === null || typeof raw !== 'object') throw new Error('wrapper command must be an object');
+  const value = raw as Record<string, unknown>;
+  if (value.op === 'clear') {
+    if (typeof value.jobId !== 'string' || value.jobId.length === 0) throw new Error('clear command needs a jobId');
+    return { op: 'clear', jobId: value.jobId };
+  }
+  if (value.op === 'apply') {
+    if (typeof value.container !== 'string' || value.container.length === 0) throw new Error('apply command needs a container');
+    if (!NETEM_KINDS.includes(value.kind as NetemKind)) throw new Error('apply command needs a valid kind');
+    if (!Array.isArray(value.args) || !value.args.every((a) => typeof a === 'string')) throw new Error('apply command needs string args');
+    if (typeof value.runTag !== 'string' || value.runTag.length === 0) throw new Error('apply command needs a runTag');
+    if (!Number.isSafeInteger(value.ttlMs) || (value.ttlMs as number) <= 0) throw new Error('apply command needs a positive ttlMs');
+    return {
+      op: 'apply',
+      container: value.container,
+      kind: value.kind as NetemKind,
+      args: value.args as string[],
+      runTag: value.runTag,
+      ttlMs: value.ttlMs as number,
+    };
+  }
+  throw new Error(`unknown wrapper command op: ${String(value.op)}`);
+}
+
+/** Apply one validated command through the runner. */
+export async function dispatchWrapperCommand(runner: NetemFaultRunner, command: WrapperCommand): Promise<void> {
+  if (command.op === 'apply') {
+    await runner.apply({ container: command.container, kind: command.kind, args: command.args }, command.runTag, command.ttlMs);
+  } else {
+    await runner.clear(command.jobId);
   }
 }

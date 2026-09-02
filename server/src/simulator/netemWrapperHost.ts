@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { emptyWrapperState, type FaultAction, type WrapperState } from './netemLease.js';
 import type { FaultExecutor, WrapperStore } from './netemRunner.js';
 
@@ -71,6 +72,52 @@ export function fileWrapperStore(path: string): WrapperStore {
       const tmp = `${path}.tmp`;
       await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
       await rename(tmp, path);
+    },
+  };
+}
+
+/**
+ * The orchestrator's channel to the single-owner wrapper: a directory of JSON
+ * command files. The orchestrator enqueues; the wrapper drains and applies them,
+ * so the wrapper stays the only writer of the fault state -- no second writer to
+ * race. enqueue writes a temp file and renames, so the wrapper never reads a
+ * half-written command.
+ */
+export interface CommandQueue {
+  enqueue(command: unknown): Promise<void>;
+  /** Decoded command payloads in submission order; the files are consumed. */
+  drain(): Promise<unknown[]>;
+}
+
+export function fileCommandQueue(dir: string): CommandQueue {
+  let seq = 0;
+  return {
+    async enqueue(command: unknown): Promise<void> {
+      await mkdir(dir, { recursive: true });
+      // Timestamp then a per-queue sequence, so two commands in the same
+      // millisecond still drain in submission order; the random tail only breaks
+      // ties between separate writers.
+      const name = `${Date.now().toString().padStart(16, '0')}-${(seq++).toString().padStart(9, '0')}-${randomBytes(4).toString('hex')}.json`;
+      const tmp = join(dir, `.${name}.tmp`);
+      await writeFile(tmp, JSON.stringify(command), 'utf8');
+      await rename(tmp, join(dir, name));
+    },
+    async drain(): Promise<unknown[]> {
+      let names: string[];
+      try {
+        names = (await readdir(dir)).filter((entry) => entry.endsWith('.json')).sort();
+      } catch (error) {
+        if ((error as { code?: string }).code === 'ENOENT') return [];
+        throw error;
+      }
+      const commands: unknown[] = [];
+      for (const name of names) {
+        const path = join(dir, name);
+        const raw = await readFile(path, 'utf8');
+        await rm(path, { force: true });
+        commands.push(JSON.parse(raw));
+      }
+      return commands;
     },
   };
 }

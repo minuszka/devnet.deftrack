@@ -3,8 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { NetemFaultRunner } from './netemRunner.js';
-import { dockerNetemExecutor, fileWrapperStore } from './netemWrapperHost.js';
+import { NetemFaultRunner, type RunnerLogger } from './netemRunner.js';
+import { dockerNetemExecutor, fileCommandQueue, fileWrapperStore } from './netemWrapperHost.js';
+import { runWrapperCycle } from './netemWrapperMain.js';
 import type { NetemSpec } from './netemLease.js';
 
 /**
@@ -66,6 +67,20 @@ async function main(): Promise<void> {
     const { jobId } = await runner.apply(spec, 'accept-run', TTL_MS); // idempotent id
     await runner.clear(jobId);
     assert(!(await qdisc()).includes('netem'), 'abort cleared the link');
+
+    console.log('3. the deployable daemon path: queued command -> tc -> watchdog');
+    const silent: RunnerLogger = { info: () => {}, error: () => {} };
+    const queue = fileCommandQueue(join(dir, 'commands'));
+    now += 1;
+    await queue.enqueue({ op: 'apply', container: CONTAINER, kind: 'latency', args: ['80ms'], runTag: 'accept-run', ttlMs: TTL_MS });
+    const applied = await runWrapperCycle({ runner, queue, logger: silent });
+    assert(applied.dispatched === 1, 'the cycle dispatched the queued apply');
+    assert((await qdisc()).includes('delay 80ms'), 'a queued command applied the fault through the wrapper');
+    // Orchestrator gone again -- only the daemon's own cycle runs the watchdog.
+    now += TTL_MS + 1;
+    const daemonSwept = await runWrapperCycle({ runner, queue, logger: silent });
+    assert(daemonSwept.cleared === 1, 'the daemon cycle watchdog cleared the queued fault');
+    assert(!(await qdisc()).includes('netem'), 'the link is clean after the daemon watchdog');
 
     console.log('\nACCEPTANCE PASSED');
   } finally {
