@@ -75,6 +75,12 @@ export interface SimulationRunState {
   createdAtMs: number;
   updatedAtMs: number;
   stateEnteredAtMs: number;
+  /**
+   * When this run's cooldown ends. Absent on runs that entered cooldown before
+   * the field existed; canonicalJson drops undefined, so their stored
+   * fingerprints are unchanged and their audit replays still match.
+   */
+  cooldownExpiresAtMs?: number;
   runExpiresAtMs: number;
   faultLeaseExpiresAtMs: number | null;
   /** True until a successful recovery proves the remote mutation is gone. */
@@ -177,6 +183,17 @@ const TERMINAL_STATUSES = new Set<SimulationRunStatus>([
   'aborted',
 ]);
 
+/**
+ * How long a run rests after a clean recovery.
+ *
+ * Stamped onto the state when the run enters cooldown, never re-derived. The
+ * deadline has to be a value the run CARRIES, because reconcile is re-executed
+ * during audit replay and must reproduce a stored event from (state, atMs)
+ * alone: a threshold read from a policy constant would make every stored
+ * cooldown completion unreplayable the day that constant changed.
+ */
+export const COOLDOWN_BUDGET_MS = 15 * 60_000;
+
 const TIMEOUT_RECOVERY_STATUSES = new Set<SimulationRunStatus>([
   'preflight',
   'scheduled',
@@ -262,6 +279,12 @@ function applyTransition(
     revision: state.revision + 1,
     updatedAtMs: input.atMs,
     stateEnteredAtMs: input.to === state.status ? state.stateEnteredAtMs : input.atMs,
+    // Immutable once written: the cooldown a run actually got, not one derived
+    // later from a constant that may have moved.
+    cooldownExpiresAtMs:
+      input.to === 'cooldown' && state.status !== 'cooldown'
+        ? input.atMs + COOLDOWN_BUDGET_MS
+        : state.cooldownExpiresAtMs,
     abortRequested: input.abortRequested ?? state.abortRequested,
     faultLeaseExpiresAtMs:
       input.faultLeaseExpiresAtMs !== undefined
@@ -478,17 +501,18 @@ export function reconcilePersistedSimulationRun(
   // remaining exit was abort() -- which relabels a successful experiment
   // `aborted`. In a record-keeping project that is not cosmetic.
   //
-  // The deadline is `runExpiresAtMs` and NOT `stateEnteredAtMs + cooldownBudgetMs`,
-  // deliberately. This function is re-executed during audit replay, which demands
-  // that a stored system event be reproducible from (state, atMs) alone; a
-  // threshold read from a policy constant would make every stored
-  // cooldown_completed unreplayable the day that constant changed --
-  // AUDIT_DIVERGENCE on loadRun, for runs that were correct when written. The run
-  // envelope is immutable, per-run, already reserves the cooldown budget, and is
-  // stored on the state, so the same input always yields the same answer.
-  if (state.status === 'cooldown' && nowMs >= state.runExpiresAtMs) {
+  // The deadline is carried on the state, so replay reproduces it exactly
+  // whatever any policy constant does later. Runs that entered cooldown before
+  // this field existed fall back to the run envelope -- their only recorded
+  // deadline -- so none of them is left stuck.
+  //
+  // runExpiresAtMs was the whole envelope, which includes a six-hour preparation
+  // window: a short run started immediately could sit in cooldown for hours
+  // instead of the fifteen minutes it was owed.
+  const cooldownDeadline = state.cooldownExpiresAtMs ?? state.runExpiresAtMs;
+  if (state.status === 'cooldown' && nowMs >= cooldownDeadline) {
     const next = applyTransition(state, {
-      eventId: `system:cooldown-complete:${state.runExpiresAtMs}`,
+      eventId: `system:cooldown-complete:${cooldownDeadline}`,
       eventType: 'system_cooldown_complete',
       atMs: nowMs,
       to: 'completed',

@@ -80,6 +80,11 @@ export const config = {
     // fail-closed, and now for the true reason.
     labWrapperHeartbeatPath: process.env.SIMULATION_LAB_WRAPPER_HEARTBEAT ?? '',
     labDockerBin: process.env.SIMULATION_LAB_DOCKER_BIN ?? 'docker',
+    // The only Compose project whose containers may be faulted. A declared
+    // hostRef becomes a container name verbatim, so without this any container
+    // sharing the lab host could be named in a declaration and then stopped.
+    // Empty refuses everything.
+    labContainerProject: process.env.SIMULATION_LAB_CONTAINER_PROJECT ?? '',
   },
 
   // The simulator lab runs as its own process against its own database. There is
@@ -89,6 +94,8 @@ export const config = {
     mongoUri: process.env.LAB_MONGODB_URI ?? '',
     host: process.env.LAB_HOST ?? '127.0.0.1',
     port: optionalNumber('LAB_PORT', 4200),
+    // ops/lab-observer.mjs defaults its LAB_API to this same port. They disagreed
+    // once (4200 here, 4210 there) and the observer silently reached nothing.
   },
 
   rpc: {

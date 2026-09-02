@@ -92,6 +92,23 @@ describe('generateLabCompose', () => {
     expect(Object.keys(spec.networks)).toEqual(['lab']);
   });
 
+  it('publishes each node RPC on its own loopback port, so the lab is observable', () => {
+    // Without this the lab cannot be observed at all: the image carries no
+    // defcon-cli, so a node can only be asked over HTTP RPC, and an unpublished
+    // port means the observer reaches nobody. It then had nothing to do but ask
+    // one node and stamp that answer onto every container.
+    const spec = generateLabCompose({ nodes: 3 });
+    const ports = Object.values(spec.services).map((s) => s.ports[0]!);
+    expect(ports).toEqual([
+      '127.0.0.1:19800:19798',
+      '127.0.0.1:19801:19798',
+      '127.0.0.1:19802:19798',
+    ]);
+    // Loopback only: the lab is never addressable from off the machine.
+    expect(ports.every((p) => p.startsWith('127.0.0.1:'))).toBe(true);
+    expect(new Set(ports.map((p) => p.split(':')[1])).size).toBe(3);
+  });
+
   it('pins the container name to the service name, which is what a target hostRef is', () => {
     const spec = generateLabCompose({ nodes: 3 });
     for (const [name, service] of Object.entries(spec.services)) {

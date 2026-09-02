@@ -31,6 +31,8 @@ export interface LabTopology {
   datadir: string;
   /** CIDR allowed to reach RPC -- the lab subnet only. */
   rpcAllowIp: string;
+  /** First loopback port for the published RPCs; node i takes base + i - 1. */
+  hostRpcBasePort: number;
 }
 
 export interface LabComposeService {
@@ -50,6 +52,17 @@ export interface LabComposeService {
   restart: 'no';
   /** Matches `docker stop -t 30`: the daemon is PID 1 and needs its flush. */
   stop_grace_period: string;
+  /**
+   * Each node's RPC, published on its own loopback port.
+   *
+   * Without this the lab is unobservable from the host: the image carries no
+   * defcon-cli, so the only way to ask a node anything is HTTP RPC, and an
+   * unpublished port means the observer can reach no node at all. It then had
+   * nothing to do but ask ONE endpoint and stamp that answer onto every
+   * container -- which is how a stopped node came to report a running node's
+   * height. Loopback only; the lab is never addressable from off the machine.
+   */
+  ports: string[];
 }
 
 export interface LabComposeSpec {
@@ -67,6 +80,7 @@ export const DEFAULT_LAB_TOPOLOGY: Omit<LabTopology, 'nodes'> = {
   rpcPort: 19798,
   datadir: '/var/lib/defcon',
   rpcAllowIp: '172.16.0.0/12',
+  hostRpcBasePort: 19800,
 };
 
 const MIN_NODES = 2;
@@ -129,6 +143,7 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
     services[name] = {
       image: topology.image,
       container_name: name,
+      ports: [`127.0.0.1:${topology.hostRpcBasePort + index - 1}:${topology.rpcPort}`],
       cap_add: ['NET_ADMIN'],
       command,
       networks: [topology.network],
