@@ -42,6 +42,13 @@ export interface ServiceEpochDocument extends Document {
    * list and is done at read time, not here.
    */
   missedIndices: number[];
+  /**
+   * The members those indices name, resolved against the deterministic list at
+   * the epoch base. Empty when nothing was missed, and also when the indices
+   * could not be resolved -- the resolver refuses a partial answer rather than
+   * accuse the wrong masternodes.
+   */
+  missedProTxHashes: string[];
 
   detectedAt: Date;
 }
@@ -61,6 +68,7 @@ const serviceEpochSchema = new Schema<ServiceEpochDocument>({
   missedCount: { type: Number, default: null },
   listSize: { type: Number, default: null },
   missedIndices: { type: [Number], default: [] },
+  missedProTxHashes: { type: [String], default: [] },
 
   detectedAt: { type: Date, default: () => new Date() },
 });

@@ -193,6 +193,19 @@ export class RpcService {
   }
 
   /**
+   * Every registered masternode's proTxHash at a height, in the node's own
+   * iteration order.
+   *
+   * `registered`, not `valid`: rpc/evo.cpp sets onlyValid from the type, and a
+   * DSL commitment's bitfield is sized to the whole list with banned members
+   * included. Asking for `valid` returns a shorter list that the indices no
+   * longer address, and the mismatch would be silent.
+   */
+  protxListRegistered(height: number): Promise<string[]> {
+    return this.call<string[]>('protx', ['list', 'registered', false, height]);
+  }
+
+  /**
    * A block with every transaction expanded, in one call.
    *
    * Verbosity 2 used to abort on every proof-of-stake block -- a coinstake
