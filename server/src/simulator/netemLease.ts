@@ -225,9 +225,13 @@ export function planApply(
   spec: NetemSpec,
   runTag: string,
   nowMs: number,
-  ttlMs: number
+  expiresAtMs: number
 ): Plan {
   const jobId = netemJobId(runTag, spec);
+  // An expiry already in the past is refused rather than applied for a moment.
+  // The lease is the recovery bound, so a fault whose bound has gone must not
+  // start; the old relative TTL plus a floor could still activate one.
+  if (expiresAtMs <= nowMs) return { state, actions: [] };
   // Class-scoped: replacing the netem job on a container must not silently drop
   // a service job recorded against it, or a live fault would be applied that
   // nothing remembers -- the one way the superset invariant breaks across classes.
@@ -246,7 +250,7 @@ export function planApply(
     kind: spec.kind,
     args: [...spec.args],
     appliedAtMs: nowMs,
-    expiresAtMs: nowMs + ttlMs,
+    expiresAtMs,
   };
   const others = state.jobs.filter((candidate) => !isSameSlot(candidate));
   return {
@@ -266,9 +270,10 @@ export function planServiceStop(
   container: string,
   runTag: string,
   nowMs: number,
-  ttlMs: number
+  expiresAtMs: number
 ): Plan {
   const jobId = serviceJobId(runTag, container);
+  if (expiresAtMs <= nowMs) return { state, actions: [] };
   const isSameSlot = (job: FaultJob): boolean =>
     job.container === container && faultClassOf(job) === 'service';
   const existing = state.jobs.find(isSameSlot);
@@ -283,7 +288,7 @@ export function planServiceStop(
     kind: 'service-stop',
     args: [],
     appliedAtMs: nowMs,
-    expiresAtMs: nowMs + ttlMs,
+    expiresAtMs,
   };
   const others = state.jobs.filter((candidate) => !isSameSlot(candidate));
   return { state: { jobs: [...others, job] }, actions: [{ op: 'stop', container }] };

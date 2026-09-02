@@ -63,8 +63,6 @@ export interface LabExecutorOptions {
   recoveryPollAttempts: number;
   /** Wait between probes; at least the wrapper's cycle interval. */
   recoveryPollIntervalMs: number;
-  /** Lease floor, so a lease that is already near-past still applies briefly. */
-  minLeaseMs: number;
   /**
    * The only Compose project whose containers may be faulted. Empty refuses
    * everything: a lab that has not said which containers are its own must not be
@@ -78,7 +76,6 @@ const DEFAULT_OPTIONS: LabExecutorOptions = {
   // which is a great deal slower than deleting a qdisc.
   recoveryPollAttempts: 30,
   recoveryPollIntervalMs: 1_000,
-  minLeaseMs: 1_000,
   allowedContainerProject: '',
 };
 
@@ -105,7 +102,6 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     faultLeaseExpiresAtMs: number;
   }): Promise<void> {
     assertSingleFaultClass(input.plan);
-    const ttlMs = Math.max(this.options.minLeaseMs, input.faultLeaseExpiresAtMs - this.clock.now());
     const targetsById = indexTargetsById(input.run.metadata.targetSnapshot);
     // Translates the WHOLE plan first: it throws for any fault this executor
     // cannot apply, so the run never reaches fault_active on a partial fault.
@@ -113,7 +109,12 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
       plan: input.plan,
       targetsById,
       runTag: input.run.runKey,
-      ttlMs,
+      // The run's own lease instant, passed through untouched. It used to be
+      // converted to a duration here and back to an instant in the wrapper,
+      // against a later clock -- so queue time silently extended every fault, and
+      // a floor could even start one whose lease had already gone.
+      expiresAtMs: input.faultLeaseExpiresAtMs,
+      nowMs: this.clock.now(),
       strict: true,
     }).faults;
     const commands = faults.map((fault) => fault.apply);

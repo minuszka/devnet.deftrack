@@ -29,21 +29,21 @@ describe('NetemFaultRunner', () => {
     const execute: FaultExecutor = async () => { order.push('exec'); };
     const runner = new NetemFaultRunner(execute, store, { clock: () => 1_000 });
 
-    await runner.apply(latency, RUN, 30_000);
+    await runner.apply(latency, RUN, 31_000);
     expect(order).toEqual(['save', 'exec']); // record intent, then act
     expect(saved[0]!.jobs[0]).toMatchObject({ container: 'mn01', expiresAtMs: 31_000 });
   });
 
   it('is idempotent: re-applying the identical live fault runs no tc', async () => {
     const { runner, actions } = harness();
-    await runner.apply(latency, RUN, 30_000);
-    await runner.apply(latency, RUN, 30_000);
+    await runner.apply(latency, RUN, 31_000);
+    await runner.apply(latency, RUN, 31_000);
     expect(actions.filter((a) => a.op === 'apply')).toHaveLength(1);
   });
 
   it('watchdog clears an expired lease with nothing but its own clock', async () => {
     const { runner, store, actions, now } = harness();
-    await runner.apply(latency, RUN, 30_000);
+    await runner.apply(latency, RUN, 31_000);
     actions.length = 0;
     now.ms = 40_000; // past the 31_000 expiry
     const result = await runner.tick();
@@ -54,7 +54,7 @@ describe('NetemFaultRunner', () => {
 
   it('watchdog leaves a still-live lease alone', async () => {
     const { runner, actions, now } = harness();
-    await runner.apply(latency, RUN, 30_000);
+    await runner.apply(latency, RUN, 31_000);
     actions.length = 0;
     now.ms = 20_000; // before expiry
     expect(await runner.tick()).toEqual({ cleared: 0, failed: 0 });
@@ -63,7 +63,7 @@ describe('NetemFaultRunner', () => {
 
   it('clear runs tc before dropping the job', async () => {
     const { runner, store, actions } = harness();
-    const { jobId } = await runner.apply(latency, RUN, 30_000);
+    const { jobId } = await runner.apply(latency, RUN, 31_000);
     actions.length = 0;
     await runner.clear(jobId);
     expect(actions).toEqual([{ op: 'clear', container: 'mn01', tcArgs: ['qdisc', 'del', 'dev', 'eth0', 'root'] }]);
@@ -76,8 +76,8 @@ describe('NetemFaultRunner', () => {
 
   it('boot cleanup clears every recorded container and starts clean', async () => {
     const { runner, store, actions } = harness();
-    await runner.apply(latency, RUN, 30_000);
-    await runner.apply({ container: 'mn02', kind: 'loss', args: ['5%'] }, RUN, 30_000);
+    await runner.apply(latency, RUN, 31_000);
+    await runner.apply({ container: 'mn02', kind: 'loss', args: ['5%'] }, RUN, 31_000);
     actions.length = 0;
     const result = await runner.bootCleanup();
     expect(result.cleared).toBe(2);
@@ -94,14 +94,14 @@ describe('LabFaultRunner: the service fault class', () => {
     const order: string[] = [];
     store.save = async (s) => { order.push('save'); await origSave(s); };
     const runner = new NetemFaultRunner(async () => { order.push('exec'); }, store, { clock: () => 1_000 });
-    await runner.stopService('mn01', RUN, 30_000);
+    await runner.stopService('mn01', RUN, 31_000);
     expect(order).toEqual(['save', 'exec']); // a stop that lands unrecorded never comes back
   });
 
   it('is idempotent, and its undo is a start that runs before the job is dropped', async () => {
     const { runner, store, actions } = harness();
-    const { jobId } = await runner.stopService('mn01', RUN, 30_000);
-    await runner.stopService('mn01', RUN, 30_000);
+    const { jobId } = await runner.stopService('mn01', RUN, 31_000);
+    await runner.stopService('mn01', RUN, 31_000);
     expect(actions).toEqual([{ op: 'stop', container: 'mn01' }]); // second stop ran nothing
     actions.length = 0;
     await runner.clear(jobId);
@@ -111,7 +111,7 @@ describe('LabFaultRunner: the service fault class', () => {
 
   it('the watchdog starts a stopped container back up on its own clock', async () => {
     const { runner, store, actions, now } = harness();
-    await runner.stopService('mn01', RUN, 30_000);
+    await runner.stopService('mn01', RUN, 31_000);
     actions.length = 0;
     now.ms = 40_000;
     expect(await runner.tick()).toEqual({ cleared: 1, failed: 0 });
@@ -121,7 +121,7 @@ describe('LabFaultRunner: the service fault class', () => {
 
   it('boot recovery starts a stopped container rather than deleting a qdisc', async () => {
     const { runner, store, actions } = harness();
-    await runner.stopService('mn01', RUN, 30_000);
+    await runner.stopService('mn01', RUN, 31_000);
     actions.length = 0;
     expect((await runner.bootCleanup()).cleared).toBe(1);
     expect(actions).toEqual([{ op: 'start', container: 'mn01' }]);
@@ -138,8 +138,8 @@ describe('LabFaultRunner: one failing undo cannot strand another', () => {
       seen.push(action);
       if (action.container === 'mn01') throw new Error('No such container: mn01');
     }, store, { clock: () => 1_000 });
-    await runner.stopService('mn02', RUN, 30_000);
-    await runner.stopService('mn03', RUN, 30_000);
+    await runner.stopService('mn02', RUN, 31_000);
+    await runner.stopService('mn03', RUN, 31_000);
     // mn01 is injected directly: its stop is recorded, its undo will fail.
     store.state.jobs.push({ jobId: 'service-dead', runTag: RUN, container: 'mn01', faultClass: 'service', kind: 'service-stop', args: [], appliedAtMs: 1_000, expiresAtMs: 31_000 });
     seen.length = 0;
@@ -223,9 +223,9 @@ describe('LabFaultRunner: concurrent operations cannot erase a live lease', () =
       if (action.op === 'start') await gate.promise; // docker start, seconds long
     }, store, { clock: () => 1_000 });
 
-    const { jobId } = await runner.stopService('mn01', RUN, 30_000);
+    const { jobId } = await runner.stopService('mn01', RUN, 31_000);
     const clearing = runner.clear(jobId);          // blocks inside docker
-    const stopping = runner.stopService('mn02', RUN, 30_000); // lands meanwhile
+    const stopping = runner.stopService('mn02', RUN, 31_000); // lands meanwhile
     gate.release();
     await Promise.all([clearing, stopping]);
 
@@ -240,10 +240,12 @@ describe('LabFaultRunner: concurrent operations cannot erase a live lease', () =
       if (action.op === 'start') await gate.promise;
     }, store, { clock: () => now });
 
-    await runner.stopService('mn01', RUN, 30_000);
+    await runner.stopService('mn01', RUN, 31_000);
     now = 40_000; // mn01's lease has expired
     const sweeping = runner.tick();
-    const stopping = runner.stopService('mn02', RUN, 30_000);
+    // mn02's lease is dated against the clock as it stands now: an instant that
+    // has already gone is refused outright, which is the point of the change.
+    const stopping = runner.stopService('mn02', RUN, 70_000);
     gate.release();
     const [swept] = await Promise.all([sweeping, stopping]);
 
@@ -263,7 +265,7 @@ describe('LabFaultRunner: concurrent operations cannot erase a live lease', () =
       }
     }, store, { clock: () => 1_000 });
 
-    const { jobId } = await runner.stopService('mn01', RUN, 30_000);
+    const { jobId } = await runner.stopService('mn01', RUN, 31_000);
     await runner.clear(jobId);
 
     expect(store.state.jobs.map((j) => j.container)).toEqual(['mn09']);
@@ -276,8 +278,8 @@ describe('LabFaultRunner: concurrent operations cannot erase a live lease', () =
       if (action.op === 'stop') await gate.promise;
     }, store, { clock: () => 1_000 });
 
-    const stopping = runner.stopService('mn01', RUN, 30_000);
-    const applying = runner.apply({ container: 'mn02', kind: 'latency', args: ['100ms'] }, RUN, 30_000);
+    const stopping = runner.stopService('mn01', RUN, 31_000);
+    const applying = runner.apply({ container: 'mn02', kind: 'latency', args: ['100ms'] }, RUN, 31_000);
     gate.release();
     await Promise.all([stopping, applying]);
 
