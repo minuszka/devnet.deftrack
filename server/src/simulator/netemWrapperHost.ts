@@ -103,7 +103,10 @@ export function fileWrapperStore(path: string): WrapperStore {
     },
     async save(state: WrapperState): Promise<void> {
       await mkdir(dirname(path), { recursive: true });
-      const tmp = `${path}.tmp`;
+      // Unique per write, as the command queue below already does. A shared
+      // `.tmp` lets two concurrent writers truncate over each other and lets one
+      // rename publish the other's bytes while its own save resolves successfully.
+      const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
       await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
       await rename(tmp, path);
     },

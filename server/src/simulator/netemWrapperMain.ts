@@ -57,10 +57,20 @@ async function main(): Promise<void> {
   // so nothing it does may decide whether the watchdog runs: a state file naming a
   // stopped container must never be able to kill the daemon that would restart it.
   let stopping = false;
+  // One cycle at a time. The runner serialises its own operations, so an overlap
+  // could no longer corrupt the record -- but a `docker stop -t 30` outlasts six
+  // 5-second ticks, and without this the queued cycles simply pile up behind it.
+  let inFlight = false;
   const timer = setInterval(() => {
-    void runWrapperCycle({ runner, queue, logger }).catch((error) => {
-      logger.error(`wrapper cycle failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    if (inFlight) return;
+    inFlight = true;
+    void runWrapperCycle({ runner, queue, logger })
+      .catch((error) => {
+        logger.error(`wrapper cycle failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        inFlight = false;
+      });
   }, intervalMs);
   logger.info(`lab fault wrapper watching ${commandDir}, state ${statePath}`);
 
