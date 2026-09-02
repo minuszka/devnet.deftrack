@@ -1,3 +1,4 @@
+import { COOLDOWN_BUDGET_MS } from '../domain/simulationRunState.js';
 import type { SimulationMeasurementPolicy } from './measurementWindows.js';
 
 export interface SimulationLifecyclePolicy {
@@ -30,7 +31,7 @@ export const SIMULATION_CONTROL_POLICY = Object.freeze({
   lifecycle: Object.freeze<SimulationLifecyclePolicy>({
     preparationWindowMs: 6 * 60 * 60_000,
     recoveryBudgetMs: 15 * 60_000,
-    cooldownBudgetMs: 15 * 60_000,
+    cooldownBudgetMs: COOLDOWN_BUDGET_MS,
   }),
   approval: Object.freeze({
     operatorRiskClasses: Object.freeze(['low', 'medium'] as const),

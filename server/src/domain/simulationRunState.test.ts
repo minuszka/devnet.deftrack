@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COOLDOWN_BUDGET_MS,
   SimulationStateError,
   allowedSimulationEvents,
   createSimulationRunState,
@@ -329,38 +330,56 @@ describe('persisted run reconciliation after restart', () => {
     });
   });
 
-  it('completes a clean cooldown run at its deadline, and never sends it backwards', () => {
+  it('completes a clean cooldown run at its own deadline, and never sends it backwards', () => {
     // This used to assert the dead end: reconcile refused the status, so a live
     // run that recovered cleanly sat in `cooldown` for ever and the only exit was
     // abort(), which relabels a successful experiment `aborted`. What must still
     // hold is the invariant the old test was really protecting -- a clean cooldown
     // run is never dragged BACKWARDS into recovery.
     const cooldown = stateAt('cooldown');
-    const result = reconcilePersistedSimulationRun(cooldown, 1_000);
+    const due = cooldown.cooldownExpiresAtMs!;
+    expect(reconcilePersistedSimulationRun(cooldown, due - 1)).toMatchObject({ changed: false });
+    const result = reconcilePersistedSimulationRun(cooldown, due);
     expect(result).toMatchObject({ changed: true, reason: 'cooldown-budget-elapsed' });
     expect(result.state.status).toBe('completed');
     expect(result.state.status).not.toBe('recovery');
   });
 
-  it('keys the cooldown completion on the stored envelope, so audit replay can reproduce it', () => {
-    // The event id and the deadline both come from runExpiresAtMs, which is
-    // immutable and per-run. Deriving them from a policy constant instead would
-    // make every stored cooldown_completed unreplayable the day that constant
-    // changed -- AUDIT_DIVERGENCE on loadRun, for runs that were correct when written.
+  it('rests for the cooldown budget, not for the whole run envelope', () => {
+    // The envelope includes a six-hour preparation window. Keying the deadline on
+    // it -- which the first version of this fix did -- left a short run started
+    // immediately sitting in cooldown for hours instead of the fifteen minutes it
+    // was owed.
     const cooldown = stateAt('cooldown');
-    const first = reconcilePersistedSimulationRun(cooldown, 1_000);
-    const later = reconcilePersistedSimulationRun(cooldown, 9_999);
-    expect(first.state.lastTransition?.eventId).toBe(`system:cooldown-complete:${cooldown.runExpiresAtMs}`);
-    // Same input state, different clock: the same event id, which is what replay
-    // matches on.
+    expect(cooldown.cooldownExpiresAtMs).toBe(cooldown.stateEnteredAtMs + COOLDOWN_BUDGET_MS);
+    // And it does not move with the envelope: a run with a far later expiry rests
+    // exactly as long, which is what keying on runExpiresAtMs got wrong.
+    const roomier = reconcilePersistedSimulationRun(
+      { ...cooldown, runExpiresAtMs: cooldown.runExpiresAtMs + 6 * 60 * 60_000 },
+      cooldown.cooldownExpiresAtMs!
+    );
+    expect(roomier.state.status).toBe('completed');
+  });
+
+  it('keys the completion on the deadline the run carries, so audit replay reproduces it', () => {
+    // The event id and the deadline both come from the state. Deriving them from
+    // a policy constant instead would make every stored cooldown completion
+    // unreplayable the day that constant changed -- AUDIT_DIVERGENCE on loadRun,
+    // for runs that were correct when written.
+    const cooldown = stateAt('cooldown');
+    const due = cooldown.cooldownExpiresAtMs!;
+    const first = reconcilePersistedSimulationRun(cooldown, due);
+    const later = reconcilePersistedSimulationRun(cooldown, due + 9_999);
+    expect(first.state.lastTransition?.eventId).toBe(`system:cooldown-complete:${due}`);
     expect(later.state.lastTransition?.eventId).toBe(first.state.lastTransition?.eventId);
   });
 
-  it('leaves a cooldown run alone while its envelope is still open', () => {
-    const cooldown = stateAt('cooldown');
-    const early = reconcilePersistedSimulationRun(cooldown, cooldown.runExpiresAtMs - 1);
-    expect(early).toMatchObject({ changed: false, directive: 'resume-cooldown', reason: 'current' });
-    expect(early.state.status).toBe('cooldown');
+  it('still completes a run that entered cooldown before the deadline field existed', () => {
+    // Those runs carry only the envelope. Without the fallback this change would
+    // have stranded every one of them.
+    const legacy = { ...stateAt('cooldown'), cooldownExpiresAtMs: undefined };
+    expect(reconcilePersistedSimulationRun(legacy, legacy.runExpiresAtMs - 1)).toMatchObject({ changed: false });
+    expect(reconcilePersistedSimulationRun(legacy, legacy.runExpiresAtMs).state.status).toBe('completed');
   });
 
   it('rejects a scheduler clock older than the persisted state', () => {
