@@ -8,8 +8,25 @@
  * observed under -- so a later profile change stays legible in the data instead
  * of silently rewriting history.
  *
- * Values below are copied from src/llmq/params.h at DeFCoN Core v22.1.4
- * (v22.1.x @ 7227180053). When the node is upgraded, re-check them there.
+ * Values below are copied from src/llmq/params.h, re-verified against the running
+ * tree at v22.1.x @ 7fbb1ec15a. When the node is upgraded, re-check them there --
+ * and re-check them, not the comment: this file sat pinned to v22.1.4 long after
+ * the node had taken the mainnet-proportional bad-votes fix (llmq_50_60 3 -> 40,
+ * llmq_60_75 3 -> 48) and the height-gated llmq_400_60 V2 threshold.
+ *
+ * That drift was INERT, and the distinction matters. A round document snapshots
+ * exactly size, minSize, threshold, dkgInterval and effectiveSize
+ * (`models/QuorumRound.ts`); `dkgBadVotesThreshold` is in none of the schema, the
+ * API view or the client. So no stored round ever carried the stale 3, and there
+ * is no backfill debt -- the wrong number sat here unread. It is corrected because
+ * the next reader would have believed it, not because it corrupted history.
+ *
+ * `dkgBadVotesThreshold` is therefore deliberately REGISTRY DATA, not round data.
+ * Adding it to the snapshot now would split the collection into two eras with no
+ * backfill possible, to record a number nothing reads. If a report ever does need
+ * it, take it from `dkgBadVotesThresholdAtHeight()` below and never from the flat
+ * field: above the devnet gate 7416 llmq_400_60's effective threshold is 300, not
+ * the 30 the field carries.
  */
 export interface LlmqProfile {
   /** Consensus::LLMQType numeric value. */
@@ -23,6 +40,14 @@ export interface LlmqProfile {
   dkgMiningWindowStart: number;
   dkgMiningWindowEnd: number;
   dkgBadVotesThreshold: number;
+  /**
+   * The threshold the node actually uses at or above
+   * DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT. GetDkgBadVotesThreshold (llmq/options.cpp)
+   * returns this instead of dkgBadVotesThreshold once the gate is crossed, so a
+   * report that quotes the flat field above that height describes a rule the node
+   * is not applying. Only llmq_400_60 declares one.
+   */
+  dkgBadVotesThresholdV2?: number;
   useRotation: boolean;
   signingActiveQuorumCount: number;
   /**
@@ -47,7 +72,7 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
     dkgPhaseBlocks: 2,
     dkgMiningWindowStart: 10,
     dkgMiningWindowEnd: 18,
-    dkgBadVotesThreshold: 3,
+    dkgBadVotesThreshold: 40, // 80% of size, the mainnet proportion; 3-of-50 was the ban-wave engine
     useRotation: false,
     signingActiveQuorumCount: 2,
   },
@@ -61,7 +86,7 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
     dkgPhaseBlocks: 2,
     dkgMiningWindowStart: 20,
     dkgMiningWindowEnd: 36,
-    dkgBadVotesThreshold: 3,
+    dkgBadVotesThreshold: 48, // 80% of size, the mainnet proportion (see llmq_50_60)
     useRotation: false,
     signingActiveQuorumCount: 2,
   },
@@ -104,6 +129,9 @@ export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
     dkgMiningWindowStart: 20,
     dkgMiningWindowEnd: 28,
     dkgBadVotesThreshold: 30,
+    // 30 of 400 is 7.5% -- the same disproportion that made 3-of-50 the devnet
+    // ban-wave engine. 300 is the upstream value, gated in by #159.
+    dkgBadVotesThresholdV2: 300,
     useRotation: false,
     signingActiveQuorumCount: 4,
   },
@@ -248,6 +276,30 @@ export function trackedProfiles(): LlmqProfile[] {
  * min(params.size, available masternodes) -- which is why it is passed in
  * rather than read from the profile.
  */
+/**
+ * consensus.nDkgBadVotesV2ActivationHeight on this devnet (chainparams.cpp:680).
+ * Below it the flat threshold applies; at and above it, the V2 one where a
+ * profile declares one.
+ */
+export const DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT = Number(
+  process.env.DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT ?? 7416
+);
+
+/**
+ * The bad-votes threshold the node actually applies at a height, mirroring
+ * llmq::GetDkgBadVotesThreshold. Worth knowing what it means at this network
+ * size: above the gate llmq_400_60 needs 300 bad votes against a member, which
+ * ~152 registered masternodes can never cast -- so that route to MarkBadMember
+ * is dead for that profile, while the missing-contribution and complaint routes
+ * are not. A member that is simply ABSENT never reaches any threshold at all.
+ */
+export function dkgBadVotesThresholdAtHeight(profile: LlmqProfile, height: number): number {
+  const v2 = profile.dkgBadVotesThresholdV2;
+  return v2 !== undefined && v2 > 0 && height >= DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT
+    ? v2
+    : profile.dkgBadVotesThreshold;
+}
+
 export function maxPossibleBan(effectiveSize: number, minSize: number): number {
   return Math.max(0, effectiveSize - minSize);
 }

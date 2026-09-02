@@ -99,15 +99,48 @@ locally. `ssh devnet` reaches the explorer VPS directly.
 
 **The masternode count is a consensus input, not a statistic.**
 `CalcMaxPoSePenalty` is `max(100, GetAllMNsCount())` and a DKG exclusion costs
-66% of it (`deterministicmns.cpp:328-339`), so both the ban threshold and the
-penalty scale with the size of the network. At 152 registered nodes the
-threshold is 152 and one exclusion is 100, which puts **two exclusions within
-48 blocks over the line** -- and four profiles punish on interleaved schedules,
-two of them every 24 blocks. A single moment's outage at a height where three
-schedules coincide costs 300 and bans outright. This entry read 80 for a while
-after the fleet had grown; every ban estimate made against that number was
-wrong, because at 110 or fewer the penalty is 66, decays to zero inside the
-72-block `llmq_400_60` cycle, and that profile alone never bans at all.
+`CalcPenalty(66)` = `(max(100,N) * 66) / 100` in C++ integer division
+(`deterministicmns.cpp:328-340`, applied at `:1131`), so both the ban threshold
+and the penalty scale with the size of the network. `GetAllMNsCount()` is
+`mnMap.size()` -- it counts PoSe-banned nodes too, and only falls when a
+collateral is spent, so **a ban wave does not lower the threshold for the
+survivors**.
+
+At 152 registered the threshold is 152 and one exclusion is exactly 100 (151
+gives 99, 154 gives 101 -- the round number is a coincidence of this network
+size, not a property of the code). One exclusion alone never bans at any size.
+Decay is 1/block and `DecreaseScores` runs *before* the block's transaction
+loop (`:810` vs `:815`), so two exclusions `g` blocks apart score `200 - g`:
+banned iff `200 - g >= 152`, i.e. **g <= 48 blocks**, and g = 48 exactly bans
+(the test is `>=`). Four profiles punish on interleaved schedules, two of them
+every 24 blocks (`llmq_50_60` and, above 3120, `llmq_defcon` -- which also share
+the same mining window, so those two really can be mined in one block).
+
+Two corrections to what this entry said before, both verified at
+`7fbb1ec15a`:
+
+- **"a coincidence costs 300 and bans outright" was wrong twice.** `PoSePunish`
+  clamps with `std::min(maxPenalty, ...)` (`:355`), so 300 is never a state the
+  chain holds -- it saturates at 152. And coincident *cycle starts* are not
+  coincident *penalty blocks*: penalties land in the mining window, and the
+  windows differ (`llmq_50_60` [+10,+18] vs `llmq_400_60` [+20,+28]), so at a
+  multiple of 72 those two are mined about ten blocks apart. The conclusion
+  survives anyway, for a simpler reason: **the second penalty alone already
+  bans.** A preset that wants a genuine coincidence must be built on mining-window
+  intersection in absolute height, not on shared cycle starts.
+- **"at 110 or fewer the penalty is 66" was wrong.** `CalcPenalty(66)` is 66 only
+  up to **N <= 101** (at 102 it becomes 67). At N = 110 the penalty is 72; at 151
+  it is 99. The two-exclusion window at N <= 100 is **g <= 32** (132 - g >= 100),
+  not 48, and it narrows as the ceiling rises. Every ban estimate made with
+  "66 at 110" understated the penalty by up to 50%.
+
+  The right way to ask whether a profile can ban **on its own** is whether two of
+  its consecutive rounds fit inside the decay: with penalty `P`, ceiling
+  `M = max(100, N)` and interval `I`, that is `2P - M >= I`. For `llmq_400_60`
+  (I = 72) it first holds at **N = 226** (at 225 the score is 71). So at 110 that
+  profile is not "marginal" -- it has **38 blocks of headroom**, and the earlier
+  note claiming otherwise was wrong in the opposite direction. What bans at 152 is
+  two exclusions from the 24-block profiles, not one profile alone.
 
 ## Operational notes earned the hard way
 
@@ -377,6 +410,60 @@ wrong, because at 110 or fewer the penalty is 66, decays to zero inside the
   be the same error as reading `formationRate` without the health ratio: a true
   number answering a question nobody asked.
 
+- **A node that is simply ABSENT never reaches `dkgBadVotesThreshold`, so a
+  ban model built on that threshold is modelling the wrong branch.**
+  `MarkBadMember` has nine call sites in `dkgsession.cpp` (312, 458, 624, 676,
+  684, 838, 854, 877, 920) and is the sole writer of `CDKGMember::bad` (:1324).
+  Exactly **one** consults the threshold (:676) and exactly **one** is reachable
+  by a stopped daemon (:458, `m->contributions.empty()`, "did not send any
+  contribution") -- and they are not the same site. The other seven all require
+  the member to have transmitted a DKG message.
+
+  It is not that :458 merely outruns the threshold: it **preempts** it.
+  `VerifyAndComplain` runs a phase before `VerifyAndJustify`
+  (`dkgsessionhandler.cpp:798` then `:807`), and `VerifyAndJustify`'s loop
+  short-circuits on `if (m->bad) continue;` (:668-671) *before* the vote count at
+  :672. An absent member's `badMemberVotes` are therefore never evaluated at all.
+  Absence is judged by a single observer's own view of a single member, with no
+  quorum-wide agreement and no threshold of any kind.
+
+  The threshold is decisive only in the **asymmetric** case -- a member whose
+  contribution *we* received but enough others did not, i.e. partial connectivity
+  and mesh churn. That is precisely the ban-wave fingerprint recorded above, and
+  it is a different scenario from an outage. For a restart storm the consequence
+  is clean: the exclusion count is a function of quorum membership and outage
+  span alone, and needs no bad-vote modelling.
+
+  Two riders. Per-node marking is an **upper bound on punishment**, not a
+  prediction -- local badness only clears that node's bit in its own premature
+  commitment (:960-964), the commitment is abandoned below `minSize` (:966-969),
+  and punishment follows the mined *final* commitment. And an absent node's bad
+  bit also reaches peers through `badConnection` (assigned at `:496`, `:501` and
+  `:506`), OR-ed into the outbound complaint bit at :527.
+
+  Keep the two apart, because they are opposite kinds of source. `bad` does
+  **two** things: it clears the member from *our own* `validMembers` (:961-963),
+  which is what feeds the punishment, and it sets the complaint bit.
+  `badConnection` does **only the second** -- so it is purely an input to *other*
+  members' threshold branch, and never to the bitset that punishes. It is also
+  spork-gated (`SPORK_23_QUORUM_POSE` for the whole path, and
+  `SPORK_21_QUORUM_ALL_CONNECTED` for the not-connected case at :496) where :458
+  is not, so assuming both sporks are on over-counts votes against absent nodes.
+
+- **The bad-votes threshold is height-gated, and reading the flat field is wrong
+  above the gate.** `GetDkgBadVotesThreshold` (`llmq/options.cpp:132-139`)
+  returns `dkgBadVotesThresholdV2` at or above
+  `consensus.nDkgBadVotesV2ActivationHeight` (devnet **7416**,
+  `chainparams.cpp:680`). Only `llmq_400_60` declares one: **30 below the gate,
+  300 at and above it**. At ~152 registered masternodes 300 bad votes cannot be
+  cast, so above 7416 the *vote* route to `MarkBadMember` is dead for that
+  profile while the contribution and complaint routes still work. The explorer's
+  own `LLMQ_PROFILES` sat pinned to v22.1.4 long after the node took the
+  mainnet-proportional fix -- `llmq_50_60` and `llmq_60_75` still read 3 where the
+  node uses 40 and 48 -- so every round document snapshotted a punishment rule
+  the node was not applying. Re-check the numbers against `params.h`, not against
+  the comment that says where they came from.
+
 ## Verified facts about the node (`v22.1.x`; the devnet now runs v22.1.5)
 
 The facts below were read from source at v22.1.4 (`7227180053`) and re-checked
@@ -431,6 +518,15 @@ set its signer bit in both. Two competing final commitments with different
 economic barrier and a different kind of claim from the ChainLock one. Say Q60
 is structurally immune to a **dual ChainLock**; do not say it is structurally
 immune to divergent commitments.
+
+What bounds the on-chain consequence is separate and worth stating with it:
+divergent final commitments can exist on the wire, but only **one of them can
+ever be mined** for a given `(llmqType, quorumHash)`. `GetNumCommitmentsRequired`
+returns 0 once `HasMinedCommitment` is true, `ProcessBlock` rejects a second as
+`bad-qc-not-allowed` (`blockprocessor.cpp:200-202`) and `ProcessCommitment` as
+`bad-qc-dup` (`:277-280`). So at most one `validMembers` bitset is ever applied,
+and therefore **only one of two competing commitments can punish anybody** --
+the divergence is a signing-layer fact, not a doubled PoSe penalty.
 
 The switchover follows the simulator audit's design: a single, one-way,
 height-only resolver (`llmq::GetChainLocksLLMQType`) that both signing and
