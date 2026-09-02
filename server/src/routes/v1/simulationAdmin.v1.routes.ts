@@ -19,6 +19,7 @@ import {
   SimulationPersistenceService,
 } from '../../services/simulationPersistence.service.js';
 import { sendData, sendError } from '../../utils/http.js';
+import { logger } from '../../utils/logger.js';
 import { DockerLiveExecutor, dockerLabProbes } from '../../simulator/dockerLiveExecutor.js';
 import {
   InvalidNetemTargetError,
@@ -26,6 +27,11 @@ import {
   UnsupportedLiveFaultError,
 } from '../../simulator/liveExecutorPlan.js';
 import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
+import { SimulationTarget } from '../../models/SimulationTarget.js';
+import {
+  registryUpdateFrom,
+  simulationTargetRegistrationSchema,
+} from '../../simulator/targetRegistration.js';
 
 const runKeySchema = z.string().regex(/^sim_[0-9a-f]{32}$/);
 const createSchema = z.object({
@@ -95,7 +101,19 @@ type ControlHandler = (req: Request, res: Response) => Promise<void>;
 function controlRoute(handler: ControlHandler) {
   return (req: Request, res: Response): void => {
     handler(req, res).catch((error: unknown) => {
-      if (!res.headersSent) sendError(res, statusFor(error), publicControlMessage(error));
+      const status = statusFor(error);
+      // A failure here used to leave NO trace: the caller got a sanitised message
+      // and the server kept nothing, so the only way to learn what actually broke
+      // was to replay the call in-process. The response stays sanitised; the
+      // server log is private and carries the real reason.
+      const detail = error instanceof Error ? error.message : String(error);
+      const line = `${req.method} ${req.originalUrl} -> ${status}: ${detail}`;
+      if (status >= 500) {
+        logger.error(line, { stack: error instanceof Error ? error.stack : undefined });
+      } else {
+        logger.warn(line);
+      }
+      if (!res.headersSent) sendError(res, status, publicControlMessage(error));
     });
   };
 }
@@ -141,6 +159,34 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
 
   router.get('/scenarios', controlRoute(async (_req, res) => {
     sendData(res, { items: service.scenarios() });
+  }));
+
+  // The execution registry. Targets are declared here and nowhere else: hostRef
+  // and unitRef are what the executor eventually acts on, so a value discovered
+  // by scanning the environment would let whatever is running decide what may be
+  // faulted. Declaring does not enlist -- `enabled` defaults to false.
+  router.put('/targets/:targetId', controlRoute(async (req, res) => {
+    const body = simulationTargetRegistrationSchema.parse({
+      ...(req.body as Record<string, unknown>),
+      targetId: String(req.params.targetId ?? ''),
+    });
+    const saved = await SimulationTarget.findOneAndUpdate(
+      { targetId: body.targetId },
+      { $set: registryUpdateFrom(body), $setOnInsert: { targetId: body.targetId } },
+      { upsert: true, new: true, runValidators: true }
+    ).lean();
+    sendData(res, { target: saved });
+  }));
+
+  router.get('/targets', controlRoute(async (req, res) => {
+    const network = req.query.network === undefined ? undefined : String(req.query.network);
+    if (network !== undefined && network !== 'regtest' && network !== 'devnet') {
+      throw new SimulationControlError('INVALID_REQUEST', 'network must be regtest or devnet');
+    }
+    const items = await SimulationTarget.find(network === undefined ? {} : { network })
+      .sort({ targetId: 1 })
+      .lean();
+    sendData(res, { items, total: items.length });
   }));
 
   router.post('/runs', controlRoute(async (req, res) => {
