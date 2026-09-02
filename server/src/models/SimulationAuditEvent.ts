@@ -18,6 +18,7 @@ export type SimulationAuditEventType =
   | (typeof SIMULATION_RUN_EVENT_TYPES)[number]
   | 'system_timeout'
   | 'system_resume_recovery'
+  | 'system_cooldown_complete'
   | 'action_created'
   | 'action_claimed'
   | 'action_result'
@@ -51,6 +52,7 @@ const eventTypes: readonly SimulationAuditEventType[] = [
   ...SIMULATION_RUN_EVENT_TYPES,
   'system_timeout',
   'system_resume_recovery',
+  'system_cooldown_complete',
   'action_created',
   'action_claimed',
   'action_result',

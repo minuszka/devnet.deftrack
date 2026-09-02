@@ -54,7 +54,7 @@ export type SimulationRunEvent =
 
 export interface SimulationTransitionRecord {
   eventId: string;
-  eventType: SimulationRunEventType | 'system_timeout' | 'system_resume_recovery';
+  eventType: SimulationRunEventType | 'system_timeout' | 'system_resume_recovery' | 'system_cooldown_complete';
   from: SimulationRunStatus;
   to: SimulationRunStatus;
   atMs: number;
@@ -195,6 +195,10 @@ const TIMEOUT_RECOVERY_STATUSES = new Set<SimulationRunStatus>([
 export const RECONCILABLE_SIMULATION_STATUSES: readonly SimulationRunStatus[] = [
   ...TIMEOUT_RECOVERY_STATUSES,
   'aborting',
+  // Not timeout-recoverable -- a cooldown run is healthy, and reconcile does not
+  // drag it back into recovery. It is here because it is the only status a live
+  // run can reach on success, and nothing else was ever going to move it on.
+  'cooldown',
 ];
 
 export function isTerminalSimulationStatus(status: SimulationRunStatus): boolean {
@@ -409,7 +413,7 @@ export interface SimulationReconcileResult {
   state: SimulationRunState;
   changed: boolean;
   directive: SimulationResumeDirective;
-  reason: 'current' | 'run-expired' | 'fault-lease-expired' | 'abort-in-progress';
+  reason: 'current' | 'run-expired' | 'fault-lease-expired' | 'abort-in-progress' | 'cooldown-budget-elapsed';
 }
 
 function resumeDirective(status: SimulationRunStatus): SimulationResumeDirective {
@@ -465,6 +469,32 @@ export function reconcilePersistedSimulationRun(
       reason: 'process resumed an abort in progress',
     });
     return { state: next, changed: true, directive: 'resume-recovery', reason: 'abort-in-progress' };
+  }
+
+  // A live run that recovers cleanly lands in `cooldown` and used to stop there
+  // forever: `cooldown_completed` was constructed in exactly one place, inside the
+  // NON-live tail of recover(), and the live branch returns before it. The sweep
+  // never selected the status, /recover refuses to re-enter it, and the only
+  // remaining exit was abort() -- which relabels a successful experiment
+  // `aborted`. In a record-keeping project that is not cosmetic.
+  //
+  // The deadline is `runExpiresAtMs` and NOT `stateEnteredAtMs + cooldownBudgetMs`,
+  // deliberately. This function is re-executed during audit replay, which demands
+  // that a stored system event be reproducible from (state, atMs) alone; a
+  // threshold read from a policy constant would make every stored
+  // cooldown_completed unreplayable the day that constant changed --
+  // AUDIT_DIVERGENCE on loadRun, for runs that were correct when written. The run
+  // envelope is immutable, per-run, already reserves the cooldown budget, and is
+  // stored on the state, so the same input always yields the same answer.
+  if (state.status === 'cooldown' && nowMs >= state.runExpiresAtMs) {
+    const next = applyTransition(state, {
+      eventId: `system:cooldown-complete:${state.runExpiresAtMs}`,
+      eventType: 'system_cooldown_complete',
+      atMs: nowMs,
+      to: 'completed',
+      reason: 'cooldown-budget-elapsed',
+    });
+    return { state: next, changed: true, directive: 'none', reason: 'cooldown-budget-elapsed' };
   }
 
   const leaseExpired =

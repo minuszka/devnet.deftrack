@@ -222,7 +222,8 @@ export function replaySimulationRunAudit(events: readonly AuditLike[]): {
       expectedRequestFingerprint = simulationRunEventFingerprint(domainEvent);
     } else if (
       event.eventType === 'system_timeout' ||
-      event.eventType === 'system_resume_recovery'
+      event.eventType === 'system_resume_recovery' ||
+      event.eventType === 'system_cooldown_complete'
     ) {
       const reconciled = reconcilePersistedSimulationRun(state, event.atMs);
       if (!reconciled.changed || reconciled.state.lastTransition?.eventId !== event.eventId) {

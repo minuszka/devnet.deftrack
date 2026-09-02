@@ -22,4 +22,16 @@ describe('reconcilableRunFilter', () => {
     expect(RECONCILABLE_SIMULATION_STATUSES).not.toContain('completed');
     expect(RECONCILABLE_SIMULATION_STATUSES).not.toContain('draft');
   });
+
+  it('sweeps cooldown, the only status a live run reaches on success', () => {
+    // Without it nothing in the process ever moved a successful live run on: the
+    // one place that constructs cooldown_completed sits in the non-live tail of
+    // recover(), /recover refuses to re-enter the status, and abort() would
+    // relabel the run `aborted`. The existing runExpiresAtMs clause then selects
+    // it -- no new filter branch is needed, because the run envelope already
+    // reserves the cooldown budget.
+    expect(RECONCILABLE_SIMULATION_STATUSES).toContain('cooldown');
+    const filter = reconcilableRunFilter(NOW) as any;
+    expect(filter.$or).toContainEqual({ 'state.runExpiresAtMs': { $lte: NOW } });
+  });
 });
