@@ -353,6 +353,49 @@ Two corrections to what this entry said before, both verified at
   regeneration, and treat "surprisingly few CXX lines after a header change"
   as an alarm, not a gift.
 
+- **A devnet consensus parameter can live in the conf, and a copied datadir
+  without it strands.** `CDevNetParams::UpdateDevnetDSLActivationHeightFromArgs`
+  reads `-dslactivationheight` (default: unreachable), and every devnet node
+  carries `dslactivationheight=5472` (with `minsporkkeys=1`) under `[devnet]`
+  in its conf. The first `TRANSACTION_POSE_SERVICE_COMMITMENT` (type 10) sits
+  in block 5496; a node started without the argument rejects that block as
+  `bad-txns-type` on reindex or initial sync, marks it invalid, and strands at
+  5495 with an `invalid` tip at 5496. Seen on a local copy of devnet2's block
+  files, diagnosed as a consensus bug for an hour, and disproved by the
+  argument: the same binary reindexes straight through it.
+  `ContextualCheckTransaction` takes its height from `pindexPrev`; the code
+  was right and the parameter was missing. Copy the whole `[devnet]` section
+  (minus secrets) when cloning a datadir or writing a conf, and diff confs
+  before declaring that a binary cannot sync past a height. The same mechanism
+  exists for the ComputeNode height. At v23 the height must be pinned in
+  `chainparams.cpp` for mainnet.
+
+- **Tests that fail on any build of this tree, because they inherit Dash's
+  constants.** Reading one of them as a regression costs an hour each time.
+  `subsidy_tests` and `block_reward_reallocation_tests` (Dash economics);
+  `validation_chainstate_tests/chainstate_update_tip` (it activates a regtest
+  assumeutxo snapshot at height 110 and compares the UTXO hash against Dash's
+  constant, which this fork's regtest chain -- different genesis, subsidy and
+  premine -- never reproduces: `[snapshot] bad snapshot content hash`); six
+  `wallet_tests` cases (`scan_for_wallet_transactions`, `importwallet_rescan`,
+  `coin_mark_dirty_immature_credit`, `WatchOnlyPubKeys`, `ListCoins`,
+  `select_coins_grouped_by_addresses` -- 500-coin coinbase assumptions); and
+  the functional `rpc_getblockstats.py`, whose fixture expects a subsidy of
+  500 where this chain pays 11,000,000 per proof-of-work block. All verified
+  to fail identically on the unmodified `v22.1.x` tip (2026-09-02). Refreshing
+  them is one housekeeping item; until then, prove a suite is inherited-failing
+  by running it on the base commit in the same tree before blaming a change.
+
+- **Two staking hardenings worth knowing about (#167).** Staking selection took
+  `AvailableCoins` at its word and never read `fSpendable`, so a watch-only
+  output that passed value, depth, type and age could be chosen as a kernel the
+  wallet cannot sign -- an attempt that fails after the search, and a lost
+  block if that kernel wins. And `getstakinginfo.expectedtime` was a 64-bit
+  product: on 2026-09-02 the devnet's network weight put it within two per
+  cent of 2^64, past which it wraps to a small, believable number (47 s for a
+  true 2911 s). Now 256-bit. Watch `netstakeweight` on any network a few times
+  larger than this one.
+
 ## Measurement caveats that are easy to get wrong
 
 - **ChainLock coverage starts at the first lock ever seen,** not at the start
@@ -464,6 +507,19 @@ Two corrections to what this entry said before, both verified at
   the node was not applying. Re-check the numbers against `params.h`, not against
   the comment that says where they came from.
 
+- **`getblockstats` aborted on every proof-of-stake block until #166, and a
+  script that turned the error into 0 measured the bug.** Its fee loop reached
+  the coinstake, whose outputs exceed its inputs by the reward, and
+  `MoneyRange()` on that "fee" became `Internal bug detected` -- the same class
+  as the `getblock` verbosity-2 abort fixed in #55. A chain-wide fee sum built
+  on it reported zero; rebuilt on `getblock <hash> 2`, which skips the
+  coinstake, it reported 116,892,982 sat -- exactly the fees the chain has
+  burned so far, since the coinstake does not yet collect them (an open
+  decision, and a consensus change when it comes). With #166 the two paths
+  agree to the satoshi (7277 = 7277 on a 22-transaction block); height 0 still
+  errors on both, because genesis has no undo data. Count the errors in any
+  RPC-driven sum, and never let a failed call contribute a zero.
+
 ## Verified facts about the node (`v22.1.x`; the devnet now runs v22.1.5)
 
 The facts below were read from source at v22.1.4 (`7227180053`) and re-checked
@@ -471,6 +527,43 @@ against the tree that became v22.1.5. The version bump itself is only
 `configure.ac`: it exists because eight backports shipped in one day under an
 unchanged version string, and three different binaries reported v22.1.4 at
 once. The string still does not identify a build -- compare `md5sum`.
+
+### Four gated proof-of-stake rules, active from height 7560 on devnet
+
+All from the stake audit, shipped in one rollout on 2026-09-02 (`eb49a5c346`,
+run `pos-consensus-gate-7560-rollout-2026-09-02`); mainnet and testnet heights
+stay unset until v23, when every gated consensus change gets its height at
+once.
+
+- **#162** a proof-of-stake block's nonce must be 0 (`CheckPosBlockNonce`,
+  `bad-pos-nonce`). `AcceptBlockHeader` decides proof-of-work by height, so a
+  header with a non-zero nonce entered the index and `CBlockIndex::IsProofOfStake()`
+  -- which reads the nonce -- judged it by the wrong rule.
+- **#163** the coinbase's value is bounded by subsidy plus fees as
+  `GetBlockTxOuts` computes them (`CheckPosCoinbaseValue`, inside
+  `IsBlockValueValid`); it had no bound at all.
+- **#164** the stake modifier is recomputed in `ConnectBlock` from the kernel
+  the block staked (`StakeModifierFromKernel`). Until the gate every modifier
+  on the chain is `Hash(32 zero bytes || previous modifier)` -- a function of
+  height alone, verified by recomputation at three heights -- because the
+  header-time write ran before `prevoutStake` was set. The first block at the
+  gate seeds from its degenerate predecessor: no history changes and no reindex
+  is needed, but every node must carry the rule before the gate.
+- **#165** a proof-of-stake block's time must be strictly after its
+  predecessor's (`CheckPosBlockTime`, `bad-pos-time`), not merely after the
+  median of the last eleven, which lags the tip by most of an hour.
+  History-compatible by measurement, not assumption: 5663 blocks, none
+  violating, smallest gap 2 s.
+
+Each rule is one pure function beside its gate, tested on both sides of the
+height, with a negative control (rule compiled out: its own test fails and
+nothing else does). Nothing observable changes at the gate itself, because
+every existing block already satisfies all four; verification at 7560 is
+therefore a non-event plus one reindex: one active chain past the gate on all
+160 fleet instances (`fleet-chain-check2.sh` on the jump host, which knows the
+16-host inventory and its non-root logins), and a reindex of a devnet2 copy on
+the new binary reaching the network's tip hash -- the only visible proof that
+the connect-time modifier is deterministic, since RPC does not expose it.
 
 ### The chain is proof-of-work to height 1000, then proof-of-stake
 
