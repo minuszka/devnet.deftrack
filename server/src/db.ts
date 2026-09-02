@@ -21,12 +21,12 @@ const MEASURED_COMMANDS = new Set([
   'bulkWrite',
 ]);
 
-export async function connectDatabase(): Promise<void> {
+export async function connectDatabase(uri: string = config.mongoUri): Promise<void> {
   const maxRetries = 5;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await mongoose.connect(config.mongoUri, {
+      await mongoose.connect(uri, {
         serverSelectionTimeoutMS: 10_000,
         maxPoolSize: config.env === 'production' ? 30 : 10,
         minPoolSize: 2,

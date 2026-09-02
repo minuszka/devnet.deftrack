@@ -53,7 +53,7 @@ export class SimulationControlError extends Error {
  * setting: making the lab configurable would be the foot-gun the guard exists to
  * remove.
  */
-const EXECUTOR_LAB_NETWORK: SimulationNetwork = 'regtest';
+export const EXECUTOR_LAB_NETWORK: SimulationNetwork = 'regtest';
 
 export interface SimulationControlIdentity {
   actor: SimulationAuditActor;

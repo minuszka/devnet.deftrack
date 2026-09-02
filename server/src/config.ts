@@ -82,6 +82,15 @@ export const config = {
     labDockerBin: process.env.SIMULATION_LAB_DOCKER_BIN ?? 'docker',
   },
 
+  // The simulator lab runs as its own process against its own database. There is
+  // no default connection string on purpose: a default is how the lab would
+  // silently inherit the explorer's. See domain/labIsolation.
+  lab: {
+    mongoUri: process.env.LAB_MONGODB_URI ?? '',
+    host: process.env.LAB_HOST ?? '127.0.0.1',
+    port: optionalNumber('LAB_PORT', 4200),
+  },
+
   rpc: {
     host: process.env.RPC_HOST ?? '127.0.0.1',
     port: optionalNumber('RPC_PORT', 0),
