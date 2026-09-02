@@ -141,10 +141,10 @@ while read -r entry; do
   fi
   out=\$(\$SSH "\$target" 'set -e
     B=/opt/defcon-devnet/bin
-    # Not every host logs in as root. Anything that writes into $B or drives
-    # systemd goes through sudo, and -n makes a host that would prompt fail
-    # here and now rather than hang the whole rollout on a password it will
-    # never be given.
+    # Not every host logs in as root. Anything that writes into the binary
+    # directory or drives systemd therefore goes through sudo, and -n makes a
+    # host that would prompt fail here and now rather than hang the whole
+    # rollout on a password it will never be given.
     S=""
     if [ "\$(id -u)" != "0" ]; then
       S="sudo -n"
