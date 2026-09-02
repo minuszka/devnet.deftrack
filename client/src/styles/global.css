@@ -138,14 +138,16 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* Type scale. Four levels the eye can tell apart at arm's length:
-     metrics, section titles, content, metadata. */
-  --fs-xs: 12px;
-  --fs-sm: 13.5px;
-  --fs-base: 16px;
-  --fs-md: 17px;
-  --fs-lg: 19px;
-  --fs-xl: 23px;
-  --fs-metric: clamp(28px, 1.9vw, 40px);
+     metrics, section titles, content, metadata. Each grows a little with
+     the screen -- a wall display is read from further away -- inside bounds
+     that keep a laptop dense. */
+  --fs-xs: clamp(11.5px, 0.62vw, 13.5px);
+  --fs-sm: clamp(13px, 0.72vw, 15px);
+  --fs-base: clamp(15px, 0.85vw, 18px);
+  --fs-md: clamp(16px, 0.9vw, 19px);
+  --fs-lg: clamp(18px, 1vw, 22px);
+  --fs-xl: clamp(21px, 1.2vw, 27px);
+  --fs-metric: clamp(28px, 1.9vw, 44px);
 
   /* Layout: the full width of the screen, with gutters that grow with it and a
      ceiling only where a line of text would otherwise run across a wall. */

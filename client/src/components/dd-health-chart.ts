@@ -18,13 +18,16 @@ import { baseStyles } from '../styles/shared.js';
  * fixed viewBox, so the labels are the same size on a laptop and on a wall,
  * and the height is the height an operator can read across a room.
  */
-const H = 356;
 const PAD_L = 62;
 const PAD_R = 26;
 const PAD_T = 26;
-const PLOT_H = 220;
-const RAIL_Y = PAD_T + PLOT_H + 40;
-const XLABEL_Y = RAIL_Y + 34;
+/** Below the plot: the failure rail, then the height labels. */
+const BELOW = 136;
+
+/** Taller on a wider screen: a wall display gets a chart it can read across a room. */
+function heightFor(width: number): number {
+  return width >= 2000 ? 460 : width >= 1400 ? 390 : 340;
+}
 
 export class DdHealthChart extends LitElement {
   static override properties = {
@@ -52,7 +55,7 @@ export class DdHealthChart extends LitElement {
       }
       svg {
         width: 100%;
-        height: ${H}px;
+        height: auto;
         display: block;
         cursor: crosshair;
       }
@@ -168,8 +171,13 @@ export class DdHealthChart extends LitElement {
     return n === 1 ? PAD_L + (W - PAD_L - PAD_R) / 2 : PAD_L + (i * (W - PAD_L - PAD_R)) / (n - 1);
   }
 
+  private _plotH(): number {
+    return heightFor(this._width) - BELOW - PAD_T;
+  }
+
   private _y(v: number): number {
-    return PAD_T + PLOT_H - v * PLOT_H;
+    const plotH = this._plotH();
+    return PAD_T + plotH - v * plotH;
   }
 
   /** Nearest round to the pointer, one state write per animation frame. */
@@ -200,6 +208,10 @@ export class DdHealthChart extends LitElement {
     }
 
     const W = this._width;
+    const H = heightFor(W);
+    const PLOT_H = this._plotH();
+    const RAIL_Y = PAD_T + PLOT_H + 40;
+    const XLABEL_Y = RAIL_Y + 34;
     const n = this.points.length;
     const x = (i: number): number => this._x(i);
     const y = (v: number): number => this._y(v);
