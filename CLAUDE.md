@@ -506,6 +506,15 @@ economic barrier and a different kind of claim from the ChainLock one. Say Q60
 is structurally immune to a **dual ChainLock**; do not say it is structurally
 immune to divergent commitments.
 
+What bounds the on-chain consequence is separate and worth stating with it:
+divergent final commitments can exist on the wire, but only **one of them can
+ever be mined** for a given `(llmqType, quorumHash)`. `GetNumCommitmentsRequired`
+returns 0 once `HasMinedCommitment` is true, `ProcessBlock` rejects a second as
+`bad-qc-not-allowed` (`blockprocessor.cpp:200-202`) and `ProcessCommitment` as
+`bad-qc-dup` (`:277-280`). So at most one `validMembers` bitset is ever applied,
+and therefore **only one of two competing commitments can punish anybody** --
+the divergence is a signing-layer fact, not a doubled PoSe penalty.
+
 The switchover follows the simulator audit's design: a single, one-way,
 height-only resolver (`llmq::GetChainLocksLLMQType`) that both signing and
 verification use, keyed on the CLSIG's signed height. Below
