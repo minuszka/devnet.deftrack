@@ -4,12 +4,14 @@ import type { SimulationRunEvent, SimulationRunStatus } from '../domain/simulati
 import type {
   SimulationAuditActor,
   SimulationNetwork,
+  SimulationRecoveryResult,
   SimulationRunMetadata,
 } from '../models/SimulationRun.js';
 import type { SimulationControlRole } from '../models/SimulationControlRequest.js';
 import { authorizeSimulationApproval } from '../simulator/simulationApproval.js';
 import { parseScenarioRequest, scenarioDescriptors } from '../simulator/scenarioRegistry.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
+import { deriveSimulationRunTiming, faultLeaseExpiresAtForStart } from '../simulator/simulationTiming.js';
 import type { SimulationEvidenceProvider } from './simulationEvidence.service.js';
 import {
   SimulationControlPersistenceService,
@@ -65,6 +67,39 @@ function eventFor(
 ): SimulationRunEvent {
   return { eventId: `${request.requestKey}:${suffix}`, type, atMs: request.acceptedAtMs };
 }
+
+/** activate_fault carries the fault lease, so eventFor (which excludes it) cannot build it. */
+function activateFaultEventFor(request: SimulationControlRequestRecord, faultLeaseExpiresAtMs: number): SimulationRunEvent {
+  return { type: 'activate_fault', eventId: `${request.requestKey}:activate`, atMs: request.acceptedAtMs, faultLeaseExpiresAtMs };
+}
+
+/** The recovery outcome, chosen by whether the lab came back clean. */
+function recoveryOutcomeEventFor(request: SimulationControlRequestRecord, allClear: boolean): SimulationRunEvent {
+  return allClear
+    ? { type: 'recovery_succeeded', eventId: `${request.requestKey}:recovered`, atMs: request.acceptedAtMs }
+    : { type: 'recovery_failed', eventId: `${request.requestKey}:recovery-failed`, atMs: request.acceptedAtMs };
+}
+
+/**
+ * The live executor the control slots drive: it applies the run's fault to the lab
+ * and, at recovery, clears it and reports whether the lab came back clean. Kept a
+ * port so the control flow is testable with a fake, and so a deployment without a
+ * configured executor fails closed rather than pretending to run.
+ */
+export interface SimulationLiveExecutor {
+  activateFault(input: { run: SimulationRunProjection; plan: DryRunPlan; faultLeaseExpiresAtMs: number }): Promise<void>;
+  proveRecovery(input: { run: SimulationRunProjection }): Promise<SimulationRecoveryResult>;
+}
+
+/** The default when none is configured: the slots stay closed, as before day 8. */
+const EXECUTOR_UNAVAILABLE: SimulationLiveExecutor = {
+  activateFault() {
+    return Promise.reject(new SimulationControlError('EXECUTOR_NOT_AVAILABLE', 'live execution requires a configured executor'));
+  },
+  proveRecovery() {
+    return Promise.reject(new SimulationControlError('EXECUTOR_NOT_AVAILABLE', 'live recovery proof requires a configured executor'));
+  },
+};
 
 function dryRunPlanFingerprint(plan: DryRunPlan): string {
   const { planFingerprint: _ignored, ...unsigned } = plan;
@@ -143,7 +178,8 @@ export class SimulationControlService {
     private readonly control: SimulationControlPersistenceService,
     private readonly evidence: SimulationEvidenceProvider,
     private readonly identity: SimulationControlIdentity,
-    private readonly clock: () => number = Date.now
+    private readonly clock: () => number = Date.now,
+    private readonly executor: SimulationLiveExecutor = EXECUTOR_UNAVAILABLE
   ) {}
 
   scenarios() {
@@ -392,10 +428,18 @@ export class SimulationControlService {
     ensureStatus(run, ['armed']);
     if (run.state.live) {
       this.assertExecutorNetwork(run);
-      throw new SimulationControlError(
-        'EXECUTOR_NOT_AVAILABLE',
-        'live execution is disabled until the day-8 leased executor exists'
-      );
+      const plan = await this.loadPlan(run);
+      // The lease is the run's own recovery envelope, from its immutable timing --
+      // never wall-clock plus a Docker TTL. The frozen accept time is the fault start.
+      const timing = deriveSimulationRunTiming(plan, run.state.createdAtMs);
+      const faultLeaseExpiresAtMs = faultLeaseExpiresAtForStart(timing, request.acceptedAtMs);
+      await this.executor.activateFault({ run, plan, faultLeaseExpiresAtMs });
+      run = await this.runs.transitionRun({
+        runKey: run.runKey,
+        event: activateFaultEventFor(request, faultLeaseExpiresAtMs),
+        actor: request.actor,
+      });
+      return { run, idempotentReplay: false };
     }
     run = await this.runs.transitionRun({
       runKey: run.runKey,
@@ -428,10 +472,16 @@ export class SimulationControlService {
     }
     if (run.state.live) {
       this.assertExecutorNetwork(run);
-      throw new SimulationControlError(
-        'EXECUTOR_NOT_AVAILABLE',
-        'run is safely held in recovery until the day-8 executor can prove cleanup'
-      );
+      // The run is already held in recovery above; the executor now clears the
+      // fault and proves the lab is clean, and the outcome is recorded atomically.
+      const recovery = await this.executor.proveRecovery({ run });
+      run = await this.runs.recordRecoveryResult({
+        runKey: run.runKey,
+        event: recoveryOutcomeEventFor(request, recovery.allClear),
+        recovery,
+        actor: request.actor,
+      });
+      return { run, idempotentReplay: false };
     }
     run = await this.runs.transitionRun({
       runKey: run.runKey,
@@ -446,13 +496,9 @@ export class SimulationControlService {
       operation: 'recover', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {},
     });
     let run = await this.runs.loadRun(input.runKey);
-    if (run.state.live) {
-      this.assertExecutorNetwork(run);
-      throw new SimulationControlError(
-        'EXECUTOR_NOT_AVAILABLE',
-        'live recovery proof is unavailable until the day-8 executor exists'
-      );
-    }
+    // Guard the network before touching a live run, but do not stop here: the
+    // executor proves recovery below, once the run has reached `recovery`.
+    if (run.state.live) this.assertExecutorNetwork(run);
     if (run.state.status !== 'recovery') {
       ensureStatus(run, ['armed', 'fault_active', 'observing', 'aborting', 'failed']);
 
@@ -480,6 +526,19 @@ export class SimulationControlService {
         event: eventFor(request, 'begin', 'begin_recovery'),
         actor: request.actor,
       });
+    }
+    if (run.state.live) {
+      // The executor clears the fault and reports whether the lab came back clean;
+      // the outcome and its findings are recorded atomically. A live run stops at
+      // cooldown (or failed) -- its cooldown is a real budget, not auto-completed.
+      const recovery = await this.executor.proveRecovery({ run });
+      run = await this.runs.recordRecoveryResult({
+        runKey: run.runKey,
+        event: recoveryOutcomeEventFor(request, recovery.allClear),
+        recovery,
+        actor: request.actor,
+      });
+      return { run };
     }
     run = await this.runs.transitionRun({
       runKey: run.runKey,
