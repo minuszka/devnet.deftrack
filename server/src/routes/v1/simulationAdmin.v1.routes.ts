@@ -20,7 +20,11 @@ import {
 } from '../../services/simulationPersistence.service.js';
 import { sendData, sendError } from '../../utils/http.js';
 import { logger } from '../../utils/logger.js';
-import { DockerLiveExecutor, dockerLabProbes } from '../../simulator/dockerLiveExecutor.js';
+import {
+  ContainerNotInLabProjectError,
+  DockerLiveExecutor,
+  dockerLabProbes,
+} from '../../simulator/dockerLiveExecutor.js';
 import {
   InvalidNetemTargetError,
   UnscheduledLiveFaultError,
@@ -63,7 +67,8 @@ function statusFor(error: unknown): number {
   if (
     error instanceof UnsupportedLiveFaultError ||
     error instanceof UnscheduledLiveFaultError ||
-    error instanceof InvalidNetemTargetError
+    error instanceof InvalidNetemTargetError ||
+    error instanceof ContainerNotInLabProjectError
   ) {
     return 422;
   }
@@ -90,7 +95,8 @@ function publicControlMessage(error: unknown): string {
     // or the target and carry no host identity.
     error instanceof UnsupportedLiveFaultError ||
     error instanceof UnscheduledLiveFaultError ||
-    error instanceof InvalidNetemTargetError
+    error instanceof InvalidNetemTargetError ||
+    error instanceof ContainerNotInLabProjectError
   ) {
     return error.message;
   }
@@ -178,6 +184,32 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
     sendData(res, { target: saved });
   }));
 
+  // Enabling is a second, deliberate act, and a privileged one: a declaration
+  // says a target EXISTS, this says it may be faulted. Disabling needs no
+  // privilege -- taking a target out of reach is always safe.
+  for (const [path, enabled, requiresSafetyAdmin] of [
+    ['enable', true, true],
+    ['disable', false, false],
+  ] as const) {
+    router.post(`/targets/:targetId/${path}`, controlRoute(async (req, res) => {
+      emptySchema.parse(req.body ?? {});
+      if (requiresSafetyAdmin && config.simulator.adminRole !== 'safety-admin') {
+        throw new SimulationControlError(
+          'APPROVAL_DENIED',
+          `${config.simulator.adminRole} may not enable a simulation target`
+        );
+      }
+      const targetId = String(req.params.targetId ?? '');
+      const saved = await SimulationTarget.findOneAndUpdate(
+        { targetId },
+        { $set: { enabled } },
+        { new: true }
+      ).lean();
+      if (saved === null) throw new SimulationControlError('RUN_NOT_FOUND', `unknown target ${targetId}`);
+      sendData(res, { target: saved });
+    }));
+  }
+
   router.get('/targets', controlRoute(async (req, res) => {
     const network = req.query.network === undefined ? undefined : String(req.query.network);
     if (network !== undefined && network !== 'regtest' && network !== 'devnet') {
@@ -254,7 +286,9 @@ function buildLabExecutor(): DockerLiveExecutor | undefined {
   }
   return new DockerLiveExecutor(
     fileCommandQueue(config.simulator.labWrapperCommandDir),
-    dockerLabProbes(config.simulator.labDockerBin)
+    dockerLabProbes(config.simulator.labDockerBin),
+    undefined,
+    { allowedContainerProject: config.simulator.labContainerProject }
   );
 }
 

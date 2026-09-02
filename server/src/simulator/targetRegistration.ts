@@ -15,9 +15,11 @@ import { z } from 'zod';
  * faulted. A lab seeder is welcome to call this endpoint -- it is then declaring,
  * not inferring.
  *
- * Registration is not permission. `enabled` defaults to false, so a freshly
- * declared target takes part in nothing until somebody says so in a second,
- * deliberate act.
+ * Registration is not permission, and that is enforced rather than merely
+ * intended: `enabled` is not a field of a declaration at all. The first version
+ * of this schema defaulted it to false and then accepted `enabled: true` in the
+ * very same request, so the two-step model existed only in the comment. Enabling
+ * is a separate operation, reserved to safety-admin.
  */
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -39,8 +41,6 @@ export const simulationTargetRegistrationSchema = z
       .max(4),
     expectedBuild: z.string().regex(HEX64, 'expectedBuild must be 64 lowercase hex').nullable().default(null),
     labels: z.array(z.string().min(1).max(60)).max(16).default([]),
-    // Deliberately opt-in: declaring a target must not enlist it.
-    enabled: z.boolean().default(false),
     maintenance: z.boolean().default(false),
   })
   .strict()

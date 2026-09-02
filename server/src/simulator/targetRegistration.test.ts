@@ -11,11 +11,13 @@ const parse = (over: Record<string, unknown> = {}) =>
   simulationTargetRegistrationSchema.parse({ targetId: 'mn-1', ...base, ...over });
 
 describe('simulationTargetRegistrationSchema', () => {
-  it('declares a target disabled until somebody says otherwise', () => {
-    // Registration is not permission: a freshly declared target takes part in
-    // nothing until a second, deliberate act enables it.
+  it('cannot enable a target at all -- that is a separate, privileged act', () => {
+    // The two-step model is enforced, not merely intended: the first version
+    // defaulted enabled to false and then accepted enabled:true in the very same
+    // request, so the model existed only in the comment.
     const t = parse();
-    expect(t.enabled).toBe(false);
+    expect('enabled' in t).toBe(false);
+    expect(() => parse({ enabled: true })).toThrow();
     expect(t.maintenance).toBe(false);
     expect(t.operatorId).toBeNull();
     expect(t.proTxHash).toBeNull();

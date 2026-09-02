@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DockerLiveExecutor, type LabExecutorClock, type LabProbes } from './dockerLiveExecutor.js';
+import {
+  ContainerNotInLabProjectError,
+  DockerLiveExecutor,
+  type LabExecutorClock,
+  type LabProbes,
+} from './dockerLiveExecutor.js';
 import { UnsupportedLiveFaultError } from './liveExecutorPlan.js';
 import { serviceJobId } from './netemLease.js';
 import type { CommandQueue } from './netemWrapperHost.js';
@@ -34,6 +39,16 @@ class FakeProbes implements LabProbes {
   }
   async serviceRunning(container: string): Promise<boolean> { return this.serviceUp.has(container); }
   async observerFresh(input: { container: string }): Promise<boolean> { return this.observerUp.has(input.container); }
+  projectOf = new Map<string, string | null>();
+  async containerProject(container: string): Promise<string | null> {
+    return this.projectOf.has(container) ? this.projectOf.get(container)! : LAB_PROJECT;
+  }
+}
+
+const LAB_PROJECT = 'defcon-finality-lab';
+/** Every executor in these tests is scoped to the lab project, as a real one must be. */
+function mkExecutor(queue: CommandQueue, probes: LabProbes, clock: LabExecutorClock, opts: Record<string, unknown> = {}) {
+  return new DockerLiveExecutor(queue, probes, clock, { allowedContainerProject: LAB_PROJECT, ...opts });
 }
 
 function target(overrides: Partial<SimulationTargetSnapshot> = {}): SimulationTargetSnapshot {
@@ -67,7 +82,7 @@ const planWith = (actions: PlannedSimulationAction[]): DryRunPlan => ({ actions 
 describe('DockerLiveExecutor.activateFault', () => {
   it('enqueues a composed apply with the lease as its TTL', async () => {
     const queue = new FakeQueue();
-    const executor = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock());
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000 });
     expect(queue.enqueued).toEqual([
       { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', ttlMs: 30_000 },
@@ -76,21 +91,21 @@ describe('DockerLiveExecutor.activateFault', () => {
 
   it('enqueues a service outage as one stop under the same lease', async () => {
     const queue = new FakeQueue();
-    const executor = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock());
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]), faultLeaseExpiresAtMs: 31_000 });
     expect(queue.enqueued).toEqual([{ op: 'service-stop', container: 'mn01', runTag: 'run-1', ttlMs: 30_000 }]);
   });
 
   it('floors the TTL so an already-past lease still applies briefly', async () => {
     const queue = new FakeQueue();
-    const executor = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock(), { minLeaseMs: 1_000 });
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock(), { minLeaseMs: 1_000 });
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 500 });
     expect((queue.enqueued[0] as { ttlMs: number }).ttlMs).toBe(1_000);
   });
 
   it('fails closed on a fault it cannot apply, enqueuing nothing', async () => {
     const queue = new FakeQueue();
-    const executor = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock());
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await expect(executor.activateFault({
       run: run([target()]), plan: planWith([action('mn-1', partitionPayload)]), faultLeaseExpiresAtMs: 31_000,
     })).rejects.toBeInstanceOf(UnsupportedLiveFaultError);
@@ -99,7 +114,7 @@ describe('DockerLiveExecutor.activateFault', () => {
 
   it('refuses a plan mixing both classes before enqueuing anything', async () => {
     const queue = new FakeQueue();
-    const executor = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock());
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await expect(executor.activateFault({
       run: run([target()]),
       plan: planWith([action('mn-1', netemPayload), action('mn-1', stopPayload)]),
@@ -117,7 +132,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     probes.serviceUp.add('mn01'); probes.observerUp.add('mn01');
     // The link is still dirty on the first poll and goes clean after one wait.
     clock.onDelay = () => probes.clean.add('mn01');
-    const executor = new DockerLiveExecutor(queue, probes, clock, { recoveryPollIntervalMs: 500 });
+    const executor = mkExecutor(queue, probes, clock, { recoveryPollIntervalMs: 500 });
 
     const result = await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]) });
 
@@ -135,7 +150,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     const probes = new FakeProbes();
     // The container comes back only after one wait, and its daemon with it.
     clock.onDelay = () => { probes.serviceUp.add('mn01'); probes.observerUp.add('mn01'); };
-    const executor = new DockerLiveExecutor(queue, probes, clock, { recoveryPollIntervalMs: 500 });
+    const executor = mkExecutor(queue, probes, clock, { recoveryPollIntervalMs: 500 });
 
     const result = await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]) });
 
@@ -151,7 +166,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     const probes = new FakeProbes();
     probes.serviceUp.add('mn01'); // container up from the start, daemon not yet
     clock.onDelay = () => probes.observerUp.add('mn01');
-    const executor = new DockerLiveExecutor(queue, probes, clock, { recoveryPollIntervalMs: 250 });
+    const executor = mkExecutor(queue, probes, clock, { recoveryPollIntervalMs: 250 });
 
     await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]) });
     expect(clock.delays).toEqual([250]); // it did not accept the bare container
@@ -160,7 +175,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
   it('never asks a stopped container a question only a running one can answer', async () => {
     const queue = new FakeQueue();
     const probes = new FakeProbes(); // nothing running
-    const executor = new DockerLiveExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 1 });
+    const executor = mkExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 1 });
     const result = await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]) });
     expect(probes.qdiscCalls).toEqual([]); // no docker exec into a down container
     expect(result.allClear).toBe(false);
@@ -172,7 +187,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     const probes = new FakeProbes();
     probes.serviceUp.add('mn01'); probes.observerUp.add('mn01');
     probes.throwOn.add('mn01'); // the qdisc read rejects, as a docker exec can
-    const executor = new DockerLiveExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 1, recoveryPollIntervalMs: 1 });
+    const executor = mkExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 1, recoveryPollIntervalMs: 1 });
     const result = await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]) });
     expect(result.allClear).toBe(false);
     expect(result.targets[0]!.faultStateClear).toBe(false);
@@ -184,7 +199,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     // mn01 recovers cleanly; mn02's link never goes clean.
     probes.clean.add('mn01');
     probes.serviceUp.add('mn01').add('mn02'); probes.observerUp.add('mn01').add('mn02');
-    const executor = new DockerLiveExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 2, recoveryPollIntervalMs: 1 });
+    const executor = mkExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 2, recoveryPollIntervalMs: 1 });
     const targets = [target({ targetId: 'mn-1', hostRef: 'mn01' }), target({ targetId: 'mn-2', hostRef: 'mn02' })];
     const plan = planWith([action('mn-1', netemPayload), action('mn-2', netemPayload)]);
 
@@ -196,7 +211,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
 
   it('does not call an empty recovery all-clear -- leniency must not become a claim', async () => {
     const queue = new FakeQueue();
-    const executor = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock());
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     const result = await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', { kind: 'fault-clear', scope: 'run' })]) });
     expect(queue.enqueued).toEqual([]);
     expect(result.targets).toEqual([]);
@@ -208,7 +223,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     const queue = new FakeQueue();
     const probes = new FakeProbes();
     probes.clean.add('mn01'); probes.serviceUp.add('mn01'); probes.observerUp.add('mn01');
-    const executor = new DockerLiveExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 1 });
+    const executor = mkExecutor(queue, probes, new FakeClock(), { recoveryPollAttempts: 1 });
     const targets = [target({ targetId: 'mn-1', hostRef: 'mn01' }), target({ targetId: 'mn-2', hostRef: 'mn02' })];
     // mn-1 recovers; mn-2's partition is a class recovery cannot undo or verify.
     const plan = planWith([action('mn-1', netemPayload), action('mn-2', partitionPayload)]);
@@ -216,5 +231,39 @@ describe('DockerLiveExecutor.proveRecovery', () => {
     expect(result.targets).toHaveLength(1);
     expect(result.targets[0]!.faultStateClear).toBe(true);
     expect(result.allClear).toBe(false); // one skipped fault denies the whole run its all-clear
+  });
+});
+
+describe('the executor may only touch the lab project', () => {
+  it('refuses a container that belongs to another project, before enqueuing anything', async () => {
+    // A declared hostRef becomes a container name verbatim, so without this any
+    // container sharing the lab host could be declared as a target and stopped.
+    const queue = new FakeQueue();
+    const probes = new FakeProbes();
+    probes.projectOf.set('mn01', 'somebody-elses-stack');
+    const ex = mkExecutor(queue, probes, new FakeClock());
+    await expect(ex.activateFault({
+      run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000,
+    })).rejects.toBeInstanceOf(ContainerNotInLabProjectError);
+    expect(queue.enqueued).toEqual([]);
+  });
+
+  it('refuses a container that belongs to no project at all', async () => {
+    const queue = new FakeQueue();
+    const probes = new FakeProbes();
+    probes.projectOf.set('mn01', null);
+    await expect(mkExecutor(queue, probes, new FakeClock()).activateFault({
+      run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000,
+    })).rejects.toThrow(/not the lab project/);
+  });
+
+  it('refuses everything when no lab project is configured', async () => {
+    // A lab that has not said which containers are its own must not guess.
+    const queue = new FakeQueue();
+    const ex = new DockerLiveExecutor(queue, new FakeProbes(), new FakeClock(), { allowedContainerProject: '' });
+    await expect(ex.activateFault({
+      run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000,
+    })).rejects.toBeInstanceOf(ContainerNotInLabProjectError);
+    expect(queue.enqueued).toEqual([]);
   });
 });

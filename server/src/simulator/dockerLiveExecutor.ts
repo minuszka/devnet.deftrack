@@ -5,7 +5,7 @@ import type { SimulationLiveExecutor } from '../services/simulationControl.servi
 import type { SimulationRunProjection } from '../services/simulationPersistence.service.js';
 import {
   assertSingleFaultClass,
-  faultApplyCommandsForPlan,
+  labFaultsForPlan,
   faultRecoveryTargetsForPlan,
   indexTargetsById,
   type LabRecoveryTarget,
@@ -35,11 +35,27 @@ export interface LabProbes {
   serviceRunning(container: string): Promise<boolean>;
   /** True when the node is being observed -- for the lab, its daemon process is alive. */
   observerFresh(input: { targetId: string; container: string }): Promise<boolean>;
+  /**
+   * The Compose project a container belongs to, or null when it belongs to none.
+   * A target's hostRef becomes a container name verbatim, so without this any
+   * container on the lab host could be named in a declaration and then faulted.
+   */
+  containerProject(container: string): Promise<string | null>;
 }
 
 export interface LabExecutorClock {
   now(): number;
   delay(ms: number): Promise<void>;
+}
+
+/** A container that is not part of the lab's own Compose project. Fail closed. */
+export class ContainerNotInLabProjectError extends Error {
+  constructor(container: string, project: string | null, expected: string) {
+    super(
+      `container "${container}" belongs to project "${project ?? 'none'}", not the lab project "${expected}"`
+    );
+    this.name = 'ContainerNotInLabProjectError';
+  }
 }
 
 export interface LabExecutorOptions {
@@ -49,6 +65,12 @@ export interface LabExecutorOptions {
   recoveryPollIntervalMs: number;
   /** Lease floor, so a lease that is already near-past still applies briefly. */
   minLeaseMs: number;
+  /**
+   * The only Compose project whose containers may be faulted. Empty refuses
+   * everything: a lab that has not said which containers are its own must not be
+   * allowed to guess, and the executor is opt-in already.
+   */
+  allowedContainerProject: string;
 }
 
 const DEFAULT_OPTIONS: LabExecutorOptions = {
@@ -57,6 +79,7 @@ const DEFAULT_OPTIONS: LabExecutorOptions = {
   recoveryPollAttempts: 30,
   recoveryPollIntervalMs: 1_000,
   minLeaseMs: 1_000,
+  allowedContainerProject: '',
 };
 
 export const systemLabClock: LabExecutorClock = {
@@ -86,13 +109,35 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     const targetsById = indexTargetsById(input.run.metadata.targetSnapshot);
     // Translates the WHOLE plan first: it throws for any fault this executor
     // cannot apply, so the run never reaches fault_active on a partial fault.
-    const commands = faultApplyCommandsForPlan({
+    const faults = labFaultsForPlan({
       plan: input.plan,
       targetsById,
       runTag: input.run.runKey,
       ttlMs,
-    });
+      strict: true,
+    }).faults;
+    const commands = faults.map((fault) => fault.apply);
+    // Every container is checked BEFORE the first enqueue: a refusal must leave
+    // no half-applied fault behind.
+    for (const fault of faults) await this.assertContainerIsOurs(fault.container);
     for (const command of commands) await this.queue.enqueue(command);
+  }
+
+  /**
+   * A declared hostRef becomes a container name verbatim, so without this any
+   * container sharing the lab host -- another project's database, the developer's
+   * own service -- could be declared as a target and then stopped.
+   */
+  private async assertContainerIsOurs(container: string): Promise<void> {
+    const expected = this.options.allowedContainerProject;
+    if (expected === '') throw new ContainerNotInLabProjectError(container, null, '(unset)');
+    let project: string | null = null;
+    try {
+      project = await this.probes.containerProject(container);
+    } catch {
+      project = null;
+    }
+    if (project !== expected) throw new ContainerNotInLabProjectError(container, project, expected);
   }
 
   async proveRecovery(input: {
@@ -219,6 +264,13 @@ export function dockerLabProbes(dockerBin = 'docker'): LabProbes {
     async serviceRunning(container: string): Promise<boolean> {
       const out = await dockerStdout(dockerBin, ['inspect', '-f', '{{.State.Running}}', container]);
       return out.trim() === 'true';
+    },
+    async containerProject(container: string): Promise<string | null> {
+      const out = await dockerStdout(dockerBin, [
+        'inspect', '-f', '{{index .Config.Labels "com.docker.compose.project"}}', container,
+      ]);
+      const value = out.trim();
+      return value === '' || value === '<no value>' ? null : value;
     },
     async observerFresh(input: { container: string }): Promise<boolean> {
       // `docker top` needs no in-container tooling and lists the container's
