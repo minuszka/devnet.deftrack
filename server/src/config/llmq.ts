@@ -10,10 +10,23 @@
  *
  * Values below are copied from src/llmq/params.h, re-verified against the running
  * tree at v22.1.x @ 7fbb1ec15a. When the node is upgraded, re-check them there --
- * and re-check them, not the comment: this file sat pinned to v22.1.4 while the
- * node had already taken the bad-votes fix (llmq_50_60 3 -> 40, llmq_60_75
- * 3 -> 48) and the height-gated llmq_400_60 V2 threshold, so every round document
- * snapshotted a punishment rule the node was no longer applying.
+ * and re-check them, not the comment: this file sat pinned to v22.1.4 long after
+ * the node had taken the mainnet-proportional bad-votes fix (llmq_50_60 3 -> 40,
+ * llmq_60_75 3 -> 48) and the height-gated llmq_400_60 V2 threshold.
+ *
+ * That drift was INERT, and the distinction matters. A round document snapshots
+ * exactly size, minSize, threshold, dkgInterval and effectiveSize
+ * (`models/QuorumRound.ts`); `dkgBadVotesThreshold` is in none of the schema, the
+ * API view or the client. So no stored round ever carried the stale 3, and there
+ * is no backfill debt -- the wrong number sat here unread. It is corrected because
+ * the next reader would have believed it, not because it corrupted history.
+ *
+ * `dkgBadVotesThreshold` is therefore deliberately REGISTRY DATA, not round data.
+ * Adding it to the snapshot now would split the collection into two eras with no
+ * backfill possible, to record a number nothing reads. If a report ever does need
+ * it, take it from `dkgBadVotesThresholdAtHeight()` below and never from the flat
+ * field: above the devnet gate 7416 llmq_400_60's effective threshold is 300, not
+ * the 30 the field carries.
  */
 export interface LlmqProfile {
   /** Consensus::LLMQType numeric value. */

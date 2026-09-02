@@ -110,7 +110,7 @@ At 152 registered the threshold is 152 and one exclusion is exactly 100 (151
 gives 99, 154 gives 101 -- the round number is a coincidence of this network
 size, not a property of the code). One exclusion alone never bans at any size.
 Decay is 1/block and `DecreaseScores` runs *before* the block's transaction
-loop (`:810` vs `:813`), so two exclusions `g` blocks apart score `200 - g`:
+loop (`:810` vs `:815`), so two exclusions `g` blocks apart score `200 - g`:
 banned iff `200 - g >= 152`, i.e. **g <= 48 blocks**, and g = 48 exactly bans
 (the test is `>=`). Four profiles punish on interleaved schedules, two of them
 every 24 blocks (`llmq_50_60` and, above 3120, `llmq_defcon` -- which also share
@@ -128,13 +128,19 @@ Two corrections to what this entry said before, both verified at
   survives anyway, for a simpler reason: **the second penalty alone already
   bans.** A preset that wants a genuine coincidence must be built on mining-window
   intersection in absolute height, not on shared cycle starts.
-- **"at 110 or fewer the penalty is 66" was wrong.** 66 holds only at N <= 100.
-  At N = 110 the max is 110 and the penalty is 72; at 151 it is 99. The
-  two-exclusion window at N <= 100 is **g <= 32** (132 - g >= 100), not 48. Every
-  ban estimate made with "66 at 110" understated the penalty by up to 50%, and
-  the follow-on claim that it decays inside the 72-block `llmq_400_60` cycle
-  holds only at N <= 100 -- at 110 the 72-block decay exactly equals the cycle,
-  i.e. marginal rather than safe.
+- **"at 110 or fewer the penalty is 66" was wrong.** `CalcPenalty(66)` is 66 only
+  up to **N <= 101** (at 102 it becomes 67). At N = 110 the penalty is 72; at 151
+  it is 99. The two-exclusion window at N <= 100 is **g <= 32** (132 - g >= 100),
+  not 48, and it narrows as the ceiling rises. Every ban estimate made with
+  "66 at 110" understated the penalty by up to 50%.
+
+  The right way to ask whether a profile can ban **on its own** is whether two of
+  its consecutive rounds fit inside the decay: with penalty `P`, ceiling
+  `M = max(100, N)` and interval `I`, that is `2P - M >= I`. For `llmq_400_60`
+  (I = 72) it first holds at **N = 226** (at 225 the score is 71). So at 110 that
+  profile is not "marginal" -- it has **38 blocks of headroom**, and the earlier
+  note claiming otherwise was wrong in the opposite direction. What bans at 152 is
+  two exclusions from the 24-block profiles, not one profile alone.
 
 ## Operational notes earned the hard way
 
@@ -432,10 +438,17 @@ Two corrections to what this entry said before, both verified at
   prediction -- local badness only clears that node's bit in its own premature
   commitment (:960-964), the commitment is abandoned below `minSize` (:966-969),
   and punishment follows the mined *final* commitment. And an absent node's bad
-  bit also reaches peers through `badConnection` (`:499-509`, OR-ed in at :527),
-  a second channel that is spork-gated (`IsQuorumPoseEnabled` /
-  `IsAllMembersConnectedEnabled`) where :458 is not -- so assuming both sporks are
-  on over-counts votes against absent nodes.
+  bit also reaches peers through `badConnection` (assigned at `:496`, `:501` and
+  `:506`), OR-ed into the outbound complaint bit at :527.
+
+  Keep the two apart, because they are opposite kinds of source. `bad` does
+  **two** things: it clears the member from *our own* `validMembers` (:961-963),
+  which is what feeds the punishment, and it sets the complaint bit.
+  `badConnection` does **only the second** -- so it is purely an input to *other*
+  members' threshold branch, and never to the bitset that punishes. It is also
+  spork-gated (`SPORK_23_QUORUM_POSE` for the whole path, and
+  `SPORK_21_QUORUM_ALL_CONNECTED` for the not-connected case at :496) where :458
+  is not, so assuming both sporks are on over-counts votes against absent nodes.
 
 - **The bad-votes threshold is height-gated, and reading the flat field is wrong
   above the gate.** `GetDkgBadVotesThreshold` (`llmq/options.cpp:132-139`)
