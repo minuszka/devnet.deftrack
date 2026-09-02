@@ -11,9 +11,14 @@ import type { FaultExecutor, WrapperStore } from './netemRunner.js';
  * exercised against a live lab, not in unit tests.
  */
 
-/** The docker argv that applies or clears a fault: `docker exec <c> tc <args>`. Pure. */
+/**
+ * The docker argv that applies or clears a fault: `docker exec -u root <c> tc <args>`.
+ * The node runs as a non-root user, but tc needs the container's NET_ADMIN
+ * capability effective -- which only root has -- so the exec is explicitly root.
+ * Pure.
+ */
 export function dockerExecArgv(action: FaultAction): string[] {
-  return ['exec', action.container, 'tc', ...action.tcArgs];
+  return ['exec', '-u', 'root', action.container, 'tc', ...action.tcArgs];
 }
 
 /** A missing qdisc is the normal case for a clear -- there is simply nothing to delete. */
