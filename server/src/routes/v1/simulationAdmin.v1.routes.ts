@@ -13,7 +13,11 @@ import {
 import { SimulationControlPersistenceError } from '../../services/simulationControlPersistence.service.js';
 import { SimulationStateError } from '../../domain/simulationRunState.js';
 import { MongoRpcSimulationEvidenceService } from '../../services/simulationEvidence.service.js';
-import { MongoSimulationPersistenceRepository } from '../../services/simulationMongo.repository.js';
+import {
+  MongoSimulationLiveRunLockRepository,
+  MongoSimulationPersistenceRepository,
+} from '../../services/simulationMongo.repository.js';
+import { SimulationLiveRunLockService } from '../../services/simulationLiveRunLock.service.js';
 import {
   SimulationPersistenceError,
   SimulationPersistenceService,
@@ -58,6 +62,7 @@ function statusFor(error: unknown): number {
       case 'PREFLIGHT_FAILED': return 409;
       case 'EXECUTOR_NOT_AVAILABLE': return 503;
       case 'EXECUTOR_NETWORK_FORBIDDEN': return 403;
+      case 'LIVE_RUN_LOCKED': return 409;
       case 'CORRUPT_ARTIFACT': return 500;
     }
   }
@@ -305,7 +310,11 @@ const defaultService = new SimulationControlService(
     role: config.simulator.adminRole,
   },
   Date.now,
-  buildLabExecutor()
+  buildLabExecutor(),
+  // One live run at a time, decided atomically. The preflight's conflict check is
+  // an ordinary query, so two validations could both pass before either
+  // transitioned, and an abandoned draft had no expiry to stop blocking on.
+  new SimulationLiveRunLockService(new MongoSimulationLiveRunLockRepository())
 );
 
 export default createSimulationAdminRouter(defaultService);
