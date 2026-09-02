@@ -239,7 +239,13 @@ export class SimulationControlService {
         idempotencyKey: input.idempotencyKey,
         network: input.network,
         scenario,
-        nowMs: request.acceptedAtMs,
+        // Live telemetry is judged against a live clock. request.acceptedAtMs is
+        // frozen at claim time and returned unchanged on every replay, so using it
+        // here made a retried request read every host as reporting "in the future"
+        // -- and, the other way, let a host that fell silent just after the claim
+        // still look fresh hours later. It remains the audit event's atMs, which is
+        // what it is for.
+        nowMs: this.clock(),
         requestedBy: this.identity.actor,
       });
       await this.control.appendArtifact({
@@ -298,7 +304,13 @@ export class SimulationControlService {
       evaluation = await this.evidence.evaluate({
         run,
         plan,
-        nowMs: request.acceptedAtMs,
+        // Live telemetry is judged against a live clock. request.acceptedAtMs is
+        // frozen at claim time and returned unchanged on every replay, so using it
+        // here made a retried request read every host as reporting "in the future"
+        // -- and, the other way, let a host that fell silent just after the claim
+        // still look fresh hours later. It remains the audit event's atMs, which is
+        // what it is for.
+        nowMs: this.clock(),
         baselineRequired: false,
       });
     }
@@ -364,7 +376,13 @@ export class SimulationControlService {
       ? await this.evidence.evaluate({
           run,
           plan,
-          nowMs: request.acceptedAtMs,
+          // Live telemetry is judged against a live clock. request.acceptedAtMs is
+          // frozen at claim time and returned unchanged on every replay, so using it
+          // here made a retried request read every host as reporting "in the future"
+          // -- and, the other way, let a host that fell silent just after the claim
+          // still look fresh hours later. It remains the audit event's atMs, which is
+          // what it is for.
+          nowMs: this.clock(),
           baselineRequired: true,
         })
       : preflightFromArtifact(existingPreflight);

@@ -264,7 +264,8 @@ export function evaluateSimulationPreflight(
     observerDetail === null &&
     input.observer.coveragePercent >= input.policy.minObserverCoveragePercent &&
     input.observer.staleTargetCount <= input.policy.maxStaleTargets &&
-    observerAge >= 0 &&
+    // Only "too old" fails. An observation newer than the reference instant is
+    // fresh; see the same rule in targetResolver.
     observerAge <= input.policy.maxObserverAgeMs;
   checks.push(check(
     'observer-fresh', 'required', observerPassed, atMs,

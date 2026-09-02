@@ -281,3 +281,29 @@ describe('recovery evidence comes from the wrapper heartbeat', () => {
     expect(result.checks.find((item) => item.checkId === 'recovery-ready')?.passed).toBe(false);
   });
 });
+
+describe('freshness is judged only on being too old', () => {
+  it('passes observer-fresh for an observation newer than the reference instant', () => {
+    // Same rule as targetResolver: a negative age means the observation is fresher
+    // than the reference, not staler. Requiring age >= 0 made a replayed request
+    // fail a required check for evidence that was strictly better than it needed.
+    const input = healthyInput();
+    input.observer.lastObservationAtMs = NOW + 90_000;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.checks.find((item) => item.checkId === 'observer-fresh')?.passed).toBe(true);
+  });
+
+  it('still fails observer-fresh when the observation is genuinely too old', () => {
+    const input = healthyInput();
+    input.observer.lastObservationAtMs = NOW - 999_999;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.checks.find((item) => item.checkId === 'observer-fresh')?.passed).toBe(false);
+  });
+
+  it('still fails when there is no observation at all', () => {
+    const input = healthyInput();
+    input.observer.lastObservationAtMs = null;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.checks.find((item) => item.checkId === 'observer-fresh')?.passed).toBe(false);
+  });
+});

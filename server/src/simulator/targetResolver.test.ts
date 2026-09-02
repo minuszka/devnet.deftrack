@@ -87,6 +87,32 @@ describe('private simulation target resolution', () => {
     );
   });
 
+  it('does not call a host stale for reporting AFTER the reference instant', () => {
+    // The reference instant is the control request's frozen acceptedAtMs, returned
+    // unchanged on every replay. A retry therefore sees every host reporting "in
+    // the future" -- and reading a negative age as stale is what burned the run
+    // into terminal `rejected`, with a private detail blaming the fleet for a
+    // clock the server had frozen itself.
+    const registry = [registryTarget(0)];
+    const runtime = evidence(registry);
+    runtime.hosts.find((host) => host.hostRef === 'host-0')!.reportedAtMs = NOW + 90_000;
+    const result = resolveSimulationTargetInventory({
+      network: 'devnet', currentHeight: HEIGHT, nowMs: NOW, registry, ...runtime,
+    });
+    expect(result.issues.map((item) => item.code)).not.toContain('STALE_HOST_OBSERVATION');
+    expect(result.complete).toBe(true);
+  });
+
+  it('still calls a host stale when its telemetry is genuinely too old', () => {
+    const registry = [registryTarget(0)];
+    const runtime = evidence(registry);
+    runtime.hosts.find((host) => host.hostRef === 'host-0')!.reportedAtMs = NOW - 999_999;
+    const result = resolveSimulationTargetInventory({
+      network: 'devnet', currentHeight: HEIGHT, nowMs: NOW, registry, ...runtime,
+    });
+    expect(result.issues.map((item) => item.code)).toContain('STALE_HOST_OBSERVATION');
+  });
+
   it('rejects missing/inactive masternodes, stale host telemetry and build drift', () => {
     const registry = [registryTarget(0), registryTarget(1), registryTarget(2)];
     const runtime = evidence(registry);
