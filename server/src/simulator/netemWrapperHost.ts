@@ -84,6 +84,27 @@ export function dockerFaultExecutor(dockerBin = 'docker'): FaultExecutor {
 export { dockerFaultExecutor as dockerNetemExecutor };
 
 /**
+ * The container names Docker currently reports as running. One cheap call per
+ * heartbeat; a failure answers "none", which reads downstream as "not available"
+ * rather than as a false all-clear.
+ */
+export function dockerRunningContainers(dockerBin = 'docker'): () => Promise<string[]> {
+  return () =>
+    new Promise<string[]>((resolve) => {
+      const child = spawn(dockerBin, ['ps', '--format', '{{.Names}}'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let stdout = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += String(chunk);
+      });
+      child.on('error', () => resolve([]));
+      child.on('close', (code) => {
+        if (code !== 0) return resolve([]);
+        resolve(stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0));
+      });
+    });
+}
+
+/**
  * A JSON-file wrapper store. Writes to a temp file and renames, so a crash mid-write
  * never leaves the state file half-written -- the recovery record must survive
  * exactly the kind of abrupt death the wrapper exists to recover from. A missing
@@ -103,7 +124,10 @@ export function fileWrapperStore(path: string): WrapperStore {
     },
     async save(state: WrapperState): Promise<void> {
       await mkdir(dirname(path), { recursive: true });
-      const tmp = `${path}.tmp`;
+      // Unique per write, as the command queue below already does. A shared
+      // `.tmp` lets two concurrent writers truncate over each other and lets one
+      // rename publish the other's bytes while its own save resolves successfully.
+      const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
       await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
       await rename(tmp, path);
     },

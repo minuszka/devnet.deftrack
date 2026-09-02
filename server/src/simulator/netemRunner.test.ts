@@ -199,3 +199,88 @@ describe('LabFaultRunner: one failing undo cannot strand another', () => {
     }
   });
 });
+
+function deferred(): { promise: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => { release = resolve; });
+  return { promise, release };
+}
+
+const serviceJob = (container: string, jobId: string, expiresAtMs: number) => ({
+  jobId, runTag: RUN, container, faultClass: 'service' as const, kind: 'service-stop' as const,
+  args: [], appliedAtMs: 1_000, expiresAtMs,
+});
+
+describe('LabFaultRunner: concurrent operations cannot erase a live lease', () => {
+  it('a slow undo does not drop a fault recorded while it was in flight', async () => {
+    // The exact shape of the race: clear() loads the state, spends the SIGTERM
+    // grace inside docker, and used to save its pre-computed snapshot -- dropping
+    // any job recorded meanwhile. A stopped container no record covers is one
+    // neither the watchdog nor boot recovery can ever bring back.
+    const store = new MemoryStore();
+    const gate = deferred();
+    const runner = new NetemFaultRunner(async (action) => {
+      if (action.op === 'start') await gate.promise; // docker start, seconds long
+    }, store, { clock: () => 1_000 });
+
+    const { jobId } = await runner.stopService('mn01', RUN, 30_000);
+    const clearing = runner.clear(jobId);          // blocks inside docker
+    const stopping = runner.stopService('mn02', RUN, 30_000); // lands meanwhile
+    gate.release();
+    await Promise.all([clearing, stopping]);
+
+    expect(store.state.jobs.map((j) => j.container)).toEqual(['mn02']);
+  });
+
+  it('a slow watchdog sweep does not drop a fault recorded while it was in flight', async () => {
+    const store = new MemoryStore();
+    const gate = deferred();
+    let now = 1_000;
+    const runner = new NetemFaultRunner(async (action) => {
+      if (action.op === 'start') await gate.promise;
+    }, store, { clock: () => now });
+
+    await runner.stopService('mn01', RUN, 30_000);
+    now = 40_000; // mn01's lease has expired
+    const sweeping = runner.tick();
+    const stopping = runner.stopService('mn02', RUN, 30_000);
+    gate.release();
+    const [swept] = await Promise.all([sweeping, stopping]);
+
+    expect(swept).toEqual({ cleared: 1, failed: 0 });
+    expect(store.state.jobs.map((j) => j.container)).toEqual(['mn02']);
+  });
+
+  it('re-reads the record after the docker call, so an out-of-band write survives', async () => {
+    // Belt and braces behind the serialisation: even a writer this runner does not
+    // know about must not be erased by a stale snapshot.
+    const store = new MemoryStore();
+    const runner = new NetemFaultRunner(async (action) => {
+      if (action.op === 'start') {
+        const outOfBand = await store.load();
+        outOfBand.jobs.push(serviceJob('mn09', 'service-elsewhere', 31_000));
+        await store.save(outOfBand);
+      }
+    }, store, { clock: () => 1_000 });
+
+    const { jobId } = await runner.stopService('mn01', RUN, 30_000);
+    await runner.clear(jobId);
+
+    expect(store.state.jobs.map((j) => j.container)).toEqual(['mn09']);
+  });
+
+  it('serialises apply against a slow stop, so neither loses its record', async () => {
+    const store = new MemoryStore();
+    const gate = deferred();
+    const runner = new NetemFaultRunner(async (action) => {
+      if (action.op === 'stop') await gate.promise;
+    }, store, { clock: () => 1_000 });
+
+    const stopping = runner.stopService('mn01', RUN, 30_000);
+    const applying = runner.apply({ container: 'mn02', kind: 'latency', args: ['100ms'] }, RUN, 30_000);
+    gate.release();
+    await Promise.all([stopping, applying]);
+
+    expect(store.state.jobs.map((j) => j.container).sort()).toEqual(['mn01', 'mn02']);
+  });
+});

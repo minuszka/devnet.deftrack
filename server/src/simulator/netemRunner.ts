@@ -85,6 +85,21 @@ function describe(error: unknown): string {
 export class LabFaultRunner {
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
+  /**
+   * Every state-mutating operation runs in this chain, one at a time.
+   *
+   * Without it the class loses faults silently. apply/stopService save BEFORE
+   * acting and clear/tick save AFTER, so a clear that loaded the state before a
+   * concurrent stopService saved, and saves after it, drops the new job while its
+   * `docker stop` has already landed -- a stopped container no record covers, which
+   * neither the TTL watchdog nor boot recovery can ever bring back, because both
+   * read that same record. `ticking` guarded tick-vs-tick only; the dangerous
+   * pairs are tick-vs-stopService and clear-vs-stopService.
+   *
+   * A `docker stop -t 30` can hold the lock for the full SIGTERM grace, which is
+   * exactly the window that made the race reachable at a 5-second cycle.
+   */
+  private chain: Promise<unknown> = Promise.resolve();
   private readonly clock: () => number;
   private readonly logger: RunnerLogger;
   private readonly intervalMs: number;
@@ -99,8 +114,24 @@ export class LabFaultRunner {
     this.intervalMs = options.intervalMs ?? WATCHDOG_INTERVAL_MS;
   }
 
+  /** Run `operation` after every operation already queued on this runner. */
+  private serialise<T>(operation: () => Promise<T>): Promise<T> {
+    // Chain off the previous outcome whatever it was: one failed operation must
+    // not wedge the queue, and the watchdog above all must keep running.
+    const result = this.chain.then(operation, operation);
+    this.chain = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
   /** Apply a netem fault under a lease. Records intent, then runs tc. Idempotent. */
   async apply(spec: NetemSpec, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
+    return this.serialise(() => this.applyLocked(spec, runTag, ttlMs));
+  }
+
+  private async applyLocked(spec: NetemSpec, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
     const jobId = netemJobId(runTag, spec);
     const plan = planApply(await this.store.load(), spec, runTag, this.clock(), ttlMs);
     if (plan.actions.length === 0) return { jobId };
@@ -116,6 +147,10 @@ export class LabFaultRunner {
    * a stop that lands without a record is a node nothing will ever start again.
    */
   async stopService(container: string, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
+    return this.serialise(() => this.stopServiceLocked(container, runTag, ttlMs));
+  }
+
+  private async stopServiceLocked(container: string, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
     const jobId = serviceJobId(runTag, container);
     const plan = planServiceStop(await this.store.load(), container, runTag, this.clock(), ttlMs);
     if (plan.actions.length === 0) return { jobId };
@@ -126,11 +161,17 @@ export class LabFaultRunner {
 
   /** Undo one fault. Acts, then drops the job. Idempotent. */
   async clear(jobId: string): Promise<void> {
-    const current = await this.store.load();
-    const plan = planClear(current, jobId);
+    return this.serialise(() => this.clearLocked(jobId));
+  }
+
+  private async clearLocked(jobId: string): Promise<void> {
+    const plan = planClear(await this.store.load(), jobId);
     if (plan.actions.length === 0) return;
     await this.runActions(plan.actions);
-    await this.store.save(plan.state);
+    // Re-read rather than saving the pre-undo snapshot: drop only our own job from
+    // whatever the record says now, so nothing recorded meanwhile is erased.
+    const fresh = await this.store.load();
+    await this.store.save({ jobs: fresh.jobs.filter((job) => job.jobId !== jobId) });
   }
 
   /**
@@ -146,18 +187,25 @@ export class LabFaultRunner {
     if (this.ticking) return { cleared: 0, failed: 0 };
     this.ticking = true;
     try {
-      const state = await this.store.load();
-      const undos = planSweep(state, this.clock());
-      if (undos.length === 0) return { cleared: 0, failed: 0 };
-      const { succeeded, failed } = await this.runUndos(undos);
-      await this.store.save({ jobs: state.jobs.filter((job) => !succeeded.has(job.jobId)) });
-      return { cleared: succeeded.size, failed };
+      return await this.serialise(() => this.tickLocked());
     } catch (error) {
       this.logger.error(`lab fault watchdog tick failed: ${describe(error)}`);
       return { cleared: 0, failed: 0 };
     } finally {
       this.ticking = false;
     }
+  }
+
+  private async tickLocked(): Promise<{ cleared: number; failed: number }> {
+    const state = await this.store.load();
+    const undos = planSweep(state, this.clock());
+    if (undos.length === 0) return { cleared: 0, failed: 0 };
+    const { succeeded, failed } = await this.runUndos(undos);
+    // Re-read for the same reason clear() does: the pre-undo snapshot is stale by
+    // the length of a docker call, and saving it would erase a live lease.
+    const fresh = await this.store.load();
+    await this.store.save({ jobs: fresh.jobs.filter((job) => !succeeded.has(job.jobId)) });
+    return { cleared: succeeded.size, failed };
   }
 
   /**
@@ -172,6 +220,10 @@ export class LabFaultRunner {
    * than the record forgetting a container that is still stopped.
    */
   async bootCleanup(): Promise<{ cleared: number; failed: number }> {
+    return this.serialise(() => this.bootCleanupLocked());
+  }
+
+  private async bootCleanupLocked(): Promise<{ cleared: number; failed: number }> {
     let state: WrapperState = { jobs: [] };
     try {
       state = await this.store.load();
@@ -212,6 +264,15 @@ export class LabFaultRunner {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /**
+   * The record as it stands, read inside the same queue as every write -- so it
+   * never observes a half-applied change, and the heartbeat it feeds cannot claim
+   * a container is clean while a stop is mid-flight.
+   */
+  async snapshot(): Promise<WrapperState> {
+    return this.serialise(() => this.store.load());
   }
 
   /** Whether the TTL sweep is running. The recovery guarantee is exactly this being true. */
