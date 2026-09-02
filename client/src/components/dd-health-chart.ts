@@ -274,7 +274,7 @@ export class DdHealthChart extends LitElement {
           ? svg`
             <line x1=${PAD_L} x2=${W - PAD_R} y1=${y(threshold)} y2=${y(threshold)}
                   stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="6 4" />
-            <text class="axis-label thr" x=${W - PAD_R} y=${y(threshold) - 6} text-anchor="end">minSize floor · ${ratio(threshold)}</text>
+            <text class="axis-label thr" x=${W - PAD_R} y=${y(threshold) + 16} text-anchor="end">minSize floor · ${ratio(threshold)}</text>
           `
           : nothing}
         ${hi !== null
