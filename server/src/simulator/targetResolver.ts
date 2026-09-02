@@ -248,7 +248,11 @@ export function resolveSimulationTargetInventory(input: {
       mark('MISSING_HOST_OBSERVATION', target.targetId, 'Host telemetry is unavailable.', `no HostStatus for ${target.hostRef}`);
     } else {
       const ageMs = input.nowMs - host.reportedAtMs;
-      if (ageMs < 0 || ageMs > policy.maxHostObservationAgeMs) {
+      // Only "too old" is stale. A negative age means the host reported AFTER the
+      // reference instant -- fresher than the reference, not staler -- and reading
+      // it as stale is how a replayed request came to blame the fleet for a clock
+      // it had frozen itself.
+      if (ageMs > policy.maxHostObservationAgeMs) {
         mark('STALE_HOST_OBSERVATION', target.targetId, 'Host telemetry is stale.', `host observation age=${ageMs}ms`);
       }
       if (host.height === null || input.currentHeight - host.height > policy.maxHostHeightLagBlocks || host.height > input.currentHeight) {

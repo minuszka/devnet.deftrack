@@ -141,8 +141,15 @@ class FakeEvidence implements SimulationEvidenceProvider {
       },
     };
   }
+  readonly evaluateClocks: number[] = [];
+  failNextEvaluate = false;
   async evaluate(input: Parameters<SimulationEvidenceProvider['evaluate']>[0]) {
     this.baselineRequirements.push(input.baselineRequired);
+    this.evaluateClocks.push(input.nowMs);
+    if (this.failNextEvaluate) {
+      this.failNextEvaluate = false;
+      throw new Error('transient RPC timeout to defcond');
+    }
     return passedPreflight(input.nowMs);
   }
 }
@@ -161,7 +168,8 @@ class FakeExecutor implements SimulationLiveExecutor {
 function harness(
   scenario: Record<string, unknown>,
   role: 'operator' | 'safety-admin' = 'operator',
-  executor?: SimulationLiveExecutor
+  executor?: SimulationLiveExecutor,
+  clock: () => number = () => 1_000
 ) {
   const runRepository = new MemoryRunRepository();
   const controlRepository = new MemoryControlRepository();
@@ -171,7 +179,7 @@ function harness(
     new SimulationControlPersistenceService(controlRepository),
     evidence,
     { actor, role },
-    () => 1_000,
+    clock,
     executor
   );
   return { service, runRepository, controlRepository, evidence };
@@ -366,5 +374,44 @@ describe('simulation control service', () => {
     // A run that ran to completion is terminal; the abort intent added above
     // must not reach into this path and turn a finished run into an aborted one.
     expect(done.run.state.status).toBe('completed');
+  });
+});
+
+describe('live telemetry is judged against a live clock', () => {
+  it('re-evaluates a retried request against the clock now, not the instant it was claimed', async () => {
+    // The finding's exact trigger. validate() is claimed (acceptedAtMs is written)
+    // and then fails inside evidence.evaluate -- a transient RPC timeout, a Mongo
+    // hiccup, a restart. The operator retries with the same idempotency key, which
+    // is what the CLI does. claim() returns the ORIGINAL record, and no preflight
+    // artifact exists yet, so the evidence runs again.
+    //
+    // Against the frozen instant every host has reported "in the future" since,
+    // which used to fail two required checks and burn the run into terminal
+    // `rejected`, blaming the fleet for a clock the server had frozen itself.
+    let now = 1_000;
+    const { service, evidence } = harness(mnStop, 'operator', undefined, () => now);
+    const runKey = (await service.create({
+      idempotencyKey: 'retry-create', network: 'devnet', live: false, scenario: mnStop,
+    })).run.runKey;
+
+    evidence.failNextEvaluate = true;
+    await expect(service.validate({ runKey, idempotencyKey: 'retry-validate' })).rejects.toThrow(/transient/);
+    expect(evidence.evaluateClocks.at(-1)).toBe(1_000);
+
+    now = 900_000; // the operator retries much later, under the same key
+    await service.validate({ runKey, idempotencyKey: 'retry-validate' });
+    expect(evidence.evaluateClocks.at(-1)).toBe(900_000);
+  });
+
+  it('keeps the audit event stamped with the frozen accept time', async () => {
+    // The freeze is right for the event; it was only ever wrong as a freshness
+    // reference. A replayed request must still write one event at one instant.
+    let now = 1_000;
+    const { service, runRepository } = harness(mnStop, 'operator', undefined, () => now);
+    const created = await service.create({ idempotencyKey: 'audit-create', network: 'devnet', live: false, scenario: mnStop });
+    now = 900_000;
+    const replay = await service.create({ idempotencyKey: 'audit-create', network: 'devnet', live: false, scenario: mnStop });
+    expect(replay.run.state.createdAtMs).toBe(created.run.state.createdAtMs);
+    expect(runRepository.audits.get(created.run.runKey)?.[0]?.atMs).toBe(1_000);
   });
 });
