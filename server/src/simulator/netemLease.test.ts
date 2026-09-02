@@ -29,6 +29,18 @@ describe('tc arguments', () => {
     expect(() => tcApplyArgs({ container: 'mn01', kind: 'loss', args: ['5'] })).toThrow(/loss/);
     expect(() => tcApplyArgs({ container: 'mn01', kind: 'jitter', args: ['100ms'] })).toThrow(/jitter/);
   });
+
+  it('passes a composed netem vector through and validates its structure', () => {
+    expect(tcApplyArgs({ container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'] }))
+      .toEqual(['qdisc', 'replace', 'dev', 'eth0', 'root', 'netem', 'delay', '100ms', '20ms', 'loss', '5%', '25%']);
+    expect(tcApplyArgs({ container: 'mn01', kind: 'netem', args: ['loss', '5%'] }))
+      .toEqual(['qdisc', 'replace', 'dev', 'eth0', 'root', 'netem', 'loss', '5%']);
+    // Nothing but a delay-then-loss clause is accepted, so no arbitrary tc token can ride in.
+    expect(() => tcApplyArgs({ container: 'mn01', kind: 'netem', args: [] })).toThrow(/netem args/);
+    expect(() => tcApplyArgs({ container: 'mn01', kind: 'netem', args: ['loss', '5%', 'delay', '100ms'] })).toThrow(/netem args/);
+    expect(() => tcApplyArgs({ container: 'mn01', kind: 'netem', args: ['rate', '1mbit'] })).toThrow(/netem args/);
+    expect(() => tcApplyArgs({ container: 'mn01', kind: 'netem', args: ['delay', '100'] })).toThrow(/delay/);
+  });
 });
 
 describe('netemJobId', () => {

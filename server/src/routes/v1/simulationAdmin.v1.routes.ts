@@ -19,6 +19,8 @@ import {
   SimulationPersistenceService,
 } from '../../services/simulationPersistence.service.js';
 import { sendData, sendError } from '../../utils/http.js';
+import { DockerLiveExecutor, dockerLabProbes } from '../../simulator/dockerLiveExecutor.js';
+import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
 
 const runKeySchema = z.string().regex(/^sim_[0-9a-f]{32}$/);
 const createSchema = z.object({
@@ -168,6 +170,25 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
   return router;
 }
 
+/**
+ * The live lab executor, or undefined so the control slots stay fail-closed.
+ *
+ * It exists only when explicitly enabled and given a wrapper command directory:
+ * the control service already refuses any run that is not on the lab network, and
+ * this is the second lock -- an unconfigured deployment has no executor at all,
+ * not a misconfigured one that could reach a host.
+ */
+function buildLabExecutor(): DockerLiveExecutor | undefined {
+  if (!config.simulator.labExecutorEnabled) return undefined;
+  if (config.simulator.labWrapperCommandDir === '') {
+    throw new Error('SIMULATION_LAB_EXECUTOR_ENABLED needs SIMULATION_LAB_WRAPPER_COMMANDS');
+  }
+  return new DockerLiveExecutor(
+    fileCommandQueue(config.simulator.labWrapperCommandDir),
+    dockerLabProbes(config.simulator.labDockerBin)
+  );
+}
+
 const defaultService = new SimulationControlService(
   new SimulationPersistenceService(new MongoSimulationPersistenceRepository()),
   new SimulationControlPersistenceService(new MongoSimulationControlPersistenceRepository()),
@@ -179,7 +200,9 @@ const defaultService = new SimulationControlService(
       displayName: null,
     },
     role: config.simulator.adminRole,
-  }
+  },
+  Date.now,
+  buildLabExecutor()
 );
 
 export default createSimulationAdminRouter(defaultService);

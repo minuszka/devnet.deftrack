@@ -88,7 +88,7 @@ function recoveryOutcomeEventFor(request: SimulationControlRequestRecord, allCle
  */
 export interface SimulationLiveExecutor {
   activateFault(input: { run: SimulationRunProjection; plan: DryRunPlan; faultLeaseExpiresAtMs: number }): Promise<void>;
-  proveRecovery(input: { run: SimulationRunProjection }): Promise<SimulationRecoveryResult>;
+  proveRecovery(input: { run: SimulationRunProjection; plan: DryRunPlan }): Promise<SimulationRecoveryResult>;
 }
 
 /** The default when none is configured: the slots stay closed, as before day 8. */
@@ -474,7 +474,8 @@ export class SimulationControlService {
       this.assertExecutorNetwork(run);
       // The run is already held in recovery above; the executor now clears the
       // fault and proves the lab is clean, and the outcome is recorded atomically.
-      const recovery = await this.executor.proveRecovery({ run });
+      const plan = await this.loadPlan(run);
+      const recovery = await this.executor.proveRecovery({ run, plan });
       run = await this.runs.recordRecoveryResult({
         runKey: run.runKey,
         event: recoveryOutcomeEventFor(request, recovery.allClear),
@@ -531,7 +532,8 @@ export class SimulationControlService {
       // The executor clears the fault and reports whether the lab came back clean;
       // the outcome and its findings are recorded atomically. A live run stops at
       // cooldown (or failed) -- its cooldown is a real budget, not auto-completed.
-      const recovery = await this.executor.proveRecovery({ run });
+      const plan = await this.loadPlan(run);
+      const recovery = await this.executor.proveRecovery({ run, plan });
       run = await this.runs.recordRecoveryResult({
         runKey: run.runKey,
         event: recoveryOutcomeEventFor(request, recovery.allClear),

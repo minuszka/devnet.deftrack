@@ -11,7 +11,7 @@ import {
   type WrapperState,
 } from './netemLease.js';
 
-const NETEM_KINDS: readonly NetemKind[] = ['latency', 'loss', 'jitter'];
+const NETEM_KINDS: readonly NetemKind[] = ['latency', 'loss', 'jitter', 'netem'];
 
 /**
  * Runs one fault action against a container. The real implementation shells out

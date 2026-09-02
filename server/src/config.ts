@@ -69,6 +69,13 @@ export const config = {
     expectedChain: process.env.SIMULATION_EXPECTED_CHAIN ?? '',
     expectedGenesisHash: process.env.SIMULATION_EXPECTED_GENESIS_HASH ?? '',
     expectedWrapperVersion: process.env.SIMULATION_EXPECTED_WRAPPER_VERSION ?? '',
+
+    // The live lab executor is off unless explicitly enabled AND given a wrapper
+    // command directory. Off, the control slots stay fail-closed; there is no
+    // default that could reach a host. It acts only on the local Docker lab.
+    labExecutorEnabled: optionalBool('SIMULATION_LAB_EXECUTOR_ENABLED', false),
+    labWrapperCommandDir: process.env.SIMULATION_LAB_WRAPPER_COMMANDS ?? '',
+    labDockerBin: process.env.SIMULATION_LAB_DOCKER_BIN ?? 'docker',
   },
 
   rpc: {
