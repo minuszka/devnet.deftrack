@@ -23,6 +23,7 @@ import {
   SimulationPersistenceService,
   type SimulationRunProjection,
 } from './simulationPersistence.service.js';
+import type { SimulationLiveRunLockService } from './simulationLiveRunLock.service.js';
 
 export class SimulationControlError extends Error {
   constructor(
@@ -34,7 +35,8 @@ export class SimulationControlError extends Error {
       | 'APPROVAL_DENIED'
       | 'EXECUTOR_NOT_AVAILABLE'
       | 'EXECUTOR_NETWORK_FORBIDDEN'
-      | 'CORRUPT_ARTIFACT',
+      | 'CORRUPT_ARTIFACT'
+      | 'LIVE_RUN_LOCKED',
     message: string,
     public readonly details: unknown = null
   ) {
@@ -179,7 +181,20 @@ export class SimulationControlService {
     private readonly evidence: SimulationEvidenceProvider,
     private readonly identity: SimulationControlIdentity,
     private readonly clock: () => number = Date.now,
-    private readonly executor: SimulationLiveExecutor = EXECUTOR_UNAVAILABLE
+    private readonly executor: SimulationLiveExecutor = EXECUTOR_UNAVAILABLE,
+    /**
+     * Exclusion between live runs, acquired at the moment the fault is applied.
+     *
+     * The preflight's conflict check reads other runs with an ordinary query, so
+     * two validations can both pass before either transitions -- and a draft
+     * abandoned mid-flight has no expiry, so it can block every later run for
+     * ever. This lock is atomic (compare-and-swap on its revision) and leased, so
+     * a run that dies holding it stops blocking when its envelope ends.
+     *
+     * Undefined leaves the behaviour as it was: a deployment without the
+     * collection wired must not silently lose the check it already had.
+     */
+    private readonly liveRunLock: SimulationLiveRunLockService | undefined = undefined
   ) {}
 
   scenarios() {
@@ -451,6 +466,9 @@ export class SimulationControlService {
       // never wall-clock plus a Docker TTL. The frozen accept time is the fault start.
       const timing = deriveSimulationRunTiming(plan, run.state.createdAtMs);
       const faultLeaseExpiresAtMs = faultLeaseExpiresAtForStart(timing, request.acceptedAtMs);
+      // Taken before the fault, released when recovery is recorded. The lease is
+      // the run's own envelope, so an abandoned run stops blocking on its own.
+      await this.acquireLiveRunLock(run, request);
       await this.executor.activateFault({ run, plan, faultLeaseExpiresAtMs });
       run = await this.runs.transitionRun({
         runKey: run.runKey,
@@ -500,6 +518,7 @@ export class SimulationControlService {
         recovery,
         actor: request.actor,
       });
+      await this.releaseLiveRunLock(run.runKey);
       return { run, idempotentReplay: false };
     }
     run = await this.runs.transitionRun({
@@ -558,6 +577,7 @@ export class SimulationControlService {
         recovery,
         actor: request.actor,
       });
+      await this.releaseLiveRunLock(run.runKey);
       return { run };
     }
     run = await this.runs.transitionRun({
@@ -573,6 +593,40 @@ export class SimulationControlService {
       });
     }
     return { run };
+  }
+
+  /**
+   * One live run at a time, decided atomically rather than by a query that two
+   * callers can both pass. A run holding the lock keeps it only until its own
+   * envelope ends, so an abandoned one expires instead of blocking for ever.
+   */
+  private async acquireLiveRunLock(
+    run: SimulationRunProjection,
+    request: SimulationControlRequestRecord
+  ): Promise<void> {
+    if (this.liveRunLock === undefined) return;
+    const result = await this.liveRunLock.acquire({
+      runKey: run.runKey,
+      ownerId: request.actor.actorId,
+      nowMs: this.clock(),
+      leaseUntilMs: run.state.runExpiresAtMs,
+    });
+    if (!result.acquired) {
+      throw new SimulationControlError(
+        'LIVE_RUN_LOCKED',
+        `another live run holds the lab: ${result.lock.runKey}`
+      );
+    }
+  }
+
+  /** Best effort: a lock that outlives its run expires anyway, and must not mask the run's own outcome. */
+  private async releaseLiveRunLock(runKey: string): Promise<void> {
+    if (this.liveRunLock === undefined) return;
+    try {
+      await this.liveRunLock.release({ runKey, ownerId: this.identity.actor.actorId, nowMs: this.clock() });
+    } catch {
+      // The lease bounds the damage; failing the recovery over it would be worse.
+    }
   }
 
   async status(runKey: string) {

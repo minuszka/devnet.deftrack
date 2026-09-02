@@ -14,6 +14,8 @@ import {
   type SimulationControlRequestRecord,
 } from './simulationControlPersistence.service.js';
 import { SimulationControlService, type SimulationLiveExecutor } from './simulationControl.service.js';
+import { SimulationLiveRunLockService } from './simulationLiveRunLock.service.js';
+import type { LiveRunLock } from '../domain/liveRunLock.js';
 import {
   SimulationPersistenceService,
   type AppendSimulationAuditResult,
@@ -165,11 +167,22 @@ class FakeExecutor implements SimulationLiveExecutor {
   }
 }
 
+class MemoryLockRepository {
+  lock: LiveRunLock | null = null;
+  async find(): Promise<LiveRunLock | null> { return this.lock === null ? null : structuredClone(this.lock); }
+  async compareAndSwap(revision: number | null, next: LiveRunLock): Promise<boolean> {
+    if ((this.lock?.revision ?? null) !== revision) return false;
+    this.lock = structuredClone(next);
+    return true;
+  }
+}
+
 function harness(
   scenario: Record<string, unknown>,
   role: 'operator' | 'safety-admin' = 'operator',
   executor?: SimulationLiveExecutor,
-  clock: () => number = () => 1_000
+  clock: () => number = () => 1_000,
+  lockRepository?: MemoryLockRepository
 ) {
   const runRepository = new MemoryRunRepository();
   const controlRepository = new MemoryControlRepository();
@@ -180,9 +193,27 @@ function harness(
     evidence,
     { actor, role },
     clock,
-    executor
+    executor,
+    lockRepository === undefined ? undefined : new SimulationLiveRunLockService(lockRepository)
   );
-  return { service, runRepository, controlRepository, evidence };
+  return { service, runRepository, controlRepository, evidence, lockRepository };
+}
+
+async function driveToLiveArmed(
+  service: ReturnType<typeof harness>['service'],
+  network: 'regtest' | 'devnet',
+  // Distinct runs need distinct idempotency keys: the run key is derived from
+  // this, so two callers sharing it would be driving the SAME run.
+  tag = 'live'
+) {
+  const created = await service.create({
+    idempotencyKey: `${network}-${tag}-create`, network, live: true, scenario: mnStop,
+  });
+  await service.validate({ runKey: created.run.runKey, idempotencyKey: `${network}-${tag}-validate` });
+  await service.arm({
+    runKey: created.run.runKey, idempotencyKey: `${network}-${tag}-arm`, acknowledgedRiskClass: 'medium',
+  });
+  return created.run.runKey;
 }
 
 const mnStop = {
@@ -234,16 +265,6 @@ describe('simulation control service', () => {
     expect([...controlRepository.artifacts.values()].filter((artifact) => artifact.kind === 'dry-run')).toHaveLength(1);
   });
 
-  async function driveToLiveArmed(service: ReturnType<typeof harness>['service'], network: 'regtest' | 'devnet') {
-    const created = await service.create({
-      idempotencyKey: `${network}-live-create`, network, live: true, scenario: mnStop,
-    });
-    await service.validate({ runKey: created.run.runKey, idempotencyKey: `${network}-live-validate` });
-    await service.arm({
-      runKey: created.run.runKey, idempotencyKey: `${network}-live-arm`, acknowledgedRiskClass: 'medium',
-    });
-    return created.run.runKey;
-  }
 
   it('refuses to execute a live run that is not on the lab network', async () => {
     const { service } = harness(mnStop);
@@ -413,5 +434,61 @@ describe('live telemetry is judged against a live clock', () => {
     const replay = await service.create({ idempotencyKey: 'audit-create', network: 'devnet', live: false, scenario: mnStop });
     expect(replay.run.state.createdAtMs).toBe(created.run.state.createdAtMs);
     expect(runRepository.audits.get(created.run.runKey)?.[0]?.atMs).toBe(1_000);
+  });
+});
+
+describe('one live run at a time', () => {
+  it('refuses a second live run while the first holds the lab', async () => {
+    // The preflight's conflict check is an ordinary query, so two validations can
+    // both pass before either transitions. The lock is decided atomically.
+    const shared = new MemoryLockRepository();
+    const first = harness(mnStop, 'operator', new FakeExecutor(), () => 1_000, shared);
+    const second = harness(mnStop, 'operator', new FakeExecutor(), () => 1_000, shared);
+
+    const runA = await driveToLiveArmed(first.service, 'regtest', 'lock-a');
+    await first.service.start({ runKey: runA, idempotencyKey: 'lock-start-a' });
+
+    const runB = await driveToLiveArmed(second.service, 'regtest', 'lock-b');
+    await expect(second.service.start({ runKey: runB, idempotencyKey: 'lock-start-b' }))
+      .rejects.toMatchObject({ code: 'LIVE_RUN_LOCKED' });
+  });
+
+  it('releases the lab once recovery is recorded, so the next run may start', async () => {
+    const shared = new MemoryLockRepository();
+    const first = harness(mnStop, 'operator', new FakeExecutor(), () => 1_000, shared);
+    const second = harness(mnStop, 'operator', new FakeExecutor(), () => 1_000, shared);
+
+    const runA = await driveToLiveArmed(first.service, 'regtest', 'rel-a');
+    await first.service.start({ runKey: runA, idempotencyKey: 'rel-start-a' });
+    await first.service.recover({ runKey: runA, idempotencyKey: 'rel-recover-a' });
+
+    const runB = await driveToLiveArmed(second.service, 'regtest', 'rel-b');
+    const started = await second.service.start({ runKey: runB, idempotencyKey: 'rel-start-b' });
+    expect(started.run.state.status).toBe('fault_active');
+  });
+
+  it('does not let an abandoned run hold the lab for ever', async () => {
+    // The lease is the run's own envelope. A run that dies holding the lock stops
+    // blocking when that envelope ends -- which is what the query-based check,
+    // having no expiry at all, could never do.
+    const shared = new MemoryLockRepository();
+    const first = harness(mnStop, 'operator', new FakeExecutor(), () => 1_000, shared);
+    const runA = await driveToLiveArmed(first.service, 'regtest', 'aband-a');
+    await first.service.start({ runKey: runA, idempotencyKey: 'aband-start-a' });
+    const heldUntil = (shared.lock as { leaseUntilMs: number }).leaseUntilMs;
+
+    // ...the process holding it never comes back. Long after its envelope:
+    const later = harness(mnStop, 'operator', new FakeExecutor(), () => heldUntil + 1, shared);
+    const runB = await driveToLiveArmed(later.service, 'regtest', 'aband-b');
+    const started = await later.service.start({ runKey: runB, idempotencyKey: 'aband-start-b' });
+    expect(started.run.state.status).toBe('fault_active');
+  });
+
+  it('leaves behaviour unchanged when no lock is wired', async () => {
+    // A deployment without the collection must not silently lose the check it had.
+    const { service } = harness(mnStop, 'operator', new FakeExecutor());
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    const { run } = await service.start({ runKey, idempotencyKey: 'nolock-start' });
+    expect(run.state.status).toBe('fault_active');
   });
 });
