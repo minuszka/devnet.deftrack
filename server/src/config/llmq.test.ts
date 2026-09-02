@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHAINLOCK_V2_ACTIVATION_HEIGHT,
+  DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT,
   LLMQ_PROFILES,
   TRACKED_PROFILE_NAMES,
   chainlockProfileNameAtHeight,
+  dkgBadVotesThresholdAtHeight,
   maxPossibleBan,
   trackedProfiles,
 } from './llmq.js';
@@ -109,5 +111,26 @@ describe('llmq profile registry', () => {
     // punish 396 nodes that were never in it.
     expect(maxPossibleBan(80, 4)).toBe(76);
     expect(maxPossibleBan(2, 3)).toBe(0);
+  });
+
+  it('carries the bad-votes thresholds the running node actually applies', () => {
+    // Verified against src/llmq/params.h at v22.1.x @ 7fbb1ec15a. These sat at 3
+    // here long after the node took the mainnet-proportional fix, so every round
+    // document snapshotted a punishment rule the node was not applying -- and
+    // 3-of-50 was the ban-wave engine that fix existed to remove.
+    expect(LLMQ_PROFILES.llmq_50_60!.dkgBadVotesThreshold).toBe(40);
+    expect(LLMQ_PROFILES.llmq_60_75!.dkgBadVotesThreshold).toBe(48);
+    expect(LLMQ_PROFILES.llmq_defcon!.dkgBadVotesThreshold).toBe(48);
+    expect(LLMQ_PROFILES.llmq_400_60!.dkgBadVotesThreshold).toBe(30);
+    expect(LLMQ_PROFILES.llmq_400_60!.dkgBadVotesThresholdV2).toBe(300);
+  });
+
+  it('resolves the threshold by height, mirroring GetDkgBadVotesThreshold', () => {
+    const p400 = LLMQ_PROFILES.llmq_400_60!;
+    const gate = DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT;
+    expect(dkgBadVotesThresholdAtHeight(p400, gate - 1)).toBe(30);
+    expect(dkgBadVotesThresholdAtHeight(p400, gate)).toBe(300);
+    // A profile with no V2 value keeps its flat threshold at every height.
+    expect(dkgBadVotesThresholdAtHeight(LLMQ_PROFILES.llmq_defcon!, gate + 1000)).toBe(48);
   });
 });
