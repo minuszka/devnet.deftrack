@@ -18,20 +18,29 @@ UNIT=deftrack-devnet
 cd "$APP"
 
 echo "==> pull"
-# protocol.version=0 is not a preference, it is what works from this host.
+# Pull normally, and fall back to protocol v0 only if that fails.
 #
-# Observed on the VPS: any protocol-v2 fetch to github.com comes back with
-# `www-authenticate: Basic realm="GitHub"` and git then asks for a username --
-# on this public repository, and equally on github.com/git/git, so it is
-# nothing to do with our credentials or visibility. The same URL fetched with
-# curl in the same second returns 200 and the correct ref listing, and
-# `git -c protocol.version=0 ls-remote` succeeds. Whatever the cause sits
-# between git's v2 request and GitHub, a deploy is not the place to find out.
+# On 2026-09-02 every protocol-v2 fetch from this host answered
+# `www-authenticate: Basic realm="GitHub"` and git then asked for a username --
+# on this public repository, and equally on github.com/git/git. curl fetched the
+# identical smart-HTTP URL in the same second and got 200 with a correct ref
+# listing, and `git -c protocol.version=0` succeeded immediately.
 #
-# Set here rather than in the checkout's config so a re-clone does not
-# silently reintroduce the failure: it stopped a deploy dead on 2026-09-02,
-# and the app had been running two-day-old code without anything saying so.
-git -c protocol.version=0 pull --ff-only
+# It cleared on its own within the hour. A plain fetch from the same host works
+# again, so it was transient between git's v2 request and GitHub rather than a
+# property of the host -- and pinning the version, as the first version of this
+# fix did, disables the default protocol for good on evidence that does not
+# support it.
+#
+# What is worth guarding is the silence, not the protocol. The pull aborted, the
+# deploy never reached its build or publish steps, and nothing downstream said
+# so: the app served a bundle from 2026-08-31 while four merged pull requests
+# sat unshipped. This script already exists because building is not deploying;
+# this is the same lesson one step earlier.
+if ! git pull --ff-only; then
+  echo "    pull failed; retrying with git protocol v0" >&2
+  git -c protocol.version=0 pull --ff-only
+fi
 
 echo "==> install (lockfile-exact)"
 npm ci --silent
