@@ -53,17 +53,22 @@ async function main(): Promise<void> {
   });
   const queue = fileCommandQueue(commandDir);
 
-  // Boot cleanup first: after a crash the real qdisc state is unknown, so return
-  // every touched container to a clean baseline before accepting new commands.
-  await runner.bootCleanup();
-  logger.info(`netem wrapper watching ${commandDir}, state ${statePath}`);
-
+  // Arm the cycle FIRST. Boot recovery is the moment the guarantee is needed most,
+  // so nothing it does may decide whether the watchdog runs: a state file naming a
+  // stopped container must never be able to kill the daemon that would restart it.
   let stopping = false;
   const timer = setInterval(() => {
     void runWrapperCycle({ runner, queue, logger }).catch((error) => {
       logger.error(`wrapper cycle failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   }, intervalMs);
+  logger.info(`lab fault wrapper watching ${commandDir}, state ${statePath}`);
+
+  // Then recover: after a crash the real state is unknown, so undo every recorded
+  // job. It never rejects; anything it could not undo is retained as expired and
+  // the next cycle retries it.
+  const recovered = await runner.bootCleanup();
+  logger.info(`boot recovery undid ${recovered.cleared}, retained ${recovered.failed}`);
 
   const shutdown = (signal: string): void => {
     if (stopping) return;

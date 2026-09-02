@@ -20,6 +20,11 @@ import {
 } from '../../services/simulationPersistence.service.js';
 import { sendData, sendError } from '../../utils/http.js';
 import { DockerLiveExecutor, dockerLabProbes } from '../../simulator/dockerLiveExecutor.js';
+import {
+  InvalidNetemTargetError,
+  UnscheduledLiveFaultError,
+  UnsupportedLiveFaultError,
+} from '../../simulator/liveExecutorPlan.js';
 import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
 
 const runKeySchema = z.string().regex(/^sim_[0-9a-f]{32}$/);
@@ -42,8 +47,19 @@ function statusFor(error: unknown): number {
       case 'INVALID_STATE':
       case 'PREFLIGHT_FAILED': return 409;
       case 'EXECUTOR_NOT_AVAILABLE': return 503;
+      case 'EXECUTOR_NETWORK_FORBIDDEN': return 403;
       case 'CORRUPT_ARTIFACT': return 500;
     }
+  }
+  // A deliberate refusal by the executor is the caller's answer, not a server
+  // fault: reported as 500 these are indistinguishable from a bug, and with a
+  // second fault class operators meet them routinely.
+  if (
+    error instanceof UnsupportedLiveFaultError ||
+    error instanceof UnscheduledLiveFaultError ||
+    error instanceof InvalidNetemTargetError
+  ) {
+    return 422;
   }
   if (error instanceof SimulationPersistenceError) {
     return error.code === 'RUN_NOT_FOUND' ? 404 : 409;

@@ -1,28 +1,48 @@
-import type { SimulationTargetSnapshot } from '../models/SimulationRun.js';
-import { netemJobId, type NetemSpec } from './netemLease.js';
-import type { WrapperCommand } from './netemRunner.js';
+import type { SimulationTargetCapability, SimulationTargetSnapshot } from '../models/SimulationRun.js';
+import { netemJobId, serviceJobId, type FaultClass } from './netemLease.js';
+import { MAX_TTL_MS, type WrapperCommand } from './netemRunner.js';
 import type { DryRunPlan } from './scenarioTypes.js';
 
 /**
- * The pure translation between a run's plan and the node-local netem wrapper.
+ * The pure translation between a run's plan and the node-local fault wrapper.
  *
- * The lab executor applies only netem faults: latency, jitter and packet loss on
- * a node's own P2P interface, as one composed qdisc. Everything here is pure --
- * it decides which wrapper commands a plan implies and which targets a recovery
- * must prove clean; the queue, Docker and the clock live in the executor that
- * calls it. Anything the wrapper cannot faithfully apply is refused rather than
- * partially applied, so a run never reports a fault it did not fully cause.
+ * The lab executor applies two fault classes: `netem` impairment on a node's own
+ * P2P interface, and a `service` outage -- the container stopped. Everything here
+ * is pure: it decides which wrapper commands a plan implies and which targets a
+ * recovery must prove clean; the queue, Docker and the clock live in the executor
+ * that calls it.
+ *
+ * Apply and recovery are ONE translation, deliberately. If they were two, a class
+ * could be supported on apply and skipped in recovery -- a run reporting all-clear
+ * over a masternode that is still stopped. Here that is not a discipline to
+ * remember; it is unwriteable.
+ *
+ * Anything the wrapper cannot faithfully apply is refused rather than partially
+ * applied, so a run never reports a fault it did not fully cause.
  */
 
-/** A plan action this executor cannot apply -- service control or partition. Fail closed. */
+/** A plan action this executor cannot apply -- today, a partition. Fail closed. */
 export class UnsupportedLiveFaultError extends Error {
   constructor(public readonly faultKind: string) {
-    super(`the lab executor applies only netem faults; cannot apply "${faultKind}"`);
+    super(`the lab executor applies only netem and service faults; cannot apply "${faultKind}"`);
     this.name = 'UnsupportedLiveFaultError';
   }
 }
 
-/** A referenced target that is missing, off-network, or lacks the netem capability. */
+/**
+ * A plan whose faults need a schedule this executor cannot honour. It applies one
+ * immediate outage per target; nothing dispatches an action at its offset, so a
+ * flapping cycle would collapse into a single stop and report every action applied
+ * while measuring none of them.
+ */
+export class UnscheduledLiveFaultError extends Error {
+  constructor(actionId: string) {
+    super(`the lab executor applies one immediate outage per target; action ${actionId} needs a schedule it cannot honour`);
+    this.name = 'UnscheduledLiveFaultError';
+  }
+}
+
+/** A referenced target that is missing, off-network, or lacks the needed capability. */
 export class InvalidNetemTargetError extends Error {
   constructor(message: string) {
     super(message);
@@ -61,27 +81,22 @@ export function composeNetemArgs(input: {
   return args;
 }
 
-function requireNetemTarget(
+function requireLabTarget(
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>,
-  targetId: string
+  targetId: string,
+  capability: SimulationTargetCapability
 ): SimulationTargetSnapshot {
   const target = targetsById.get(targetId);
   if (target === undefined) throw new InvalidNetemTargetError(`plan references unknown target ${targetId}`);
   if (target.network !== 'regtest') {
-    // Belt and suspenders behind the control service's network guard: a netem
+    // Belt and suspenders behind the control service's network guard: a lab
     // container is a lab host, never a real fleet address.
     throw new InvalidNetemTargetError(`target ${targetId} is on ${target.network}, not the lab`);
   }
-  if (!target.capabilities.includes('netem-p2p')) {
-    throw new InvalidNetemTargetError(`target ${targetId} does not declare the netem-p2p capability`);
+  if (!target.capabilities.includes(capability)) {
+    throw new InvalidNetemTargetError(`target ${targetId} does not declare the ${capability} capability`);
   }
   return target;
-}
-
-function netemSpecForAction(target: SimulationTargetSnapshot, payload: {
-  latencyMs: number; jitterMs: number; lossPercent: number; correlationPercent: number;
-}): NetemSpec {
-  return { container: target.hostRef, kind: 'netem', args: composeNetemArgs(payload) };
 }
 
 export function indexTargetsById(
@@ -90,66 +105,156 @@ export function indexTargetsById(
   return new Map(targets.map((target) => [target.targetId, target]));
 }
 
+/** One fault a plan implies: how to apply it, and everything recovery needs to undo it. */
+export interface LabFault {
+  targetId: string;
+  container: string;
+  faultClass: FaultClass;
+  jobId: string;
+  apply: WrapperCommand;
+}
+
 /**
- * The apply commands a plan implies. netem-apply actions become one composed
- * `apply` each; the scheduled fault-clear is skipped (recovery and the wrapper's
- * own TTL own the clearing); any other kind is refused. Returns [] for a plan
- * that carries no netem fault -- clear-recover, which activates nothing.
+ * The one translation. `strict` is the apply direction: it refuses anything it
+ * cannot faithfully cause. Lenient is the recovery direction: it undoes what it
+ * understands and COUNTS what it does not, so recovery is never the thing that
+ * fails closed and strands a run mid-teardown -- while a skip still denies the
+ * run an all-clear it has not earned.
+ *
+ * A scheduled `fault-clear` and its service twin `service-start` are the paired
+ * undo of a fault, not faults themselves: recovery and the wrapper's TTL own
+ * them, so they are skipped by design and never counted.
  */
-export function netemApplyCommandsForPlan(input: {
+export function labFaultsForPlan(input: {
+  plan: DryRunPlan;
+  targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
+  runTag: string;
+  ttlMs: number;
+  strict: boolean;
+}): { faults: LabFault[]; skipped: number } {
+  if (input.strict && input.ttlMs > MAX_TTL_MS) {
+    throw new UnsupportedLiveFaultError(`lease of ${input.ttlMs} ms beyond the ${MAX_TTL_MS} ms ceiling`);
+  }
+  const faults: LabFault[] = [];
+  const seen = new Set<string>();
+  let skipped = 0;
+  const stoppedTargets = new Set<string>();
+
+  const refuse = (error: Error): void => {
+    if (input.strict) throw error;
+    skipped++;
+  };
+
+  for (const action of input.plan.actions) {
+    const { payload } = action;
+    // The paired undo of a fault, never a fault: owned by recovery and the TTL.
+    if (payload.kind === 'fault-clear' || payload.kind === 'service-start') continue;
+
+    if (payload.kind === 'netem-apply') {
+      try {
+        const target = requireLabTarget(input.targetsById, action.targetId, 'netem-p2p');
+        const args = composeNetemArgs(payload);
+        const jobId = netemJobId(input.runTag, { container: target.hostRef, kind: 'netem', args });
+        if (seen.has(jobId)) continue;
+        seen.add(jobId);
+        faults.push({
+          targetId: target.targetId,
+          container: target.hostRef,
+          faultClass: 'netem',
+          jobId,
+          apply: { op: 'apply', container: target.hostRef, kind: 'netem', args, runTag: input.runTag, ttlMs: input.ttlMs },
+        });
+      } catch (error) {
+        refuse(error as Error);
+      }
+      continue;
+    }
+
+    if (payload.kind === 'service-stop') {
+      try {
+        // One immediate outage per target. A staged or repeated stop belongs to a
+        // dispatcher that does not exist, and silently collapsing a flapping
+        // schedule into one stop would measure nothing it claims to.
+        if (action.notBeforeOffsetMs !== 0 || stoppedTargets.has(action.targetId)) {
+          throw new UnscheduledLiveFaultError(action.actionId);
+        }
+        const target = requireLabTarget(input.targetsById, action.targetId, 'service-control');
+        stoppedTargets.add(action.targetId);
+        const jobId = serviceJobId(input.runTag, target.hostRef);
+        if (seen.has(jobId)) continue;
+        seen.add(jobId);
+        faults.push({
+          targetId: target.targetId,
+          container: target.hostRef,
+          faultClass: 'service',
+          jobId,
+          apply: { op: 'service-stop', container: target.hostRef, runTag: input.runTag, ttlMs: input.ttlMs },
+        });
+      } catch (error) {
+        refuse(error as Error);
+      }
+      continue;
+    }
+
+    refuse(new UnsupportedLiveFaultError(payload.kind));
+  }
+  return { faults, skipped };
+}
+
+/**
+ * A tripwire, true today by construction: no scenario mixes families. The wrapper
+ * tolerates both classes on one container (composite key, service-first undo), but
+ * the pair is physically hostile -- `docker start` recreates the namespace and
+ * takes the qdisc with it -- so a plan that wants both needs a real design, not a
+ * relaxed assertion.
+ */
+export function assertSingleFaultClass(plan: DryRunPlan): void {
+  const classes = new Set<string>();
+  for (const action of plan.actions) {
+    if (action.payload.kind === 'netem-apply') classes.add('netem');
+    if (action.payload.kind === 'service-stop') classes.add('service');
+  }
+  if (classes.size > 1) {
+    throw new UnsupportedLiveFaultError('a plan mixing netem and service faults on one run');
+  }
+}
+
+/** The apply commands a plan implies. Refuses anything it cannot faithfully cause. */
+export function faultApplyCommandsForPlan(input: {
   plan: DryRunPlan;
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
   runTag: string;
   ttlMs: number;
 }): WrapperCommand[] {
-  const commands: WrapperCommand[] = [];
-  for (const action of input.plan.actions) {
-    const { payload } = action;
-    if (payload.kind === 'fault-clear') continue;
-    if (payload.kind !== 'netem-apply') throw new UnsupportedLiveFaultError(payload.kind);
-    const target = requireNetemTarget(input.targetsById, action.targetId);
-    commands.push({
-      op: 'apply',
-      container: target.hostRef,
-      kind: 'netem',
-      args: composeNetemArgs(payload),
-      runTag: input.runTag,
-      ttlMs: input.ttlMs,
-    });
-  }
-  return commands;
+  return labFaultsForPlan({ ...input, strict: true }).faults.map((fault) => fault.apply);
 }
 
-/** One recovery target: the clear command that ends its fault and how to probe it. */
-export interface NetemRecoveryTarget {
+/** One recovery target: the clear that ends its fault and how to probe it. */
+export interface LabRecoveryTarget {
   targetId: string;
   container: string;
+  faultClass: FaultClass;
   clear: WrapperCommand;
 }
 
 /**
- * The recovery plan: a clear command per netem-faulted target, keyed by the same
- * job id the apply used, plus the container to probe clean. Lenient by design --
- * a plan whose fault this executor never applied (service control, partition, or
- * nothing) yields no recovery work rather than throwing, so recovery is never the
- * thing that fails closed and strands a run mid-teardown.
+ * The recovery plan: a clear per faulted target, keyed by the same job id the
+ * apply minted, plus what to probe. `skipped` is what recovery could not speak
+ * for -- the caller must not report all-clear over it.
  */
-export function netemRecoveryTargetsForPlan(input: {
+export function faultRecoveryTargetsForPlan(input: {
   plan: DryRunPlan;
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
   runTag: string;
-}): NetemRecoveryTarget[] {
-  const targets: NetemRecoveryTarget[] = [];
-  const seen = new Set<string>();
-  for (const action of input.plan.actions) {
-    if (action.payload.kind !== 'netem-apply') continue;
-    const target = input.targetsById.get(action.targetId);
-    if (target === undefined || !target.capabilities.includes('netem-p2p')) continue;
-    const spec = netemSpecForAction(target, action.payload);
-    const jobId = netemJobId(input.runTag, spec);
-    if (seen.has(jobId)) continue;
-    seen.add(jobId);
-    targets.push({ targetId: target.targetId, container: target.hostRef, clear: { op: 'clear', jobId } });
-  }
-  return targets;
+}): { targets: LabRecoveryTarget[]; skipped: number } {
+  const { faults, skipped } = labFaultsForPlan({ ...input, ttlMs: 1, strict: false });
+  return {
+    targets: faults.map((fault) => ({
+      targetId: fault.targetId,
+      container: fault.container,
+      faultClass: fault.faultClass,
+      clear: { op: 'clear', jobId: fault.jobId },
+    })),
+    skipped,
+  };
 }

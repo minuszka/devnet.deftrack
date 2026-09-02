@@ -38,10 +38,17 @@ async function qdisc(): Promise<string> {
   return docker('exec', '-u', 'root', CONTAINER, 'tc', 'qdisc', 'show', 'dev', 'eth0');
 }
 
+/** Docker's own view, which answers for a stopped container as well as a running one. */
+async function running(): Promise<boolean> {
+  return (await docker('inspect', '-f', '{{.State.Running}}', CONTAINER)).trim() === 'true';
+}
+
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAIL: ${message}`);
   console.log(`  ok: ${message}`);
 }
+
+const silent: RunnerLogger = { info: () => {}, error: () => {} };
 
 async function main(): Promise<void> {
   await docker('rm', '-f', CONTAINER).catch(() => '');
@@ -72,7 +79,6 @@ async function main(): Promise<void> {
     assert(!(await qdisc()).includes('netem'), 'abort cleared the link');
 
     console.log('3. the deployable daemon path: queued command -> tc -> watchdog');
-    const silent: RunnerLogger = { info: () => {}, error: () => {} };
     const queue = fileCommandQueue(join(dir, 'commands'));
     now += 1;
     await queue.enqueue({ op: 'apply', container: CONTAINER, kind: 'latency', args: ['80ms'], runTag: 'accept-run', ttlMs: TTL_MS });
@@ -123,6 +129,50 @@ async function main(): Promise<void> {
     } finally {
       clearInterval(wrapperTimer);
     }
+
+    console.log('5. the day-8 gate: a STOPPED container comes back with no orchestrator');
+    // A forgotten qdisc is a slow node; a forgotten stop is a dead masternode.
+    // Every part below runs with the orchestrator absent by construction: nothing
+    // but the wrapper's own record and its own clock is in the loop.
+    let svcNow = 1_000;
+    const svcStore = fileWrapperStore(join(dir, 'service-state.json'));
+    const svcQueue = fileCommandQueue(join(dir, 'service-commands'));
+    const svcRunner = () => new NetemFaultRunner(dockerNetemExecutor(), svcStore, { clock: () => svcNow });
+
+    // 5a -- the TTL restores it, with nothing else running.
+    await svcQueue.enqueue({ op: 'service-stop', container: CONTAINER, runTag: 'accept-svc', ttlMs: TTL_MS });
+    const stopCycle = await runWrapperCycle({ runner: svcRunner(), queue: svcQueue, logger: silent });
+    assert(stopCycle.dispatched === 1, 'the queued service-stop was dispatched');
+    assert((await running()) === false, 'the container is stopped');
+    svcNow += TTL_MS + 1;
+    const ttlCycle = await runWrapperCycle({ runner: svcRunner(), queue: svcQueue, logger: silent });
+    assert(ttlCycle.cleared === 1, 'the watchdog restored the container on its own clock');
+    assert((await running()) === true, 'the container is running again after the TTL alone');
+
+    // 5b -- the WRAPPER died mid-fault: a fresh process restores from the record.
+    svcNow += 1;
+    await svcRunner().stopService(CONTAINER, 'accept-svc', TTL_MS);
+    assert((await running()) === false, 'a second stop landed');
+    const reborn = await svcRunner().bootCleanup(); // a brand-new process over the same state file
+    assert(reborn.cleared === 1 && reborn.failed === 0, 'boot recovery undid the stop it found recorded');
+    assert((await running()) === true, 'the container is up again, restored from the record not the TTL');
+    assert((await svcStore.load()).jobs.length === 0, 'the record is clean afterwards');
+
+    // 5c/5d -- a failing undo is retained and never blocks another container's.
+    svcNow += 1;
+    await svcRunner().stopService(CONTAINER, 'accept-svc', TTL_MS);
+    const ghost = await svcStore.load();
+    ghost.jobs.push({
+      jobId: 'service-ghost', runTag: 'accept-svc', container: 'lab-accept-does-not-exist',
+      faultClass: 'service', kind: 'service-stop', args: [], appliedAtMs: svcNow, expiresAtMs: svcNow + TTL_MS,
+    });
+    await svcStore.save(ghost);
+    const mixed = await svcRunner().bootCleanup();
+    assert(mixed.cleared === 1 && mixed.failed === 1, 'the reachable container was restored despite the unreachable one');
+    assert((await running()) === true, 'no head-of-line block: the real container came back');
+    const retained = (await svcStore.load()).jobs;
+    assert(retained.length === 1 && retained[0]!.container === 'lab-accept-does-not-exist', 'only the failure is retained');
+    assert(retained[0]!.expiresAtMs === 0, 'the retained job is already expired, so the next tick retries it forever');
 
     console.log('\nACCEPTANCE PASSED');
   } finally {

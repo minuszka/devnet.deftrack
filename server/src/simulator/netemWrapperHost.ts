@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { emptyWrapperState, type FaultAction, type WrapperState } from './netemLease.js';
+import { emptyWrapperState, parseWrapperState, type FaultAction, type WrapperState } from './netemLease.js';
 import type { FaultExecutor, WrapperStore } from './netemRunner.js';
 
 /**
@@ -18,13 +18,40 @@ import type { FaultExecutor, WrapperStore } from './netemRunner.js';
  * capability effective -- which only root has -- so the exec is explicitly root.
  * Pure.
  */
-export function dockerExecArgv(action: FaultAction): string[] {
+export function dockerExecArgv(action: Extract<FaultAction, { tcArgs: string[] }>): string[] {
   return ['exec', '-u', 'root', action.container, 'tc', ...action.tcArgs];
 }
 
-/** A missing qdisc is the normal case for a clear -- there is simply nothing to delete. */
-function isBenignClearError(stderr: string): boolean {
-  return /No such file or directory|Cannot delete qdisc with handle of zero|RTNETLINK answers/i.test(stderr);
+/**
+ * The docker argv for a service fault. The explicit `-t 30` replaces Docker's
+ * 10-second SIGTERM-to-SIGKILL default: the node daemon is PID 1 with no init
+ * shim, and a hard kill mid-write turns the restart into datadir recovery, which
+ * reads as a slow rejoin and would quietly pollute every timing measured after it.
+ */
+const STOP_GRACE_SECONDS = 30;
+
+export function dockerServiceArgv(action: Extract<FaultAction, { op: 'stop' | 'start' }>): string[] {
+  return action.op === 'stop'
+    ? ['stop', '-t', String(STOP_GRACE_SECONDS), action.container]
+    : ['start', action.container];
+}
+
+/**
+ * Whether a failure means "already in the wanted state" rather than "did not
+ * happen". Benign only for an UNDO: a missing qdisc is the normal case for a
+ * clear, and a stopped container has no network namespace at all, so "is not
+ * running" likewise means the impairment is already gone.
+ *
+ * Nothing is benign for a `stop`, a `start` or an `apply`. Docker already exits 0
+ * when a container is in the target state, so a non-zero exit there is a real
+ * failure -- and "No such container" must never read as success for an apply, or
+ * a fault that never landed would be recorded as active.
+ */
+function isBenignFailure(action: FaultAction, stderr: string): boolean {
+  if (action.op !== 'clear') return false;
+  return /No such file or directory|Cannot delete qdisc with handle of zero|RTNETLINK answers|is not running|No such container/i.test(
+    stderr
+  );
 }
 
 /**
@@ -34,10 +61,11 @@ function isBenignClearError(stderr: string): boolean {
  * from `2>/dev/null || true`, but scoped to the errors that actually mean "already
  * clear" rather than swallowing every failure.
  */
-export function dockerNetemExecutor(dockerBin = 'docker'): FaultExecutor {
-  return (action) =>
-    new Promise<void>((resolve, reject) => {
-      const child = spawn(dockerBin, dockerExecArgv(action), { stdio: ['ignore', 'ignore', 'pipe'] });
+export function dockerFaultExecutor(dockerBin = 'docker'): FaultExecutor {
+  return (action) => {
+    const argv = action.op === 'stop' || action.op === 'start' ? dockerServiceArgv(action) : dockerExecArgv(action);
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn(dockerBin, argv, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
       child.stderr.on('data', (chunk) => {
         stderr += String(chunk);
@@ -45,11 +73,15 @@ export function dockerNetemExecutor(dockerBin = 'docker'): FaultExecutor {
       child.on('error', reject);
       child.on('close', (code) => {
         if (code === 0) return resolve();
-        if (action.op === 'clear' && isBenignClearError(stderr)) return resolve();
-        reject(new Error(`docker ${dockerExecArgv(action).join(' ')} exited ${code ?? 'null'}: ${stderr.trim()}`));
+        if (isBenignFailure(action, stderr)) return resolve();
+        reject(new Error(`docker ${argv.join(' ')} exited ${code ?? 'null'}: ${stderr.trim()}`));
       });
     });
+  };
 }
+
+/** The pre-service name, so existing imports read unchanged. */
+export { dockerFaultExecutor as dockerNetemExecutor };
 
 /**
  * A JSON-file wrapper store. Writes to a temp file and renames, so a crash mid-write
@@ -61,7 +93,9 @@ export function fileWrapperStore(path: string): WrapperStore {
   return {
     async load(): Promise<WrapperState> {
       try {
-        return JSON.parse(await readFile(path, 'utf8')) as WrapperState;
+        // Parsed defensively, not cast: a half-migrated or truncated record must
+        // not decide whether the daemon -- and its watchdog -- comes up.
+        return parseWrapperState(JSON.parse(await readFile(path, 'utf8')));
       } catch (error) {
         if ((error as { code?: string }).code === 'ENOENT') return emptyWrapperState();
         throw error;
@@ -114,8 +148,19 @@ export function fileCommandQueue(dir: string): CommandQueue {
       for (const name of names) {
         const path = join(dir, name);
         const raw = await readFile(path, 'utf8');
+        let parsed: unknown;
+        try {
+          // Parse BEFORE deleting: a corrupt file must cost only itself. Throwing
+          // here would discard every command already read in this batch, and a
+          // lost service-stop is a node that never goes down -- or never comes up.
+          parsed = JSON.parse(raw);
+        } catch {
+          await mkdir(join(dir, 'rejected'), { recursive: true });
+          await rename(path, join(dir, 'rejected', name));
+          continue;
+        }
         await rm(path, { force: true });
-        commands.push(JSON.parse(raw));
+        commands.push(parsed);
       }
       return commands;
     },

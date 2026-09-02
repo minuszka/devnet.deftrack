@@ -35,10 +35,21 @@ export interface LabTopology {
 
 export interface LabComposeService {
   image: string;
+  /**
+   * Pinned, not left to Compose's `<project>-<service>-<n>` naming. A run's target
+   * `hostRef` IS the container name the executor hands `docker`, so without this
+   * every command would miss -- and "No such container" is a benign result for a
+   * clear, so a fault that never landed could read as applied.
+   */
+  container_name: string;
   cap_add: string[];
   command: string[];
   networks: string[];
   volumes: string[];
+  /** Nothing may resurrect a node the simulator deliberately stopped. */
+  restart: 'no';
+  /** Matches `docker stop -t 30`: the daemon is PID 1 and needs its flush. */
+  stop_grace_period: string;
 }
 
 export interface LabComposeSpec {
@@ -117,10 +128,13 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
     ];
     services[name] = {
       image: topology.image,
+      container_name: name,
       cap_add: ['NET_ADMIN'],
       command,
       networks: [topology.network],
       volumes: [`${dataVolume}:${topology.datadir}`],
+      restart: 'no',
+      stop_grace_period: '30s',
     };
     volumes[dataVolume] = {};
   }

@@ -4,22 +4,23 @@ import type { SimulationRecoveryResult, SimulationRecoveryTargetResult } from '.
 import type { SimulationLiveExecutor } from '../services/simulationControl.service.js';
 import type { SimulationRunProjection } from '../services/simulationPersistence.service.js';
 import {
+  assertSingleFaultClass,
+  faultApplyCommandsForPlan,
+  faultRecoveryTargetsForPlan,
   indexTargetsById,
-  netemApplyCommandsForPlan,
-  netemRecoveryTargetsForPlan,
+  type LabRecoveryTarget,
 } from './liveExecutorPlan.js';
 import type { CommandQueue } from './netemWrapperHost.js';
 import type { DryRunPlan } from './scenarioTypes.js';
 
 /**
- * The live executor that drives the node-local netem wrapper.
+ * The live executor that drives the node-local fault wrapper.
  *
  * It never touches Docker or the clock directly: it enqueues wrapper commands and
  * reads the lab through injected probes, so the whole apply/recover decision is
- * tested with fakes. `activateFault` translates the plan into composed netem
- * `apply` commands and enqueues them under the run's own lease; `proveRecovery`
- * enqueues the matching clears, waits for the wrapper to consume them, and probes
- * each faulted container back to a clean, running, observed state.
+ * tested with fakes. `activateFault` translates the plan into wrapper commands and
+ * enqueues them under the run's own lease; `proveRecovery` enqueues the matching
+ * clears, waits for each target to actually come back, and records what it found.
  *
  * The fault's real recovery is the wrapper's own TTL watchdog -- this executor's
  * clears are the fast path, and the lease is the guarantee that survives even if
@@ -42,16 +43,18 @@ export interface LabExecutorClock {
 }
 
 export interface LabExecutorOptions {
-  /** How many times to re-probe for a clean link before giving up. */
+  /** How many times to re-probe for a recovered target before giving up. */
   recoveryPollAttempts: number;
-  /** Wait between clean-probes; at least the wrapper's cycle interval. */
+  /** Wait between probes; at least the wrapper's cycle interval. */
   recoveryPollIntervalMs: number;
   /** Lease floor, so a lease that is already near-past still applies briefly. */
   minLeaseMs: number;
 }
 
 const DEFAULT_OPTIONS: LabExecutorOptions = {
-  recoveryPollAttempts: 12,
+  // A stopped node has to be stopped, started and rejoin before it reads healthy,
+  // which is a great deal slower than deleting a qdisc.
+  recoveryPollAttempts: 30,
   recoveryPollIntervalMs: 1_000,
   minLeaseMs: 1_000,
 };
@@ -78,16 +81,17 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     plan: DryRunPlan;
     faultLeaseExpiresAtMs: number;
   }): Promise<void> {
+    assertSingleFaultClass(input.plan);
     const ttlMs = Math.max(this.options.minLeaseMs, input.faultLeaseExpiresAtMs - this.clock.now());
     const targetsById = indexTargetsById(input.run.metadata.targetSnapshot);
-    const commands = netemApplyCommandsForPlan({
+    // Translates the WHOLE plan first: it throws for any fault this executor
+    // cannot apply, so the run never reaches fault_active on a partial fault.
+    const commands = faultApplyCommandsForPlan({
       plan: input.plan,
       targetsById,
       runTag: input.run.runKey,
       ttlMs,
     });
-    // netemApplyCommandsForPlan throws for any fault this executor cannot apply,
-    // so the run never reaches fault_active on a partially-applied fault.
     for (const command of commands) await this.queue.enqueue(command);
   }
 
@@ -97,47 +101,96 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
   }): Promise<SimulationRecoveryResult> {
     const startedAtMs = this.clock.now();
     const targetsById = indexTargetsById(input.run.metadata.targetSnapshot);
-    const recoveryTargets = netemRecoveryTargetsForPlan({
+    const { targets: recoveryTargets, skipped } = faultRecoveryTargetsForPlan({
       plan: input.plan,
       targetsById,
       runTag: input.run.runKey,
     });
     for (const target of recoveryTargets) await this.queue.enqueue(target.clear);
-    await this.waitForClean(recoveryTargets.map((target) => target.container));
+    await this.waitForRecovered(recoveryTargets);
 
     const targets: SimulationRecoveryTargetResult[] = [];
     for (const target of recoveryTargets) {
-      const [faultStateClear, expectedServiceRunning, observerFresh] = await Promise.all([
-        this.probes.qdiscClean(target.container),
-        this.probes.serviceRunning(target.container),
-        this.probes.observerFresh({ targetId: target.targetId, container: target.container }),
-      ]);
-      targets.push({
-        targetId: target.targetId,
-        faultStateClear,
-        expectedServiceRunning,
-        observerFresh,
-        checkedAtMs: this.clock.now(),
-        privateDetail: null,
-      });
+      targets.push(await this.probeTarget(target));
     }
-    const allClear = targets.every(
-      (target) => target.faultStateClear && target.expectedServiceRunning && target.observerFresh
-    );
-    return { required: true, startedAtMs, finishedAtMs: this.clock.now(), targets, allClear };
+    const allClear =
+      // A skip is something recovery could not speak for; leniency must never
+      // become a claim. An empty target list is not evidence of a clean lab.
+      skipped === 0 &&
+      targets.length > 0 &&
+      targets.every((target) => target.faultStateClear && target.expectedServiceRunning && target.observerFresh);
+    return {
+      required: recoveryTargets.length > 0,
+      startedAtMs,
+      finishedAtMs: this.clock.now(),
+      targets,
+      allClear,
+    };
   }
 
-  /** Poll the faulted containers until every link is clean or the attempts run out. */
-  private async waitForClean(containers: readonly string[]): Promise<void> {
-    const unique = [...new Set(containers)];
-    if (unique.length === 0) return;
+  /**
+   * Read one target back. Ordered, not concurrent: `serviceRunning` is a
+   * `docker inspect` and answers for a stopped container, while the other two
+   * reach INTO it and cannot. Asking them of a container that is down would be a
+   * guaranteed failure reported as a finding.
+   *
+   * `faultStateClear` carries one meaning across both classes -- "the fault this
+   * run applied is no longer in force" -- which for a service outage is the
+   * container running again, and for an impairment is the qdisc gone.
+   */
+  private async probeTarget(target: LabRecoveryTarget): Promise<SimulationRecoveryTargetResult> {
+    const running = await safeProbe(() => this.probes.serviceRunning(target.container));
+    const observerFresh = running
+      ? await safeProbe(() => this.probes.observerFresh({ targetId: target.targetId, container: target.container }))
+      : false;
+    const qdiscClean = running ? await safeProbe(() => this.probes.qdiscClean(target.container)) : false;
+    return {
+      targetId: target.targetId,
+      faultStateClear: target.faultClass === 'service' ? running : qdiscClean,
+      expectedServiceRunning: running,
+      observerFresh,
+      checkedAtMs: this.clock.now(),
+      privateDetail: null,
+    };
+  }
+
+  /**
+   * Poll until every target has come back, on a per-class predicate. A service
+   * target waits for its daemon to reappear, not merely for the container to be
+   * up: a container is running the instant Docker starts it, seconds before the
+   * node inside it is a node again.
+   */
+  private async waitForRecovered(targets: readonly LabRecoveryTarget[]): Promise<void> {
+    if (targets.length === 0) return;
     for (let attempt = 0; attempt < this.options.recoveryPollAttempts; attempt++) {
-      const states = await Promise.all(unique.map((container) => this.probes.qdiscClean(container)));
+      const states = await Promise.all(targets.map((target) => this.isRecovered(target)));
       if (states.every(Boolean)) return;
       if (attempt < this.options.recoveryPollAttempts - 1) {
         await this.clock.delay(this.options.recoveryPollIntervalMs);
       }
     }
+  }
+
+  private async isRecovered(target: LabRecoveryTarget): Promise<boolean> {
+    if (target.faultClass === 'service') {
+      if (!(await safeProbe(() => this.probes.serviceRunning(target.container)))) return false;
+      return safeProbe(() => this.probes.observerFresh({ targetId: target.targetId, container: target.container }));
+    }
+    return safeProbe(() => this.probes.qdiscClean(target.container));
+  }
+}
+
+/**
+ * A probe that throws answers "no", never propagates. A `docker exec` into a
+ * stopped container rejects, and letting that escape would abandon proveRecovery
+ * mid-flight -- parking the run in `recovery` with no findings recorded at all,
+ * which is strictly worse than a recorded failure.
+ */
+async function safeProbe(read: () => Promise<boolean>): Promise<boolean> {
+  try {
+    return await read();
+  } catch {
+    return false;
   }
 }
 

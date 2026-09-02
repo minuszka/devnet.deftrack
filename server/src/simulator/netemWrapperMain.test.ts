@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runWrapperCycle } from './netemWrapperMain.js';
 import {
+  MAX_TTL_MS,
   NetemFaultRunner,
   dispatchWrapperCommand,
   parseWrapperCommand,
@@ -11,7 +12,7 @@ import {
   type WrapperStore,
 } from './netemRunner.js';
 import { fileCommandQueue } from './netemWrapperHost.js';
-import { emptyWrapperState, type FaultAction, type WrapperState } from './netemLease.js';
+import { emptyWrapperState, serviceJobId, type FaultAction, type WrapperState } from './netemLease.js';
 
 class MemoryStore implements WrapperStore {
   state: WrapperState = emptyWrapperState();
@@ -41,6 +42,22 @@ describe('parseWrapperCommand', () => {
     expect(() => parseWrapperCommand({ op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', ttlMs: 0 })).toThrow(/ttlMs/);
     expect(() => parseWrapperCommand({ op: 'clear' })).toThrow(/jobId/);
   });
+
+  it('accepts a service-stop and validates its fields', () => {
+    expect(parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', ttlMs: 30_000 }))
+      .toEqual({ op: 'service-stop', container: 'mn01', runTag: 'r', ttlMs: 30_000 });
+    expect(() => parseWrapperCommand({ op: 'service-stop', runTag: 'r', ttlMs: 1 })).toThrow(/container/);
+    expect(() => parseWrapperCommand({ op: 'service-stop', container: 'mn01', ttlMs: 1 })).toThrow(/runTag/);
+    expect(() => parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', ttlMs: 0 })).toThrow(/ttlMs/);
+  });
+
+  it('bounds the lease from above on both arms -- an unbounded lease is no recovery bound', () => {
+    const over = MAX_TTL_MS + 1;
+    expect(() => parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', ttlMs: over })).toThrow(/ceiling/);
+    expect(() => parseWrapperCommand({ op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', ttlMs: over })).toThrow(/ceiling/);
+    // The ceiling itself is accepted; it is a bound, not an exclusion.
+    expect(parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', ttlMs: MAX_TTL_MS }).op).toBe('service-stop');
+  });
 });
 
 describe('dispatchWrapperCommand', () => {
@@ -52,6 +69,17 @@ describe('dispatchWrapperCommand', () => {
     actions.length = 0;
     await dispatchWrapperCommand(runner, { op: 'clear', jobId });
     expect(actions).toEqual([{ op: 'clear', container: 'mn01', tcArgs: ['qdisc', 'del', 'dev', 'eth0', 'root'] }]);
+  });
+
+  it('routes a service-stop to the service class, and undoes it through the same clear', async () => {
+    const { runner, actions } = fakeRunner();
+    await dispatchWrapperCommand(runner, { op: 'service-stop', container: 'mn01', runTag: 'r', ttlMs: 30_000 });
+    expect(actions).toEqual([{ op: 'stop', container: 'mn01' }]);
+    // There is no service-start command: a start is the undo of the stop.
+    const jobId = serviceJobId('r', 'mn01');
+    actions.length = 0;
+    await dispatchWrapperCommand(runner, { op: 'clear', jobId });
+    expect(actions).toEqual([{ op: 'start', container: 'mn01' }]);
   });
 });
 
