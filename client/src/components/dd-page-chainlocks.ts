@@ -30,7 +30,7 @@ export class DdPageChainLocks extends LitElement {
         flex-wrap: wrap;
         padding: 8px 14px 12px;
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         color: var(--ink-3);
       }
       .swatch {

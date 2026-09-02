@@ -40,106 +40,143 @@ export class DdShell extends LitElement {
     css`
       :host {
         display: block;
-        max-width: var(--max-w);
+        max-width: var(--content-max);
         margin: 0 auto;
-        padding: 18px 20px 48px;
+        padding: 0 var(--gutter) var(--sp-7);
       }
-      .banner {
+
+      /* Row one: the warning this network exists under, and the live counters.
+         Obvious, because every number below it is test-network arithmetic;
+         quiet, because it is on every page. */
+      .topbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 14px;
+        gap: var(--sp-3) var(--sp-4);
         flex-wrap: wrap;
-        border: 1px solid var(--accent);
-        color: var(--accent);
+        padding: var(--sp-2) 0;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .devnet {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--sp-2);
+        padding: 5px 10px;
+        border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
         background: var(--accent-wash);
-        padding: 7px 12px;
+        color: var(--accent);
         font-family: var(--font-mono);
-        font-size: 10.5px;
-        font-weight: 600;
+        font-size: var(--fs-xs);
+        font-weight: 700;
         letter-spacing: 0.14em;
         text-transform: uppercase;
+        border-radius: var(--radius);
       }
-      /* Live counters share the banner strip rather than taking a row of their
-         own: they are status, not content. Each is its own pill: at banner
-         size, run together in one faint line, they were operationally
-         important numbers nobody could read. */
       .monitor {
         display: flex;
-        gap: 6px;
+        gap: var(--sp-2);
         flex-wrap: wrap;
-        letter-spacing: 0.06em;
-        text-transform: none;
-        font-size: 11.5px;
       }
       .monitor > span {
         display: inline-flex;
         align-items: baseline;
-        gap: 5px;
-        padding: 3px 8px;
+        gap: 6px;
+        padding: 5px 10px;
         border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
         background: var(--bg-raised);
         color: var(--ink-2);
-        font-weight: 500;
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        letter-spacing: 0.04em;
       }
       .monitor b {
         color: var(--ink);
         font-weight: 700;
-        font-size: 12px;
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
       }
-      .monitor .ok {
-        color: var(--accent);
-      }
-      .monitor .bad {
-        color: var(--crit);
-      }
+      .monitor .ok { color: var(--accent); }
+      .monitor .bad { color: var(--crit); }
+
+      /* Row two: who we are, and where the chain is. The telemetry is a row of
+         labelled figures rather than one grey sentence, because tip, indexed
+         height and the round tally are things an operator reads at a glance. */
       header.site {
         display: flex;
-        align-items: baseline;
+        align-items: flex-end;
         justify-content: space-between;
         flex-wrap: wrap;
-        gap: 10px;
-        margin: 18px 0 10px;
+        gap: var(--sp-3) var(--sp-5);
+        padding: var(--sp-4) 0 var(--sp-3);
       }
       .brand {
         font-family: var(--font-mono);
-        font-size: 20px;
+        font-size: var(--fs-xl);
         font-weight: 700;
+        letter-spacing: 0.01em;
+        line-height: 1;
       }
       .brand .dim {
         color: var(--ink-3);
         font-weight: 400;
       }
-      .chainline {
-        font-family: var(--font-mono);
-        font-size: 11.5px;
-        color: var(--ink-3);
+      .telemetry {
         display: flex;
-        gap: 14px;
+        gap: var(--sp-5);
         flex-wrap: wrap;
       }
-      .chainline b {
-        color: var(--ink-2);
-        font-weight: 600;
+      .telemetry > span {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
       }
+      .telemetry i {
+        font-style: normal;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .telemetry b {
+        font-family: var(--font-mono);
+        font-size: var(--fs-md);
+        font-weight: 700;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+        line-height: 1.2;
+      }
+      .telemetry .dimb { color: var(--ink-2); font-weight: 600; }
+      .telemetry .lag b { color: var(--warn); }
+
+      /* Row three: the sections. Sticky, so the way around is never scrolled
+         out of reach; tabs with room to hit. */
       nav {
+        position: sticky;
+        top: 0;
+        z-index: 5;
         display: flex;
         gap: 2px;
         flex-wrap: wrap;
+        background: var(--bg);
         border-bottom: 1px solid var(--line);
-        margin-bottom: 18px;
+        margin-bottom: var(--sp-5);
       }
       nav a {
         font-family: var(--font-mono);
-        font-size: 11.5px;
+        font-size: var(--fs-sm);
         font-weight: 600;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--ink-3);
-        padding: 9px 13px;
+        padding: 13px 16px;
         border-bottom: 2px solid transparent;
         margin-bottom: -1px;
         text-decoration: none;
+        white-space: nowrap;
+        transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), border-color var(--t-base) var(--ease);
       }
       nav a:hover {
         color: var(--ink);
@@ -150,8 +187,16 @@ export class DdShell extends LitElement {
         color: var(--accent);
         border-bottom-color: var(--accent);
       }
-      .lag {
-        color: var(--warn);
+      @media (max-width: 1100px) {
+        nav {
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          scrollbar-width: thin;
+        }
+      }
+
+      main > * {
+        animation: enter var(--t-slow) var(--ease) both;
       }
     `,
   ];
@@ -183,32 +228,17 @@ export class DdShell extends LitElement {
   override render(): TemplateResult {
     const h = this._health;
     return html`
-      <div class="banner">
-        <span>${DEVNET_BANNER}</span>
-        ${h ? this._monitor(h) : nothing}
+      <div class="topbar">
+        <span class="devnet"><span class="live-dot" aria-hidden="true"></span>${DEVNET_BANNER}</span>
+        ${h ? this._monitor(h) : html`<span class="monitor" aria-hidden="true"><span class="skeleton" style="width:380px;height:28px"></span></span>`}
       </div>
 
       <header class="site">
         <div class="brand">devnet<span class="dim">.deftrack</span></div>
-        ${h
-          ? html`
-              <div class="chainline">
-                <span>chain <b>${h.devnet}</b></span>
-                <span>tip <b>${num(h.chainTip)}</b></span>
-                <!-- "indexed through" and not a bare count: a height and a
-                     block count differ by one, and side by side that read as
-                     an off-by-one bug rather than as two different things. -->
-                <span>indexed through <b>${num(h.indexedHeight)}</b></span>
-                ${h.behind > 0
-                  ? html`<span class="lag">behind <b>${num(h.behind)}</b></span>`
-                  : nothing}
-                <span>rounds <b>${num(h.rounds.formed)}</b> formed / <b>${num(h.rounds.failed)}</b> failed</span>
-              </div>
-            `
-          : nothing}
+        ${h ? this._telemetry(h) : html`<div class="telemetry" aria-hidden="true"><span class="skeleton" style="width:520px;height:36px"></span></div>`}
       </header>
 
-      <nav>
+      <nav aria-label="Sections">
         ${ROUTES.filter((r) => !r.hidden).map(
           (r) => html`
             <a href=${r.path} aria-current=${r.path === this._route.route.path ? 'page' : nothing}>
@@ -218,7 +248,7 @@ export class DdShell extends LitElement {
         )}
       </nav>
 
-      ${this._page()}
+      <main>${this._page()}</main>
     `;
   }
 
@@ -231,7 +261,7 @@ export class DdShell extends LitElement {
   private _monitor(h: HealthSnapshot): TemplateResult {
     const allUp = h.masternodes.total > 0 && h.masternodes.enabled === h.masternodes.total;
     return html`
-      <span class="monitor">
+      <span class="monitor" role="status" aria-label="Network counters">
         <span>wallet <b>v${h.nodeVersion}</b></span>
         <span>mn <b>${num(h.masternodes.total)}</b></span>
         <span>
@@ -243,8 +273,26 @@ export class DdShell extends LitElement {
         <span>staking <b>${num(h.stakers.active)}</b></span>
         ${h.failing?.length
           ? html`<span>status <b class="bad">${h.status}: ${h.failing.join(', ')}</b></span>`
-          : nothing}
+          : html`<span>status <b class="ok">${h.status}</b></span>`}
       </span>
+    `;
+  }
+
+  private _telemetry(h: HealthSnapshot): TemplateResult {
+    return html`
+      <div class="telemetry" role="status" aria-label="Chain position">
+        <span><i>chain</i><b class="dimb">${h.devnet}</b></span>
+        <span><i>tip</i><b>${num(h.chainTip)}</b></span>
+        <!-- "indexed through" and not a bare count: a height and a block count
+             differ by one, and side by side that read as an off-by-one bug
+             rather than as two different things. -->
+        <span><i>indexed through</i><b>${num(h.indexedHeight)}</b></span>
+        ${h.behind > 0 ? html`<span class="lag"><i>behind</i><b>${num(h.behind)}</b></span>` : nothing}
+        <span
+          ><i>DKG rounds</i
+          ><b>${num(h.rounds.formed)} <span class="dimb">formed</span> / ${num(h.rounds.failed)} <span class="dimb">failed</span></b></span
+        >
+      </div>
     `;
   }
 

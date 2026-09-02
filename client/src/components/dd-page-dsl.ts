@@ -41,7 +41,7 @@ export class DdPageDsl extends LitElement {
         flex-wrap: wrap;
         padding: 8px 14px 12px;
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         color: var(--ink-3);
       }
       .swatch {
@@ -59,7 +59,7 @@ export class DdPageDsl extends LitElement {
         padding: 1px 8px;
         border-radius: 999px;
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
       }
       .pill.committed {
         background: color-mix(in srgb, var(--accent) 18%, transparent);

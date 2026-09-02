@@ -39,7 +39,7 @@ export class DdPagePose extends LitElement {
     css`
       .kind {
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;

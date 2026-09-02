@@ -46,7 +46,7 @@ export class DdPagePeers extends LitElement {
         padding: 10px 14px;
         border-top: 1px solid var(--line-soft);
         color: var(--ink-3);
-        font-size: 12px;
+        font-size: var(--fs-sm);
         line-height: 1.5;
       }
     `,

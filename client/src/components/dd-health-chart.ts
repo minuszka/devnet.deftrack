@@ -1,5 +1,6 @@
 import { LitElement, css, html, svg, nothing, type TemplateResult } from 'lit';
 import type { HealthTimelinePoint } from '@devnet-deftrack/shared';
+import { ago, num, ratio } from '../lib/format.js';
 import { baseStyles } from '../styles/shared.js';
 
 /**
@@ -12,94 +13,196 @@ import { baseStyles } from '../styles/shared.js';
  * failure rail below the plot, never as a point at zero -- a zero would assert
  * that the quorum formed with no valid members, which is a different and
  * untrue statement.
+ *
+ * Drawn at the element's real width in real pixels rather than scaled from a
+ * fixed viewBox, so the labels are the same size on a laptop and on a wall,
+ * and the height is the height an operator can read across a room.
  */
+const H = 356;
+const PAD_L = 62;
+const PAD_R = 26;
+const PAD_T = 26;
+const PLOT_H = 220;
+const RAIL_Y = PAD_T + PLOT_H + 40;
+const XLABEL_Y = RAIL_Y + 34;
+
 export class DdHealthChart extends LitElement {
   static override properties = {
     points: { attribute: false },
     minSize: { attribute: false },
+    _width: { state: true },
+    _hover: { state: true },
   };
 
   points: HealthTimelinePoint[] = [];
   /** Draws the "cannot form below this" reference line when derivable. */
   minSize: number | null = null;
+  private _width = 900;
+  private _hover: number | null = null;
+  private _ro: ResizeObserver | null = null;
+  private _raf = 0;
+  private _pendingHover: number | null = null;
 
   static override styles = [
     baseStyles,
     css`
       :host {
         display: block;
+        position: relative;
       }
       svg {
         width: 100%;
-        height: auto;
+        height: ${H}px;
         display: block;
+        cursor: crosshair;
       }
       .axis-label {
         font-family: var(--font-mono);
-        font-size: 9px;
+        font-size: 12px;
         fill: var(--ink-3);
+      }
+      .axis-label.thr {
+        fill: var(--warn);
       }
       .rail-label {
         font-family: var(--font-mono);
-        font-size: 9px;
+        font-size: 12px;
         fill: var(--crit);
+        letter-spacing: 0.04em;
+      }
+      .pt {
+        transition: r var(--t-fast) var(--ease);
       }
       .empty {
-        padding: 32px 16px;
+        padding: var(--sp-6) var(--sp-4);
         text-align: center;
         color: var(--ink-3);
         font-family: var(--font-mono);
-        font-size: 12.5px;
+        font-size: var(--fs-sm);
       }
       .legend {
         display: flex;
-        gap: 16px;
-        padding: 8px 12px 0;
+        gap: var(--sp-5);
+        padding: var(--sp-2) var(--sp-4) var(--sp-3);
         font-family: var(--font-mono);
-        font-size: 10.5px;
+        font-size: var(--fs-xs);
         color: var(--ink-3);
         flex-wrap: wrap;
+        border-top: 1px solid var(--line-soft);
       }
       .key {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
       }
       .swatch {
-        width: 10px;
+        width: 14px;
         height: 2px;
         background: var(--s1);
       }
       .swatch.fail {
-        height: 8px;
-        width: 2px;
+        height: 12px;
+        width: 3px;
         background: var(--crit);
       }
       .swatch.thr {
-        background: var(--warn);
+        background: none;
         height: 0;
-        border-top: 1px dashed var(--warn);
+        border-top: 2px dashed var(--warn);
       }
+      /* The tooltip follows the nearest round; it never takes the pointer. */
+      .tip {
+        position: absolute;
+        transform: translate(-50%, calc(-100% - 14px));
+        pointer-events: none;
+        z-index: 2;
+        min-width: 180px;
+        padding: var(--sp-2) var(--sp-3);
+        background: var(--surface-3);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-2);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: var(--ink-2);
+        white-space: nowrap;
+        line-height: 1.5;
+      }
+      .tip b {
+        color: var(--ink);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .tip .st {
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+      }
+      .tip .st.formed { color: var(--good); }
+      .tip .st.failed { color: var(--crit); }
+      .tip .st.pending { color: var(--warn); }
+      .tip .st.impossible { color: var(--ink-3); }
     `,
   ];
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._width = Math.max(600, this.clientWidth || 900);
+    this._ro = new ResizeObserver((entries) => {
+      const w = Math.floor(entries[0]?.contentRect.width ?? 0);
+      if (w > 0 && w !== this._width) this._width = Math.max(600, w);
+    });
+    this._ro.observe(this);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._ro?.disconnect();
+    this._ro = null;
+    if (this._raf) cancelAnimationFrame(this._raf);
+  }
+
+  private _x(i: number): number {
+    const n = this.points.length;
+    const W = this._width;
+    return n === 1 ? PAD_L + (W - PAD_L - PAD_R) / 2 : PAD_L + (i * (W - PAD_L - PAD_R)) / (n - 1);
+  }
+
+  private _y(v: number): number {
+    return PAD_T + PLOT_H - v * PLOT_H;
+  }
+
+  /** Nearest round to the pointer, one state write per animation frame. */
+  private _onMove(e: MouseEvent): void {
+    const n = this.points.length;
+    if (n === 0) return;
+    const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const step = n === 1 ? 1 : (this._width - PAD_L - PAD_R) / (n - 1);
+    const i = Math.max(0, Math.min(n - 1, Math.round((x - PAD_L) / step)));
+    this._pendingHover = i;
+    if (!this._raf) {
+      this._raf = requestAnimationFrame(() => {
+        this._raf = 0;
+        if (this._pendingHover !== this._hover) this._hover = this._pendingHover;
+      });
+    }
+  }
+
+  private _onLeave(): void {
+    this._pendingHover = null;
+    this._hover = null;
+  }
 
   override render(): TemplateResult {
     if (this.points.length === 0) {
       return html`<div class="empty">No rounds in this window.</div>`;
     }
 
-    const W = 900;
-    const H = 260;
-    const padL = 44;
-    const padR = 14;
-    const padT = 14;
-    const plotH = 176;
-    const railY = padT + plotH + 26;
-
+    const W = this._width;
     const n = this.points.length;
-    const x = (i: number): number =>
-      n === 1 ? padL + (W - padL - padR) / 2 : padL + (i * (W - padL - padR)) / (n - 1);
-    const y = (v: number): number => padT + plotH - v * plotH;
+    const x = (i: number): number => this._x(i);
+    const y = (v: number): number => this._y(v);
 
     const formed = this.points
       .map((p, i) => ({ p, i }))
@@ -128,40 +231,88 @@ export class DdHealthChart extends LitElement {
         ? this.minSize / this.points[0].effectiveSize
         : null;
 
+    // A handful of height labels along the bottom, evenly spaced in index.
+    const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - PAD_L - PAD_R) / 160))));
+    const xTicks: number[] = [];
+    for (let i = 0; i < n; i += every) xTicks.push(i);
+    if (xTicks[xTicks.length - 1] !== n - 1 && n - 1 - (xTicks[xTicks.length - 1] ?? 0) > every / 2) xTicks.push(n - 1);
+
+    const hi = this._hover;
+    const hover: HealthTimelinePoint | null = hi !== null ? (this.points[hi] ?? null) : null;
+    const summary = `${n} rounds: ${formed.length} formed, ${failed.length} did not form`;
+
     return html`
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Health ratio per DKG round">
+      <svg
+        viewBox="0 0 ${W} ${H}"
+        width=${W}
+        height=${H}
+        role="img"
+        aria-label="Health ratio per DKG round. ${summary}."
+        @mousemove=${this._onMove}
+        @mouseleave=${this._onLeave}
+      >
         ${[0, 0.25, 0.5, 0.75, 1].map(
           (t) => svg`
-            <line x1=${padL} x2=${W - padR} y1=${y(t)} y2=${y(t)} stroke="var(--grid)" stroke-width="1" />
-            <text class="axis-label" x=${padL - 8} y=${y(t) + 3} text-anchor="end">${(t * 100).toFixed(0)}%</text>
+            <line x1=${PAD_L} x2=${W - PAD_R} y1=${y(t)} y2=${y(t)} stroke="var(--grid)" stroke-width="1" />
+            <text class="axis-label" x=${PAD_L - 12} y=${y(t) + 4} text-anchor="end">${(t * 100).toFixed(0)}%</text>
           `
         )}
+        <line x1=${PAD_L} x2=${PAD_L} y1=${PAD_T} y2=${PAD_T + PLOT_H} stroke="var(--axis)" stroke-width="1" />
         ${threshold !== null && threshold <= 1
           ? svg`
-            <line x1=${padL} x2=${W - padR} y1=${y(threshold)} y2=${y(threshold)}
-                  stroke="var(--warn)" stroke-width="1" stroke-dasharray="4 3" />
-            <text class="axis-label" x=${W - padR} y=${y(threshold) - 4} text-anchor="end"
-                  fill="var(--warn)">minSize</text>
+            <line x1=${PAD_L} x2=${W - PAD_R} y1=${y(threshold)} y2=${y(threshold)}
+                  stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="6 4" />
+            <text class="axis-label thr" x=${W - PAD_R} y=${y(threshold) - 6} text-anchor="end">minSize floor · ${ratio(threshold)}</text>
           `
+          : nothing}
+        ${hi !== null
+          ? svg`<line x1=${x(hi)} x2=${x(hi)} y1=${PAD_T} y2=${RAIL_Y + 12} stroke="var(--axis)" stroke-width="1" stroke-dasharray="3 3" />`
           : nothing}
         ${segments.map(
           (seg) => svg`
-            <polyline fill="none" stroke="var(--s1)" stroke-width="1.5"
+            <polyline fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"
                       points=${seg.map((pt) => `${pt.x},${pt.y}`).join(' ')} />
           `
         )}
-        ${formed.map(({ p, i }) => svg`<circle cx=${x(i)} cy=${y(p.healthRatio)} r="2.5" fill="var(--s1)" />`)}
+        ${formed.map(
+          ({ p, i }) =>
+            svg`<circle class="pt" cx=${x(i)} cy=${y(p.healthRatio)} r=${i === hi ? 6 : 3} fill="var(--s1)"
+                        stroke=${i === hi ? 'var(--bg)' : 'none'} stroke-width="2" />`
+        )}
 
-        <line x1=${padL} x2=${W - padR} y1=${railY} y2=${railY} stroke="var(--line)" stroke-width="1" />
-        ${failed.map(({ i }) => svg`<line x1=${x(i)} x2=${x(i)} y1=${railY - 7} y2=${railY + 7}
-                                          stroke="var(--crit)" stroke-width="2" />`)}
-        <text class="rail-label" x=${padL} y=${railY - 11} text-anchor="start">did not form</text>
+        <line x1=${PAD_L} x2=${W - PAD_R} y1=${RAIL_Y} y2=${RAIL_Y} stroke="var(--line)" stroke-width="1" />
+        ${failed.map(
+          ({ i }) => svg`<line x1=${x(i)} x2=${x(i)} y1=${RAIL_Y - (i === hi ? 13 : 9)} y2=${RAIL_Y + (i === hi ? 13 : 9)}
+                                stroke="var(--crit)" stroke-width=${i === hi ? 4 : 2.5} />`
+        )}
+        <text class="rail-label" x=${PAD_L} y=${RAIL_Y - 18} text-anchor="start">did not form</text>
+
+        ${xTicks.map(
+          (i) => svg`<text class="axis-label" x=${x(i)} y=${XLABEL_Y}
+                           text-anchor=${i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}>${num(this.points[i]?.expectedHeight ?? 0)}</text>`
+        )}
       </svg>
+
+      ${hover !== null && hi !== null ? this._tooltip(hover, x(hi), typeof hover.healthRatio === 'number' ? y(hover.healthRatio) : RAIL_Y - 12) : nothing}
 
       <div class="legend">
         <span class="key"><span class="swatch"></span> health ratio (formed)</span>
         <span class="key"><span class="swatch fail"></span> round did not form</span>
         ${threshold !== null ? html`<span class="key"><span class="swatch thr"></span> minSize floor</span>` : nothing}
+        <span class="key subtle">hover a round for its numbers</span>
+      </div>
+    `;
+  }
+
+  private _tooltip(p: HealthTimelinePoint, px: number, py: number): TemplateResult {
+    const left = Math.max(100, Math.min(this._width - 100, px));
+    return html`
+      <div class="tip" style="left:${left}px;top:${py}px" role="status">
+        <div><b>H ${num(p.expectedHeight)}</b> · <span class="st ${p.status}">${p.status}</span></div>
+        ${typeof p.healthRatio === 'number'
+          ? html`<div>health <b>${ratio(p.healthRatio)}</b> · valid <b>${num(p.numValidMembers)}/${num(p.effectiveSize)}</b></div>`
+          : html`<div>no commitment mined</div>`}
+        <div>punished <b>${num(p.punishedCount)}</b> · ${ago(p.detectedAt)}</div>
       </div>
     `;
   }

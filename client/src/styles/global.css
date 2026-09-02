@@ -1,4 +1,7 @@
-/* ── Design tokens, ported verbatim from the SCAN explorer ─────────────────────────────────────────── */
+/* ── Design tokens ─────────────────────────────────────────────────────────────────────────────────────
+   The palette is the SCAN explorer's, ported verbatim so the two sites read as one family. Everything
+   below the palette -- the semantic names, spacing, radii, motion and the type scale -- is the layer
+   components are meant to reach for, so a value lives in one place and not in forty components. */
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
@@ -45,7 +48,9 @@
   --axis: #38423a;
 
   --shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.45), 0 6px 18px rgba(0, 0, 0, 0.28);
   --glow: 0 0 12px rgba(168, 230, 75, 0.25);
+  --zebra: rgba(255, 255, 255, 0.018);
 }
 
 :root[data-theme='light'] {
@@ -93,14 +98,63 @@
   --axis: #c6cfc0;
 
   --shadow: 0 1px 2px rgba(20, 30, 15, 0.06);
+  --shadow-2: 0 1px 2px rgba(20, 30, 15, 0.08), 0 6px 18px rgba(20, 30, 15, 0.08);
   --glow: none;
+  --zebra: rgba(0, 0, 0, 0.018);
 }
 
 :root {
+  /* Semantic names over the palette. Components should reach for these. */
+  --background: var(--bg);
+  --surface-elevated: var(--surface-3);
+  --border: var(--line);
+  --border-soft: var(--line-soft);
+  --border-strong: var(--line-strong);
+  --green: var(--accent);
+  --green-muted: var(--accent-dim);
+  --warning: var(--warn);
+  --danger: var(--crit);
+  --text: var(--ink);
+  --text-2: var(--ink-2);
+  --text-muted: var(--ink-3);
+
+  /* Spacing: one scale, used for padding, gaps and margins alike. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* Geometry: precise and mostly square. */
+  --radius: 2px;
+  --radius-md: 4px;
+
+  /* Motion: fast enough to feel like a response, never a performance. */
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 240ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Type scale. Four levels the eye can tell apart at arm's length:
+     metrics, section titles, content, metadata. */
+  --fs-xs: 12px;
+  --fs-sm: 13.5px;
+  --fs-base: 16px;
+  --fs-md: 17px;
+  --fs-lg: 19px;
+  --fs-xl: 23px;
+  --fs-metric: clamp(28px, 1.9vw, 40px);
+
+  /* Layout: the full width of the screen, with gutters that grow with it and a
+     ceiling only where a line of text would otherwise run across a wall. */
+  --content-max: 2400px;
+  --gutter: clamp(16px, 2.2vw, 48px);
+  --max-w: var(--content-max);
+
   --font-sans: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
   --font-mono: 'Cascadia Mono', 'Cascadia Code', ui-monospace, 'JetBrains Mono', Consolas, 'SF Mono', monospace;
-  --radius: 2px;
-  --max-w: 1360px;
 }
 
 * { box-sizing: border-box; }
@@ -111,7 +165,7 @@ html, body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: var(--fs-base);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -122,3 +176,7 @@ html, body {
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 0; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
