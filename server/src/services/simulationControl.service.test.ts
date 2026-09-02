@@ -492,3 +492,48 @@ describe('one live run at a time', () => {
     expect(run.state.status).toBe('fault_active');
   });
 });
+
+describe('a retried start or recover is answered, not refused', () => {
+  it('returns the run when the same start request already landed', async () => {
+    // After a network timeout the operator repeats the call. The run is
+    // fault_active where only armed is allowed, so this used to answer 409 --
+    // leaving them no safe way to learn whether their call had taken effect.
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor);
+    const runKey = await driveToLiveArmed(service, 'regtest', 'idem-start');
+
+    const first = await service.start({ runKey, idempotencyKey: 'idem-start-key' });
+    expect(first.run.state.status).toBe('fault_active');
+
+    const replay = await service.start({ runKey, idempotencyKey: 'idem-start-key' });
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.run.state.status).toBe('fault_active');
+    // And it did not start the fault a second time.
+    expect(executor.activated).toBe(1);
+  });
+
+  it('returns the run when the same recover request already landed', async () => {
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor);
+    const runKey = await driveToLiveArmed(service, 'regtest', 'idem-rec');
+    await service.start({ runKey, idempotencyKey: 'idem-rec-start' });
+
+    const first = await service.recover({ runKey, idempotencyKey: 'idem-rec-key' });
+    expect(first.run.state.status).toBe('cooldown');
+
+    const replay = await service.recover({ runKey, idempotencyKey: 'idem-rec-key' });
+    expect(replay.run.state.status).toBe('cooldown');
+    // Recovery was proven once, not twice.
+    expect(executor.recovered).toBe(1);
+  });
+
+  it('still refuses a DIFFERENT request against a run that has moved on', async () => {
+    // Idempotency is about one request being repeated, never about letting a new
+    // caller start a run that is already running.
+    const { service } = harness(mnStop, 'operator', new FakeExecutor());
+    const runKey = await driveToLiveArmed(service, 'regtest', 'idem-other');
+    await service.start({ runKey, idempotencyKey: 'idem-other-first' });
+    await expect(service.start({ runKey, idempotencyKey: 'idem-other-second' }))
+      .rejects.toMatchObject({ code: 'INVALID_STATE' });
+  });
+});
