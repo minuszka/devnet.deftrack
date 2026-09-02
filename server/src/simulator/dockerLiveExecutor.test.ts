@@ -15,7 +15,13 @@ import type { SimulationTargetSnapshot } from '../models/SimulationRun.js';
 class FakeQueue implements CommandQueue {
   enqueued: any[] = [];
   async enqueue(command: unknown): Promise<void> { this.enqueued.push(command); }
-  async drain(): Promise<unknown[]> { return this.enqueued.splice(0); }
+  async claim(): Promise<any[]> {
+    return this.enqueued.splice(0).map((payload) => ({
+      payload, attempts: 1,
+      ack: async () => {}, retry: async () => {}, reject: async () => {},
+    }));
+  }
+  async recoverInflight(): Promise<number> { return 0; }
 }
 
 class FakeClock implements LabExecutorClock {

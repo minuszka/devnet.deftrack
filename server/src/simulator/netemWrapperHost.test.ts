@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dockerExecArgv, dockerServiceArgv, fileCommandQueue } from './netemWrapperHost.js';
+import {
+  MAX_COMMAND_ATTEMPTS,
+  dockerExecArgv,
+  dockerServiceArgv,
+  fileCommandQueue,
+} from './netemWrapperHost.js';
 import { tcApplyArgs, tcClearArgs, type NetemSpec } from './netemLease.js';
 
 describe('dockerExecArgv', () => {
@@ -39,24 +44,98 @@ describe('dockerServiceArgv', () => {
   });
 });
 
-describe('fileCommandQueue.drain', () => {
-  it('quarantines a corrupt file and still returns every well-formed command beside it', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'wrapper-drain-'));
-    try {
+describe('fileCommandQueue: a command is claimed, not consumed', () => {
+  const withDir = async (fn: (dir: string) => Promise<void>) => {
+    const dir = await mkdtemp(join(tmpdir(), 'wrapper-queue-'));
+    try { await fn(dir); } finally { await rm(dir, { recursive: true, force: true }); }
+  };
+
+  it('survives a crash between claiming and applying', async () => {
+    // The whole point. The old queue deleted the file and only then handed the
+    // command on, so a crash in that gap lost it outright -- while the
+    // orchestrator had already recorded the fault as active.
+    await withDir(async (dir) => {
       const queue = fileCommandQueue(dir);
       await queue.enqueue({ op: 'clear', jobId: 'a' });
-      // A half-written file lands between two good ones; parsing before deleting
-      // is what stops it destroying the batch. A lost service-stop is a node that
-      // never goes down -- or, worse, one that never comes back up.
-      await writeFile(join(dir, '0000000000000000-000000001-deadbeef.json'), '{ not json', 'utf8');
+      const [claimed] = await queue.claim();
+      expect(claimed!.payload).toEqual({ op: 'clear', jobId: 'a' });
+      // ...crash here: never acked.
+      expect(await queue.claim()).toEqual([]); // in flight, not pending
+      expect(await queue.recoverInflight()).toBe(1);
+      const [again] = await queue.claim();
+      expect(again!.payload).toEqual({ op: 'clear', jobId: 'a' });
+      expect(again!.attempts).toBe(2);
+    });
+  });
+
+  it('removes a command only once it was applied', async () => {
+    await withDir(async (dir) => {
+      const queue = fileCommandQueue(dir);
+      await queue.enqueue({ op: 'clear', jobId: 'a' });
+      const [claimed] = await queue.claim();
+      await claimed!.ack();
+      expect(await queue.recoverInflight()).toBe(0);
+      expect(await queue.claim()).toEqual([]);
+    });
+  });
+
+  it('returns a failed command to pending, counting the attempt', async () => {
+    await withDir(async (dir) => {
+      const queue = fileCommandQueue(dir);
+      await queue.enqueue({ op: 'clear', jobId: 'a' });
+      const [first] = await queue.claim();
+      expect(first!.attempts).toBe(1);
+      await first!.retry();
+      const [second] = await queue.claim();
+      expect(second!.attempts).toBe(2);
+    });
+  });
+
+  it('quarantines a command that keeps killing the wrapper, rather than recovering it for ever', async () => {
+    // The attempt is persisted when the command is CLAIMED, not only when it is
+    // retried, so a command that never returns an ack -- because it takes the
+    // process down with it -- is still counted each time.
+    await withDir(async (dir) => {
+      const queue = fileCommandQueue(dir);
+      await queue.enqueue({ op: 'clear', jobId: 'poison' });
+      for (let i = 0; i < MAX_COMMAND_ATTEMPTS; i++) {
+        const [c] = await queue.claim();
+        expect(c, `claim ${i + 1}`).toBeDefined();
+        // ...crash: never acked, never retried.
+        await queue.recoverInflight();
+      }
+      expect(await queue.claim()).toEqual([]);
+      expect(await readdir(join(dir, 'rejected'))).toHaveLength(1);
+    });
+  });
+
+  it('quarantines a command that has failed too many times, rather than circling for ever', async () => {
+    await withDir(async (dir) => {
+      const queue = fileCommandQueue(dir);
+      await queue.enqueue({ op: 'clear', jobId: 'a' });
+      for (let i = 0; i < MAX_COMMAND_ATTEMPTS; i++) {
+        const [c] = await queue.claim();
+        expect(c).toBeDefined();
+        await c!.retry();
+      }
+      expect(await queue.claim()).toEqual([]);
+      expect(await readdir(join(dir, 'rejected'))).toHaveLength(1);
+    });
+  });
+
+  it('quarantines a corrupt file and still claims every well-formed command beside it', async () => {
+    await withDir(async (dir) => {
+      const queue = fileCommandQueue(dir);
+      await queue.enqueue({ op: 'clear', jobId: 'a' });
+      // A half-written file lands between two good ones; parsing before moving is
+      // what stops it destroying the batch.
+      await mkdir(join(dir, 'pending'), { recursive: true });
+      await writeFile(join(dir, 'pending', '0000000000000000-000000001-deadbeef.json'), '{ not json', 'utf8');
       await queue.enqueue({ op: 'clear', jobId: 'b' });
 
-      const drained = await queue.drain();
-      expect(drained).toEqual([{ op: 'clear', jobId: 'a' }, { op: 'clear', jobId: 'b' }]);
+      const claimed = await queue.claim();
+      expect(claimed.map((c) => c.payload)).toEqual([{ op: 'clear', jobId: 'a' }, { op: 'clear', jobId: 'b' }]);
       expect(await readdir(join(dir, 'rejected'))).toHaveLength(1);
-      expect(await queue.drain()).toEqual([]); // the quarantined file is not re-read
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    });
   });
 });

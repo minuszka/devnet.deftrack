@@ -27,6 +27,10 @@ const exec = promisify(execFile);
 const CONTAINER = 'lab-accept';
 const IMAGE = process.env.DEFCON_IMAGE ?? 'defcon-core:test';
 const TTL_MS = 30_000;
+// The executor refuses any container outside its own Compose project, so the
+// acceptance container carries the label a real lab node would. Exercising the
+// guard rather than stepping around it is the point.
+const LAB_PROJECT = 'defcon-finality-lab';
 const spec: NetemSpec = { container: CONTAINER, kind: 'latency', args: ['120ms'] };
 
 async function docker(...args: string[]): Promise<string> {
@@ -52,7 +56,11 @@ const silent: RunnerLogger = { info: () => {}, error: () => {} };
 
 async function main(): Promise<void> {
   await docker('rm', '-f', CONTAINER).catch(() => '');
-  await docker('run', '-d', '--name', CONTAINER, '--cap-add', 'NET_ADMIN', IMAGE, 'sleep', '600');
+  await docker(
+    'run', '-d', '--name', CONTAINER,
+    '--label', `com.docker.compose.project=${LAB_PROJECT}`,
+    '--cap-add', 'NET_ADMIN', IMAGE, 'sleep', '600'
+  );
   const dir = await mkdtemp(join(tmpdir(), 'lab-accept-'));
   try {
     let now = 1_000;
@@ -105,7 +113,7 @@ async function main(): Promise<void> {
       // sleep, so stand it in with the running-state probe -- the netem path is what
       // section 4 proves, and faultStateClear is read from the real qdisc regardless.
       const probes = { ...realProbes, observerFresh: (i: { container: string }) => realProbes.serviceRunning(i.container) };
-      const executor = new DockerLiveExecutor(liveQueue, probes, systemLabClock, { recoveryPollIntervalMs: 300, recoveryPollAttempts: 20 });
+      const executor = new DockerLiveExecutor(liveQueue, probes, systemLabClock, { recoveryPollIntervalMs: 300, recoveryPollAttempts: 20, allowedContainerProject: LAB_PROJECT });
 
       const labRun = {
         runKey: 'accept-live', metadataFingerprint: 'fp',
