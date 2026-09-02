@@ -4,7 +4,7 @@ import type {
   MasternodeTimelinePoint,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
-import { api, type ChainLockReport, type HealthSnapshot } from '../lib/api.js';
+import { api, type ChainLockReport, type ExperimentRow, type HealthSnapshot } from '../lib/api.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
@@ -22,6 +22,7 @@ export class DdPageOverview extends LitElement {
     _mn: { state: true },
     _health: { state: true },
     _clocks: { state: true },
+    _running: { state: true },
     _error: { state: true },
     _loading: { state: true },
   };
@@ -32,6 +33,7 @@ export class DdPageOverview extends LitElement {
   private _mn: MasternodeTimelinePoint | null = null;
   private _health: HealthSnapshot | null = null;
   private _clocks: ChainLockReport | null = null;
+  private _running: ExperimentRow[] = [];
   private _error = '';
   private _loading = true;
   private _timer: number | null = null;
@@ -57,15 +59,53 @@ export class DdPageOverview extends LitElement {
       .q60.live {
         border-left-color: var(--accent);
       }
-      .q60 .tag {
+      .q60 .tag,
+      .run .tag {
         font-family: var(--font-mono);
         font-size: 10.5px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--ink-3);
       }
-      .q60 .mono {
+      .q60 .mono,
+      .run .mono {
         font-family: var(--font-mono);
+      }
+
+      /* A run that is open right now is an intervention in progress: every
+         figure below is being measured under it, so it is announced beside
+         the Q60 line, and the gear turns for as long as the run is open. */
+      .run {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 0 0 14px;
+        padding: 10px 14px;
+        border: 1px solid var(--line-soft);
+        border-left: 3px solid var(--warn);
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .run .gear {
+        width: 14px;
+        height: 14px;
+        flex: none;
+        color: var(--warn);
+        animation: spin 2.4s linear infinite;
+      }
+      .run .since {
+        color: var(--ink-2);
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .run .gear {
+          animation: none;
+        }
       }
       .more {
         padding: 10px 14px;
@@ -195,7 +235,7 @@ export class DdPageOverview extends LitElement {
 
   private async _load(): Promise<void> {
     try {
-      const [timeline, rounds, mn, health, clocks] = await Promise.all([
+      const [timeline, rounds, mn, health, clocks, running] = await Promise.all([
         api.healthTimeline(24 * 7),
         api.rounds({ limit: RECENT }),
         api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
@@ -203,6 +243,8 @@ export class DdPageOverview extends LitElement {
         // Only for the switchover banner; a failure hides the banner rather
         // than the page.
         api.chainlocks(50).catch(() => null),
+        // Only for the running-experiment line; a failure hides the line.
+        api.experiments({ status: 'running', limit: 5 }).catch(() => null),
       ]);
       this._timeline = timeline;
       this._rounds = rounds.items;
@@ -210,6 +252,7 @@ export class DdPageOverview extends LitElement {
       this._mn = mn.points.at(-1) ?? null;
       this._health = health;
       this._clocks = clocks;
+      this._running = running?.items ?? [];
       this._error = '';
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
@@ -245,7 +288,7 @@ export class DdPageOverview extends LitElement {
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
       ${this._loading && !s ? html`<div class="note">Loading…</div>` : nothing}
-      ${s ? this._stateBar(status) : nothing} ${this._q60Banner()}
+      ${s ? this._stateBar(status) : nothing} ${this._q60Banner()} ${this._experimentBanner()}
       ${s ? this._tiles(s, status) : nothing}
       ${this._rounds.length > 0 ? this._chartOrTimeline() : nothing} ${this._recent(status)}
     `;
@@ -292,6 +335,45 @@ export class DdPageOverview extends LitElement {
         spacing).</span
       >
     </section>`;
+  }
+
+  /**
+   * The run that is open right now, if any. Every number on this page is
+   * being measured under that intervention, so the fact belongs at the top,
+   * beside the Q60 line, and not only on the Experiments page. A closed run
+   * has nothing to announce here.
+   */
+  private _experimentBanner(): TemplateResult | typeof nothing {
+    if (this._running.length === 0) return nothing;
+    return html`${this._running.map(
+      (r) => html`<section class="run">
+        <svg
+          class="gear"
+          viewBox="0 0 24 24"
+          role="img"
+          aria-label="running"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"
+          />
+        </svg>
+        <span class="tag">Experiment running</span>
+        <span>
+          <a href="/experiments/${r.runKey}">${r.title}</a>
+          <span class="since">
+            — since block <span class="mono">${num(r.startHeight)}</span>${r.intervention
+              ? html`, ${r.intervention.kind}, ${num(r.intervention.targets.length)} target(s)`
+              : nothing}, started ${ago(r.startedAt)}.
+          </span>
+        </span>
+      </section>`
+    )}`;
   }
 
   private _stateBar(status: NetworkStatus): TemplateResult {
