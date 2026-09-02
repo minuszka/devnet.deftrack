@@ -4,9 +4,11 @@ import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './db.js';
 import { rpc } from './services/rpc.service.js';
+import { syncService } from './services/sync.service.js';
 import { assertLabChain, assertLabDatabaseIsolated } from './domain/labIsolation.js';
 import { EXECUTOR_LAB_NETWORK } from './services/simulationControl.service.js';
 import simulationAdminRoutes from './routes/v1/simulationAdmin.v1.routes.js';
+import peersRoutes from './routes/v1/peers.v1.routes.js';
 import {
   initializeSimulationPersistenceIndexes,
   MongoSimulationPersistenceRepository,
@@ -31,10 +33,18 @@ import { sendError } from './utils/http.js';
  * is exactly the kind of switch that is set wrong on a host once and never
  * noticed.
  *
- * What this process does NOT start is the point of it: no sync, no pollers, no
- * ZMQ, no public explorer routes. It composes the simulation control API, its
- * persistence and its reconcile sweep, against the lab chain and the lab's own
- * database -- nothing that could read or write the devnet record.
+ * It composes the simulation control API, its persistence, its reconcile sweep,
+ * the observation ingest and the block indexer -- against the lab chain and the
+ * lab's OWN database, so nothing here can read or write the devnet record. What
+ * it still does not start is everything the lab has no use for: the masternode
+ * and quorum pollers, ZMQ, and the public explorer views.
+ *
+ * The indexer is here because the preflight requires it. `explorer-synced` is a
+ * required check and reads SyncState and indexed blocks; the baseline and the
+ * whole measurement pipeline read them too. A lab that cannot index its own
+ * chain can never produce a measurement, so excluding the indexer -- which the
+ * first version of this file did -- left a gate nothing could pass. Isolation is
+ * the separate database's job, not the indexer's absence.
  */
 
 async function main(): Promise<void> {
@@ -57,6 +67,9 @@ async function main(): Promise<void> {
     { logger }
   );
   reconcileService.start();
+  // Indexes the LAB chain into the LAB database. The devnet record is out of
+  // reach by construction: this process never opened that connection.
+  syncService.start();
 
   const app = express();
   app.disable('x-powered-by');
@@ -68,6 +81,11 @@ async function main(): Promise<void> {
     res.json({ success: true, data: { lab: true, chain: info.chain, network: EXECUTOR_LAB_NETWORK } });
   });
   app.use('/api/v1/simulations', simulationAdminRoutes);
+  // The observation ingest, so lab telemetry arrives by the SAME path the fleet
+  // uses. The preflight's observer-fresh check then measures the same thing here
+  // as it does on the devnet; a lab that synthesised HostStatus rows directly
+  // would be forging the very signal the check exists to read.
+  app.use('/api/v1/peers', peersRoutes);
   app.use((_req, res) => sendError(res, 404, 'not found'));
 
   const server = app.listen(config.lab.port, config.lab.host, () => {
@@ -80,6 +98,7 @@ async function main(): Promise<void> {
     stopping = true;
     logger.info(`${signal} received, stopping the simulator lab`);
     reconcileService.stop();
+    syncService.stop();
     server.close();
     await disconnectDatabase();
     process.exit(0);
