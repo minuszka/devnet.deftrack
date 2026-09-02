@@ -89,6 +89,8 @@ export const config = {
     mongoUri: process.env.LAB_MONGODB_URI ?? '',
     host: process.env.LAB_HOST ?? '127.0.0.1',
     port: optionalNumber('LAB_PORT', 4200),
+    // ops/lab-observer.mjs defaults its LAB_API to this same port. They disagreed
+    // once (4200 here, 4210 there) and the observer silently reached nothing.
   },
 
   rpc: {
