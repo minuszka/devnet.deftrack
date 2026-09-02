@@ -6,7 +6,10 @@ import { promisify } from 'node:util';
 import { NetemFaultRunner, type RunnerLogger } from './netemRunner.js';
 import { dockerNetemExecutor, fileCommandQueue, fileWrapperStore } from './netemWrapperHost.js';
 import { runWrapperCycle } from './netemWrapperMain.js';
+import { DockerLiveExecutor, dockerLabProbes, systemLabClock } from './dockerLiveExecutor.js';
 import type { NetemSpec } from './netemLease.js';
+import type { SimulationRunProjection } from '../services/simulationPersistence.service.js';
+import type { DryRunPlan } from './scenarioTypes.js';
 
 /**
  * The day-8 acceptance gate, against a live container: a fault clears itself with
@@ -82,10 +85,58 @@ async function main(): Promise<void> {
     assert(daemonSwept.cleared === 1, 'the daemon cycle watchdog cleared the queued fault');
     assert(!(await qdisc()).includes('netem'), 'the link is clean after the daemon watchdog');
 
+    console.log('4. the live executor drives the real queue, wrapper and probes');
+    // The deployable topology: a background wrapper daemon draining a shared
+    // command queue, and the control-service executor speaking only to that queue.
+    const liveRunner = new NetemFaultRunner(dockerNetemExecutor(), fileWrapperStore(join(dir, 'live-state.json')));
+    const liveQueue = fileCommandQueue(join(dir, 'live-commands'));
+    const wrapperTimer = setInterval(() => {
+      void runWrapperCycle({ runner: liveRunner, queue: liveQueue, logger: { info: () => {}, error: () => {} } }).catch(() => {});
+    }, 250);
+    try {
+      const realProbes = dockerLabProbes();
+      // observerFresh wants a real daemon (docker top defcond); this container runs
+      // sleep, so stand it in with the running-state probe -- the netem path is what
+      // section 4 proves, and faultStateClear is read from the real qdisc regardless.
+      const probes = { ...realProbes, observerFresh: (i: { container: string }) => realProbes.serviceRunning(i.container) };
+      const executor = new DockerLiveExecutor(liveQueue, probes, systemLabClock, { recoveryPollIntervalMs: 300, recoveryPollAttempts: 20 });
+
+      const labRun = {
+        runKey: 'accept-live', metadataFingerprint: 'fp',
+        metadata: { targetSnapshot: [{ targetId: 'mn-1', hostRef: CONTAINER, network: 'regtest', capabilities: ['netem-p2p'] }] },
+        state: {},
+      } as unknown as SimulationRunProjection;
+      const labPlan = {
+        actions: [{
+          targetId: 'mn-1', payload: { kind: 'netem-apply', interfaceRef: 'devnet-p2p', latencyMs: 90, jitterMs: 0, lossPercent: 0, correlationPercent: 0, faultLeaseSeconds: 600 },
+        }],
+      } as unknown as DryRunPlan;
+
+      await executor.activateFault({ run: labRun, plan: labPlan, faultLeaseExpiresAtMs: Date.now() + 600_000 });
+      await waitFor(async () => (await qdisc()).includes('delay 90ms'), 8_000);
+      assert((await qdisc()).includes('delay 90ms'), 'the executor applied the fault through the real queue and wrapper');
+
+      const recovery = await executor.proveRecovery({ run: labRun, plan: labPlan });
+      assert(recovery.allClear, 'the executor proved recovery clean');
+      assert(recovery.targets[0]?.faultStateClear === true, 'recovery read the real qdisc back to clean');
+      assert(!(await qdisc()).includes('netem'), 'the link is clean after the executor recovery');
+    } finally {
+      clearInterval(wrapperTimer);
+    }
+
     console.log('\nACCEPTANCE PASSED');
   } finally {
     await docker('rm', '-f', CONTAINER).catch(() => '');
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Poll a predicate until true or the deadline; the lab is asynchronous. */
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
 }
 

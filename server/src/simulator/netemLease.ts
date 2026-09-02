@@ -15,7 +15,10 @@ import { createHash } from 'node:crypto';
  * again is a no-op; applying a different one replaces it.
  */
 
-export type NetemKind = 'latency' | 'loss' | 'jitter';
+// 'latency' | 'loss' | 'jitter' are the single-dimension primitives; 'netem' is a
+// composed spec (delay and/or loss in one qdisc), which is what a real scenario
+// applies -- one qdisc per interface means the dimensions cannot be separate jobs.
+export type NetemKind = 'latency' | 'loss' | 'jitter' | 'netem';
 
 const NETEM_IFACE = 'eth0';
 const DURATION = /^\d+(us|ms|s)$/;
@@ -64,6 +67,32 @@ export function netemJobId(runTag: string, spec: NetemSpec): string {
   return `netem-${digest.slice(0, 16)}`;
 }
 
+/**
+ * Validate a composed netem argument vector: an optional `delay <dur> [<jitter>]`
+ * then an optional `loss <pct> [<correlation>]`, at least one clause, and nothing
+ * else. Rejects any token tc would not take here, so a composed spec can never
+ * carry an arbitrary tc argument.
+ */
+function assertComposedNetemArgs(args: readonly string[]): void {
+  let i = 0;
+  let clauses = 0;
+  if (args[i] === 'delay') {
+    if (!DURATION.test(args[i + 1] ?? '')) throw new Error('netem delay needs a duration, e.g. delay 100ms');
+    i += 2;
+    if (args[i] !== undefined && DURATION.test(args[i]!)) i += 1; // optional jitter
+    clauses += 1;
+  }
+  if (args[i] === 'loss') {
+    if (!PERCENT.test(args[i + 1] ?? '')) throw new Error('netem loss needs a percentage, e.g. loss 5%');
+    i += 2;
+    if (args[i] !== undefined && PERCENT.test(args[i]!)) i += 1; // optional correlation
+    clauses += 1;
+  }
+  if (clauses === 0 || i !== args.length) {
+    throw new Error('netem args must be [delay <dur> [<jitter>]] [loss <pct> [<correlation>]]');
+  }
+}
+
 /** Validate the netem arguments for a kind; throws on anything tc would reject. */
 function assertNetemArgs(kind: NetemKind, args: readonly string[]): void {
   if (kind === 'latency') {
@@ -72,6 +101,8 @@ function assertNetemArgs(kind: NetemKind, args: readonly string[]): void {
     if (args.length !== 2 || !DURATION.test(args[0]!) || !DURATION.test(args[1]!)) {
       throw new Error('jitter needs a duration and a jitter, e.g. 100ms 20ms');
     }
+  } else if (kind === 'netem') {
+    assertComposedNetemArgs(args);
   } else {
     if (args.length !== 1 || !PERCENT.test(args[0]!)) throw new Error('loss needs one percentage, e.g. 5%');
   }
@@ -81,6 +112,7 @@ function assertNetemArgs(kind: NetemKind, args: readonly string[]): void {
 export function tcApplyArgs(spec: NetemSpec): string[] {
   assertNetemArgs(spec.kind, spec.args);
   const base = ['qdisc', 'replace', 'dev', NETEM_IFACE, 'root', 'netem'];
+  if (spec.kind === 'netem') return [...base, ...spec.args]; // already composed, e.g. delay 100ms loss 5%
   if (spec.kind === 'loss') return [...base, 'loss', spec.args[0]!];
   return [...base, 'delay', ...spec.args];
 }
