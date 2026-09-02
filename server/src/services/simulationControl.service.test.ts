@@ -13,7 +13,7 @@ import {
   type SimulationControlPersistenceRepository,
   type SimulationControlRequestRecord,
 } from './simulationControlPersistence.service.js';
-import { SimulationControlService } from './simulationControl.service.js';
+import { SimulationControlService, type SimulationLiveExecutor } from './simulationControl.service.js';
 import {
   SimulationPersistenceService,
   type AppendSimulationAuditResult,
@@ -40,10 +40,11 @@ class MemoryRunRepository implements SimulationPersistenceRepository {
     this.runs.set(run.runKey, clone(run));
     return 'inserted' as const;
   }
-  async compareAndSwapRun(key: string, revision: number, state: SimulationRunState) {
+  async compareAndSwapRun(key: string, revision: number, state: SimulationRunState, recovery?: SimulationRecoveryResult) {
     const run = this.runs.get(key);
     if (run === undefined || run.state.revision !== revision) return false;
     this.runs.set(key, { ...run, state: clone(state) });
+    if (recovery !== undefined) this.recoveries.set(key, clone(recovery));
     return true;
   }
   async findRunAuditByEventId(key: string, eventId: string) {
@@ -146,7 +147,22 @@ class FakeEvidence implements SimulationEvidenceProvider {
   }
 }
 
-function harness(scenario: Record<string, unknown>, role: 'operator' | 'safety-admin' = 'operator') {
+class FakeExecutor implements SimulationLiveExecutor {
+  activated = 0;
+  recovered = 0;
+  allClear = true;
+  async activateFault(): Promise<void> { this.activated++; }
+  async proveRecovery(): Promise<SimulationRecoveryResult> {
+    this.recovered++;
+    return { required: true, startedAtMs: 1_000, finishedAtMs: 1_100, allClear: this.allClear, targets: [] };
+  }
+}
+
+function harness(
+  scenario: Record<string, unknown>,
+  role: 'operator' | 'safety-admin' = 'operator',
+  executor?: SimulationLiveExecutor
+) {
   const runRepository = new MemoryRunRepository();
   const controlRepository = new MemoryControlRepository();
   const evidence = new FakeEvidence(scenario);
@@ -155,7 +171,8 @@ function harness(scenario: Record<string, unknown>, role: 'operator' | 'safety-a
     new SimulationControlPersistenceService(controlRepository),
     evidence,
     { actor, role },
-    () => 1_000
+    () => 1_000,
+    executor
   );
   return { service, runRepository, controlRepository, evidence };
 }
@@ -230,9 +247,51 @@ describe('simulation control service', () => {
   it('lets a live lab-network run through the boundary to the not-yet-built executor', async () => {
     const { service } = harness(mnStop);
     const runKey = await driveToLiveArmed(service, 'regtest');
-    // The network guard passes; the executor itself does not exist yet.
+    // The network guard passes; no executor is configured, so it stays closed.
     await expect(service.start({ runKey, idempotencyKey: 'regtest-live-start' }))
       .rejects.toMatchObject({ code: 'EXECUTOR_NOT_AVAILABLE' });
+  });
+
+  it('start activates the fault on a configured executor', async () => {
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    const { run } = await service.start({ runKey, idempotencyKey: 'start-run-1' });
+    expect(executor.activated).toBe(1);
+    expect(run.state.status).toBe('fault_active');
+    expect(run.state.faultLeaseExpiresAtMs).toBeGreaterThan(1_000);
+  });
+
+  it('abort proves recovery and records the outcome', async () => {
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'start-run-1' });
+    const { run } = await service.abort({ runKey, idempotencyKey: 'abort-run-1' });
+    expect(executor.recovered).toBe(1);
+    // abort set the intent, so a clean recovery resolves to aborted.
+    expect(run.state.status).toBe('aborted');
+  });
+
+  it('recover proves recovery into cooldown when there was no abort', async () => {
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'start-run-1' });
+    const { run } = await service.recover({ runKey, idempotencyKey: 'recover-run-1' });
+    expect(executor.recovered).toBe(1);
+    expect(run.state.status).toBe('cooldown');
+  });
+
+  it('a failed recovery proof takes a live run to failed, with the findings recorded', async () => {
+    const executor = new FakeExecutor();
+    executor.allClear = false;
+    const { service, runRepository } = harness(mnStop, 'operator', executor);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'start-run-1' });
+    const { run } = await service.recover({ runKey, idempotencyKey: 'recover-run-1' });
+    expect(run.state.status).toBe('failed');
+    expect(runRepository.recoveries.get(runKey)).toMatchObject({ allClear: false });
   });
 
   it('binds an idempotency key to one exact create request', async () => {
