@@ -23,6 +23,7 @@ import { chainLockService } from './chainLock.service.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { metricsService } from './metrics.service.js';
 import { payeeRetryDelayMs } from '../domain/collectorPolicy.js';
+import { canonicalDslOrder, resolveMissedMembers } from '../domain/dslCanonicalOrder.js';
 
 const SYNC_KEY = 'blocks';
 
@@ -472,6 +473,41 @@ export class SyncService {
       );
       const epoch = closedEpochAt(block.height, config.dsl.epochInterval);
       const c = dslTx?.poseServiceTx?.commitment;
+
+      // Who the commitment named, not only how many. The bitfield carries
+      // positions in the deterministic list at the epoch base, and a count on
+      // its own cannot tell a precise verdict from a coincidental one: on epoch
+      // 264 the DSL and PoSe each named five, and only resolving them showed
+      // they were the same five rather than two unrelated sets.
+      //
+      // The resolver refuses a partial answer, so an epoch whose base list
+      // cannot be fetched or does not match keeps an empty list and says so.
+      // Naming the wrong masternodes as having failed would be worse than
+      // naming none.
+      let missedProTxHashes: string[] = [];
+      const missedIndices = c?.missedIndices ?? [];
+      if (c?.epochBlockHash && missedIndices.length > 0) {
+        try {
+          const base = await rpc.getBlock(c.epochBlockHash);
+          const registered = await rpc.protxListRegistered(base.height);
+          const resolved = resolveMissedMembers(
+            canonicalDslOrder(registered),
+            missedIndices,
+            c.size ?? -1
+          );
+          if (resolved === null) {
+            logger.warn(
+              `DSL epoch ${epoch}: missed indices unresolved ` +
+                `(commitment size ${c.size ?? 'absent'}, epoch-base list ${registered.length})`
+            );
+          } else {
+            missedProTxHashes = resolved;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn(`DSL epoch ${epoch}: epoch-base list unavailable, missed members unresolved: ${message}`);
+        }
+      }
       await ServiceEpoch.updateOne(
         { epochKey: epochKeyFor(epoch) },
         {
@@ -490,6 +526,7 @@ export class SyncService {
             missedCount: c?.missedCount ?? null,
             listSize: c?.size ?? null,
             missedIndices: c?.missedIndices ?? [],
+            missedProTxHashes,
             detectedAt: new Date(),
           },
         },

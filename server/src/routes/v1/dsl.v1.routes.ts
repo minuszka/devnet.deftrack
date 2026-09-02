@@ -50,6 +50,7 @@ router.get(
       missedCount: e.missedCount,
       listSize: e.listSize,
       missedIndices: e.missedIndices,
+      missedProTxHashes: e.missedProTxHashes ?? [],
       detectedAt: e.detectedAt,
     }));
 
