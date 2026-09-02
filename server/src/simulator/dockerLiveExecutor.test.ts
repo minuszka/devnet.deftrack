@@ -91,7 +91,7 @@ describe('DockerLiveExecutor.activateFault', () => {
     const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000 });
     expect(queue.enqueued).toEqual([
-      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', ttlMs: 30_000 },
+      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', expiresAtMs: 31_000 },
     ]);
   });
 
@@ -99,14 +99,18 @@ describe('DockerLiveExecutor.activateFault', () => {
     const queue = new FakeQueue();
     const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]), faultLeaseExpiresAtMs: 31_000 });
-    expect(queue.enqueued).toEqual([{ op: 'service-stop', container: 'mn01', runTag: 'run-1', ttlMs: 30_000 }]);
+    expect(queue.enqueued).toEqual([{ op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 31_000 }]);
   });
 
-  it('floors the TTL so an already-past lease still applies briefly', async () => {
+  it('passes the lease instant of the run through, untouched', async () => {
+    // It used to be converted to a duration here and back to an instant in the
+    // wrapper, against a later clock -- so time spent in the queue, or behind a
+    // 30-second docker stop on the node before it, silently extended the fault
+    // past the instant the run had recorded.
     const queue = new FakeQueue();
-    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock(), { minLeaseMs: 1_000 });
-    await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 500 });
-    expect((queue.enqueued[0] as { ttlMs: number }).ttlMs).toBe(1_000);
+    const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
+    await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 987_654 });
+    expect((queue.enqueued[0] as { expiresAtMs: number }).expiresAtMs).toBe(987_654);
   });
 
   it('fails closed on a fault it cannot apply, enqueuing nothing', async () => {

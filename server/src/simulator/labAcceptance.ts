@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     });
 
     console.log('1. node-local recovery after the orchestrator is gone');
-    await runner.apply(spec, 'accept-run', TTL_MS);
+    await runner.apply(spec, 'accept-run', now + TTL_MS);
     // tc prints e.g. "qdisc netem 8003: root refcnt 17 limit 1000 delay 120ms".
     assert((await qdisc()).includes('delay 120ms'), 'the fault is applied to the container');
     // The orchestrator is now dead -- nothing but the wrapper's own watchdog runs.
@@ -80,16 +80,16 @@ async function main(): Promise<void> {
 
     console.log('2. explicit abort clears the fault');
     now += 1;
-    await runner.apply(spec, 'accept-run', TTL_MS);
+    await runner.apply(spec, 'accept-run', now + TTL_MS);
     assert((await qdisc()).includes('delay 120ms'), 'a second fault is applied');
-    const { jobId } = await runner.apply(spec, 'accept-run', TTL_MS); // idempotent id
+    const { jobId } = await runner.apply(spec, 'accept-run', now + TTL_MS); // idempotent id
     await runner.clear(jobId);
     assert(!(await qdisc()).includes('netem'), 'abort cleared the link');
 
     console.log('3. the deployable daemon path: queued command -> tc -> watchdog');
     const queue = fileCommandQueue(join(dir, 'commands'));
     now += 1;
-    await queue.enqueue({ op: 'apply', container: CONTAINER, kind: 'latency', args: ['80ms'], runTag: 'accept-run', ttlMs: TTL_MS });
+    await queue.enqueue({ op: 'apply', container: CONTAINER, kind: 'latency', args: ['80ms'], runTag: 'accept-run', expiresAtMs: now + TTL_MS });
     const applied = await runWrapperCycle({ runner, queue, logger: silent });
     assert(applied.dispatched === 1, 'the cycle dispatched the queued apply');
     assert((await qdisc()).includes('delay 80ms'), 'a queued command applied the fault through the wrapper');
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     const svcRunner = () => new NetemFaultRunner(dockerNetemExecutor(), svcStore, { clock: () => svcNow });
 
     // 5a -- the TTL restores it, with nothing else running.
-    await svcQueue.enqueue({ op: 'service-stop', container: CONTAINER, runTag: 'accept-svc', ttlMs: TTL_MS });
+    await svcQueue.enqueue({ op: 'service-stop', container: CONTAINER, runTag: 'accept-svc', expiresAtMs: svcNow + TTL_MS });
     const stopCycle = await runWrapperCycle({ runner: svcRunner(), queue: svcQueue, logger: silent });
     assert(stopCycle.dispatched === 1, 'the queued service-stop was dispatched');
     assert((await running()) === false, 'the container is stopped');
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
 
     // 5b -- the WRAPPER died mid-fault: a fresh process restores from the record.
     svcNow += 1;
-    await svcRunner().stopService(CONTAINER, 'accept-svc', TTL_MS);
+    await svcRunner().stopService(CONTAINER, 'accept-svc', svcNow + TTL_MS);
     assert((await running()) === false, 'a second stop landed');
     const reborn = await svcRunner().bootCleanup(); // a brand-new process over the same state file
     assert(reborn.cleared === 1 && reborn.failed === 0, 'boot recovery undid the stop it found recorded');
@@ -168,7 +168,7 @@ async function main(): Promise<void> {
 
     // 5c/5d -- a failing undo is retained and never blocks another container's.
     svcNow += 1;
-    await svcRunner().stopService(CONTAINER, 'accept-svc', TTL_MS);
+    await svcRunner().stopService(CONTAINER, 'accept-svc', svcNow + TTL_MS);
     const ghost = await svcStore.load();
     ghost.jobs.push({
       jobId: 'service-ghost', runTag: 'accept-svc', container: 'lab-accept-does-not-exist',

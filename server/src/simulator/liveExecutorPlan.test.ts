@@ -109,9 +109,9 @@ describe('faultApplyCommandsForPlan', () => {
       action('mn-1', { kind: 'fault-clear', scope: 'run' }, 1),
       action('mn-2', netemPayload({ latencyMs: 50, jitterMs: 0, lossPercent: 0, correlationPercent: 0 }), 2),
     ]);
-    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 30_000 })).toEqual([
-      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', ttlMs: 30_000 },
-      { op: 'apply', container: 'mn02', kind: 'netem', args: ['delay', '50ms'], runTag: 'run-1', ttlMs: 30_000 },
+    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 })).toEqual([
+      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', expiresAtMs: 30_000 },
+      { op: 'apply', container: 'mn02', kind: 'netem', args: ['delay', '50ms'], runTag: 'run-1', expiresAtMs: 30_000 },
     ]);
   });
 
@@ -121,55 +121,55 @@ describe('faultApplyCommandsForPlan', () => {
       action('mn-1', { kind: 'service-start' }, 1, 30_000), // the paired undo: recovery and the TTL own it
       action('mn-2', stopPayload, 2),
     ]);
-    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 30_000 })).toEqual([
-      { op: 'service-stop', container: 'mn01', runTag: 'run-1', ttlMs: 30_000 },
-      { op: 'service-stop', container: 'mn02', runTag: 'run-1', ttlMs: 30_000 },
+    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 })).toEqual([
+      { op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 30_000 },
+      { op: 'service-stop', container: 'mn02', runTag: 'run-1', expiresAtMs: 30_000 },
     ]);
   });
 
   it('returns nothing for a clear-only plan rather than throwing', () => {
     const plan = planWith([action('mn-1', { kind: 'fault-clear', scope: 'run' })]);
-    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 })).toEqual([]);
+    expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 })).toEqual([]);
   });
 
   it('fails closed on a fault kind it cannot apply', () => {
     const plan = planWith([action('mn-1', partitionPayload)]);
-    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(UnsupportedLiveFaultError);
-    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(/partition-apply/);
   });
 
   it('refuses a staged or repeated outage rather than collapsing a schedule into one stop', () => {
     // restart-flapping: a stop at an offset, and a second cycle on the same target.
     const staged = planWith([action('mn-1', stopPayload, 0, 30_000)]);
-    expect(() => faultApplyCommandsForPlan({ plan: staged, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan: staged, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(UnscheduledLiveFaultError);
     const repeated = planWith([action('mn-1', stopPayload, 0), action('mn-1', stopPayload, 2)]);
-    expect(() => faultApplyCommandsForPlan({ plan: repeated, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan: repeated, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(UnscheduledLiveFaultError);
   });
 
   it('refuses a lease beyond the wrapper ceiling, so it surfaces before a command is written', () => {
     const plan = planWith([action('mn-1', stopPayload)]);
-    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: MAX_TTL_MS + 1 }))
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: MAX_TTL_MS + 1, nowMs: 0 }))
       .toThrow(/ceiling/);
   });
 
   it('rejects a target that is unknown, off-network, or lacks the capability', () => {
     const plan = planWith([action('mn-9', netemPayload())]);
-    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', ttlMs: 1_000 })).toThrow(InvalidNetemTargetError);
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 })).toThrow(InvalidNetemTargetError);
 
     const offNet = indexTargetsById([target({ targetId: 'mn-1', network: 'devnet' })]);
-    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: offNet, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: offNet, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(/not the lab/);
 
     const noNetem = indexTargetsById([target({ targetId: 'mn-1', capabilities: ['service-control'] })]);
-    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: noNetem, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', netemPayload())]), targetsById: noNetem, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(/netem-p2p/);
 
     const noService = indexTargetsById([target({ targetId: 'mn-1', capabilities: ['netem-p2p'] })]);
-    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', stopPayload)]), targetsById: noService, runTag: 'run-1', ttlMs: 1_000 }))
+    expect(() => faultApplyCommandsForPlan({ plan: planWith([action('mn-1', stopPayload)]), targetsById: noService, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
       .toThrow(/service-control/);
   });
 });

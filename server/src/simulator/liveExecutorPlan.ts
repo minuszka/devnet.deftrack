@@ -129,11 +129,15 @@ export function labFaultsForPlan(input: {
   plan: DryRunPlan;
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
   runTag: string;
-  ttlMs: number;
+  /** The absolute instant the lease ends -- the same one the run records. */
+  expiresAtMs: number;
+  nowMs: number;
   strict: boolean;
 }): { faults: LabFault[]; skipped: number } {
-  if (input.strict && input.ttlMs > MAX_TTL_MS) {
-    throw new UnsupportedLiveFaultError(`lease of ${input.ttlMs} ms beyond the ${MAX_TTL_MS} ms ceiling`);
+  if (input.strict && input.expiresAtMs - input.nowMs > MAX_TTL_MS) {
+    throw new UnsupportedLiveFaultError(
+      `lease of ${input.expiresAtMs - input.nowMs} ms beyond the ${MAX_TTL_MS} ms ceiling`
+    );
   }
   const faults: LabFault[] = [];
   const seen = new Set<string>();
@@ -162,7 +166,7 @@ export function labFaultsForPlan(input: {
           container: target.hostRef,
           faultClass: 'netem',
           jobId,
-          apply: { op: 'apply', container: target.hostRef, kind: 'netem', args, runTag: input.runTag, ttlMs: input.ttlMs },
+          apply: { op: 'apply', container: target.hostRef, kind: 'netem', args, runTag: input.runTag, expiresAtMs: input.expiresAtMs },
         });
       } catch (error) {
         refuse(error as Error);
@@ -188,7 +192,7 @@ export function labFaultsForPlan(input: {
           container: target.hostRef,
           faultClass: 'service',
           jobId,
-          apply: { op: 'service-stop', container: target.hostRef, runTag: input.runTag, ttlMs: input.ttlMs },
+          apply: { op: 'service-stop', container: target.hostRef, runTag: input.runTag, expiresAtMs: input.expiresAtMs },
         });
       } catch (error) {
         refuse(error as Error);
@@ -224,7 +228,8 @@ export function faultApplyCommandsForPlan(input: {
   plan: DryRunPlan;
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
   runTag: string;
-  ttlMs: number;
+  expiresAtMs: number;
+  nowMs: number;
 }): WrapperCommand[] {
   return labFaultsForPlan({ ...input, strict: true }).faults.map((fault) => fault.apply);
 }
@@ -247,7 +252,9 @@ export function faultRecoveryTargetsForPlan(input: {
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
   runTag: string;
 }): { targets: LabRecoveryTarget[]; skipped: number } {
-  const { faults, skipped } = labFaultsForPlan({ ...input, ttlMs: 1, strict: false });
+  // The lease is irrelevant here: recovery only needs the job ids, which are
+  // minted from the run tag and the spec, never from the expiry.
+  const { faults, skipped } = labFaultsForPlan({ ...input, expiresAtMs: 1, nowMs: 0, strict: false });
   return {
     targets: faults.map((fault) => ({
       targetId: fault.targetId,

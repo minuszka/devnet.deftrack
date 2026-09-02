@@ -28,12 +28,22 @@ const NETEM_KINDS = Object.keys(NETEM_KIND_SET) as NetemKind[];
  */
 export const MAX_TTL_MS = 3_600_000;
 
-function assertTtl(value: unknown): asserts value is number {
-  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
-    throw new Error('command needs a positive ttlMs');
-  }
-  if ((value as number) > MAX_TTL_MS) {
-    throw new Error(`ttlMs exceeds the ${MAX_TTL_MS} ms lease ceiling`);
+/**
+ * The lease arrives as an ABSOLUTE instant, not a duration.
+ *
+ * A duration was measured from the moment the wrapper got round to the command,
+ * not from the moment the orchestrator recorded the fault -- so time spent
+ * waiting in the queue, or behind a `docker stop -t 30` on the node before it,
+ * pushed the real expiry past the faultLeaseExpiresAtMs written to the run. With
+ * several targets the last one drifted furthest.
+ *
+ * The ceiling still applies, now as a bound on how far ahead the instant may be.
+ */
+function assertLeaseInstant(value: unknown, nowMs: number): asserts value is number {
+  if (!Number.isSafeInteger(value)) throw new Error('command needs an expiresAtMs instant');
+  const remaining = (value as number) - nowMs;
+  if (remaining > MAX_TTL_MS) {
+    throw new Error(`expiresAtMs is more than ${MAX_TTL_MS} ms ahead, beyond the lease ceiling`);
   }
 }
 
@@ -127,13 +137,13 @@ export class LabFaultRunner {
   }
 
   /** Apply a netem fault under a lease. Records intent, then runs tc. Idempotent. */
-  async apply(spec: NetemSpec, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
-    return this.serialise(() => this.applyLocked(spec, runTag, ttlMs));
+  async apply(spec: NetemSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string }> {
+    return this.serialise(() => this.applyLocked(spec, runTag, expiresAtMs));
   }
 
-  private async applyLocked(spec: NetemSpec, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
+  private async applyLocked(spec: NetemSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string }> {
     const jobId = netemJobId(runTag, spec);
-    const plan = planApply(await this.store.load(), spec, runTag, this.clock(), ttlMs);
+    const plan = planApply(await this.store.load(), spec, runTag, this.clock(), expiresAtMs);
     if (plan.actions.length === 0) return { jobId };
     // Record before acting, so an effect that reaches the node is always known and
     // therefore always undoable.
@@ -146,13 +156,13 @@ export class LabFaultRunner {
    * Stop a container under a lease. Same ordering as apply, for the same reason:
    * a stop that lands without a record is a node nothing will ever start again.
    */
-  async stopService(container: string, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
-    return this.serialise(() => this.stopServiceLocked(container, runTag, ttlMs));
+  async stopService(container: string, runTag: string, expiresAtMs: number): Promise<{ jobId: string }> {
+    return this.serialise(() => this.stopServiceLocked(container, runTag, expiresAtMs));
   }
 
-  private async stopServiceLocked(container: string, runTag: string, ttlMs: number): Promise<{ jobId: string }> {
+  private async stopServiceLocked(container: string, runTag: string, expiresAtMs: number): Promise<{ jobId: string }> {
     const jobId = serviceJobId(runTag, container);
-    const plan = planServiceStop(await this.store.load(), container, runTag, this.clock(), ttlMs);
+    const plan = planServiceStop(await this.store.load(), container, runTag, this.clock(), expiresAtMs);
     if (plan.actions.length === 0) return { jobId };
     await this.store.save(plan.state);
     await this.runActions(plan.actions);
@@ -319,8 +329,8 @@ export { LabFaultRunner as NetemFaultRunner };
  * recovery path stays the same for both fault classes.
  */
 export type WrapperCommand =
-  | { op: 'apply'; container: string; kind: NetemKind; args: string[]; runTag: string; ttlMs: number }
-  | { op: 'service-stop'; container: string; runTag: string; ttlMs: number }
+  | { op: 'apply'; container: string; kind: NetemKind; args: string[]; runTag: string; expiresAtMs: number }
+  | { op: 'service-stop'; container: string; runTag: string; expiresAtMs: number }
   | { op: 'clear'; jobId: string };
 
 /**
@@ -328,7 +338,7 @@ export type WrapperCommand =
  * or truncated file must be rejected loudly, never acted on half-read. This is
  * also the trust boundary that bounds the lease.
  */
-export function parseWrapperCommand(raw: unknown): WrapperCommand {
+export function parseWrapperCommand(raw: unknown, nowMs: number = Date.now()): WrapperCommand {
   if (raw === null || typeof raw !== 'object') throw new Error('wrapper command must be an object');
   const value = raw as Record<string, unknown>;
   if (value.op === 'clear') {
@@ -340,22 +350,22 @@ export function parseWrapperCommand(raw: unknown): WrapperCommand {
       throw new Error('service-stop command needs a container');
     }
     if (typeof value.runTag !== 'string' || value.runTag.length === 0) throw new Error('service-stop command needs a runTag');
-    assertTtl(value.ttlMs);
-    return { op: 'service-stop', container: value.container, runTag: value.runTag, ttlMs: value.ttlMs };
+    assertLeaseInstant(value.expiresAtMs, nowMs);
+    return { op: 'service-stop', container: value.container, runTag: value.runTag, expiresAtMs: value.expiresAtMs };
   }
   if (value.op === 'apply') {
     if (typeof value.container !== 'string' || value.container.length === 0) throw new Error('apply command needs a container');
     if (!NETEM_KINDS.includes(value.kind as NetemKind)) throw new Error('apply command needs a valid kind');
     if (!Array.isArray(value.args) || !value.args.every((a) => typeof a === 'string')) throw new Error('apply command needs string args');
     if (typeof value.runTag !== 'string' || value.runTag.length === 0) throw new Error('apply command needs a runTag');
-    assertTtl(value.ttlMs);
+    assertLeaseInstant(value.expiresAtMs, nowMs);
     return {
       op: 'apply',
       container: value.container,
       kind: value.kind as NetemKind,
       args: value.args as string[],
       runTag: value.runTag,
-      ttlMs: value.ttlMs,
+      expiresAtMs: value.expiresAtMs,
     };
   }
   throw new Error(`unknown wrapper command op: ${String(value.op)}`);
@@ -363,8 +373,8 @@ export function parseWrapperCommand(raw: unknown): WrapperCommand {
 
 /** The runner surface a command needs; keeps dispatch testable without the class. */
 export interface FaultRunnerPort {
-  apply(spec: NetemSpec, runTag: string, ttlMs: number): Promise<{ jobId: string }>;
-  stopService(container: string, runTag: string, ttlMs: number): Promise<{ jobId: string }>;
+  apply(spec: NetemSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string }>;
+  stopService(container: string, runTag: string, expiresAtMs: number): Promise<{ jobId: string }>;
   clear(jobId: string): Promise<void>;
 }
 
@@ -372,10 +382,10 @@ export interface FaultRunnerPort {
 export async function dispatchWrapperCommand(runner: FaultRunnerPort, command: WrapperCommand): Promise<void> {
   switch (command.op) {
     case 'apply':
-      await runner.apply({ container: command.container, kind: command.kind, args: command.args }, command.runTag, command.ttlMs);
+      await runner.apply({ container: command.container, kind: command.kind, args: command.args }, command.runTag, command.expiresAtMs);
       return;
     case 'service-stop':
-      await runner.stopService(command.container, command.runTag, command.ttlMs);
+      await runner.stopService(command.container, command.runTag, command.expiresAtMs);
       return;
     case 'clear':
       await runner.clear(command.jobId);
