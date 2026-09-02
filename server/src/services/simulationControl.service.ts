@@ -458,6 +458,17 @@ export class SimulationControlService {
     });
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.status === 'completed' && !run.state.live) return { run, idempotentReplay: true };
+    if (
+      run.state.status !== 'armed' &&
+      (await this.alreadyApplied(run.runKey, [
+        `${request.requestKey}:activate`,
+        `${request.requestKey}:complete`,
+      ]))
+    ) {
+      // This very request already started the run; the retry is the operator
+      // asking whether it landed, not asking to start it twice.
+      return { run, idempotentReplay: true };
+    }
     ensureStatus(run, ['armed']);
     if (run.state.live) {
       this.assertExecutorNetwork(run);
@@ -538,6 +549,18 @@ export class SimulationControlService {
     // executor proves recovery below, once the run has reached `recovery`.
     if (run.state.live) this.assertExecutorNetwork(run);
     if (run.state.status !== 'recovery') {
+      if (
+        await this.alreadyApplied(run.runKey, [
+          `${request.requestKey}:recovered`,
+          `${request.requestKey}:recovery-failed`,
+          `${request.requestKey}:success`,
+          `${request.requestKey}:complete`,
+        ])
+      ) {
+        // Already recovered by this request. A retry must not be refused for
+        // having succeeded.
+        return { run };
+      }
       ensureStatus(run, ['armed', 'fault_active', 'observing', 'aborting', 'failed']);
 
       // Recovering a run that never executed is an abort, not a completion.
@@ -627,6 +650,23 @@ export class SimulationControlService {
     } catch {
       // The lease bounds the damage; failing the recovery over it would be worse.
     }
+  }
+
+  /**
+   * Whether this exact request already produced its transition.
+   *
+   * Every event id is derived from the request key, so a replay after a network
+   * timeout can be recognised for certain rather than guessed at from the run's
+   * status. Without it a successful start answered 409 on retry -- the run was
+   * `fault_active` where only `armed` is allowed -- and the operator had no safe
+   * way to find out whether their call had landed.
+   *
+   * Only consulted when the status would otherwise be refused, so the ordinary
+   * path costs no extra read.
+   */
+  private async alreadyApplied(runKey: string, eventIds: readonly string[]): Promise<boolean> {
+    const audit = await this.runs.listRunAudit(runKey);
+    return audit.some((entry) => eventIds.includes(entry.eventId));
   }
 
   async status(runKey: string) {
