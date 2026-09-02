@@ -7,7 +7,7 @@
 # consensus code. Comparing md5sums is the only way to know what is running,
 # so this script does that at every step rather than trusting the version.
 #
-# Two failures this script exists to prevent, both met in production:
+# Three failures this script exists to prevent, all met in production:
 #
 #   1. A binary that compiles is not a binary that runs. A build picked up the
 #      build host's libminiupnpc and libnatpmp, which the target does not have;
@@ -18,6 +18,12 @@
 #   2. A rollout that starts is not a rollout that finished. Copying to eight
 #      hosts and restarting 88 services has many places to fail quietly, so
 #      every host reports back its md5 and how many of its instances came up.
+#
+#   3. A fleet is not uniform. The count of instances was assumed to be the same
+#      everywhere; it is not, and on the hosts that carry fewer the script
+#      started units with no datadir, left them in systemd's auto-restart loop,
+#      and then reported those hosts as failed rollouts. Each host is now asked
+#      what it has, and judged against its own answer.
 #
 # Inventory lives on the jump host, never here: this repository is public and
 # the fleet addresses are not. Provide it as one address per line in
@@ -33,9 +39,17 @@ JUMP="${JUMP_HOST:-devnet-jump}"
 NODE_KEY="${FLEET_KEY:-/root/.ssh/defcon_nodes}"
 INVENTORY="${FLEET_INVENTORY:-/root/fleet-nodes.txt}"
 STAGE="/root/fleet-bin-new"
-# Ten masternodes plus instance 11, the staker: a masternode cannot stake
-# itself, so block production needs its own daemon per host.
-INSTANCES="${FLEET_INSTANCES:-11}"
+# How many instances a host runs is a property of that host, not of the fleet.
+# Most carry ten masternodes plus instance 11, the staker -- a masternode cannot
+# stake itself, so block production needs its own daemon -- but hosts added
+# later carry nine. Assuming eleven everywhere restarted two units that have no
+# datadir on those hosts, which then sat in systemd's auto-restart loop, and
+# then failed the host for not running them: a false alarm and a real mess, from
+# the same wrong number.
+#
+# So each host is asked what it has. FLEET_INSTANCES still forces a count, for a
+# host being set up before its datadirs exist.
+INSTANCES="${FLEET_INSTANCES:-}"
 
 check_only=0
 if [ "${1:-}" = "--check" ]; then check_only=1; shift; fi
@@ -110,26 +124,42 @@ while read -r ip; do
   fi
   out=\$(\$SSH "root@\$ip" 'set -e
     B=/opt/defcon-devnet/bin
+    # The instances this host actually has. Read from the datadirs rather than
+    # assumed, and filtered to numbers so a stray directory cannot become a unit
+    # name that never comes up and fails the host.
+    forced="'"$INSTANCES"'"
+    idx=""
+    if [ -n "\$forced" ]; then
+      idx=\$(seq 1 "\$forced")
+    else
+      for d in /opt/defcon-devnet/mn*; do
+        n=\${d##*/mn}
+        case "\$n" in ""|*[!0-9]*) continue ;; esac
+        idx="\$idx \$n"
+      done
+    fi
+    total=\$(echo \$idx | wc -w)
+    [ "\$total" -gt 0 ] || { echo "NO INSTANCES FOUND"; exit 1; }
     cp -a \$B/defcond \$B/defcond.bak-\$(date +%Y%m%d-%H%M)
     install -m 0755 /tmp/defcond \$B/defcond
     install -m 0755 /tmp/defcon-cli \$B/defcon-cli
-    for i in \$(seq 1 '"$INSTANCES"'); do systemctl restart defcon-devnet-mn@\$i || true; done
+    for i in \$idx; do systemctl restart defcon-devnet-mn@\$i || true; done
     sleep 6
     up=0
-    for i in \$(seq 1 '"$INSTANCES"'); do
+    for i in \$idx; do
       [ "\$(systemctl is-active defcon-devnet-mn@\$i)" = "active" ] && up=\$((up+1))
     done
-    echo "md5=\$(md5sum \$B/defcond | cut -d" " -f1) up=\$up/'"$INSTANCES"'"' 2>/dev/null)
+    echo "md5=\$(md5sum \$B/defcond | cut -d" " -f1) up=\$up/\$total"' 2>/dev/null)
   if [ -z "\$out" ]; then echo "NO RESPONSE"; failed=\$((failed+1)); continue; fi
   echo "\$out"
   case "\$out" in
     md5=$LOCAL_MD5*) ;;
     *) echo "        md5 does not match what was shipped"; failed=\$((failed+1)) ;;
   esac
-  case "\$out" in
-    *up=$INSTANCES/$INSTANCES) ;;
-    *) echo "        not every instance came up"; failed=\$((failed+1)) ;;
-  esac
+  ups=\${out##*up=}
+  if [ "\${ups%%/*}" != "\${ups##*/}" ]; then
+    echo "        not every instance came up"; failed=\$((failed+1))
+  fi
 done < "$INVENTORY"
 echo "    hosts with a problem: \$failed"
 exit \$([ "\$failed" -eq 0 ] && echo 0 || echo 1)
