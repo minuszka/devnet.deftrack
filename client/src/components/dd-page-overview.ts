@@ -94,7 +94,15 @@ export class DdPageOverview extends LitElement {
         color: var(--warn);
         animation: spin 2.4s linear infinite;
       }
+      /* The title always starts a line of its own under the tag, and the
+         particulars sit under the title in the secondary colour. */
+      .run .body {
+        flex: 1 1 100%;
+        min-width: 0;
+      }
       .run .since {
+        display: block;
+        margin-top: 3px;
         color: var(--ink-2);
       }
       @keyframes spin {
@@ -364,10 +372,10 @@ export class DdPageOverview extends LitElement {
           />
         </svg>
         <span class="tag">Experiment running</span>
-        <span>
+        <span class="body">
           <a href="/experiments/${r.runKey}">${r.title}</a>
           <span class="since">
-            — since block <span class="mono">${num(r.startHeight)}</span>${r.intervention
+            since block <span class="mono">${num(r.startHeight)}</span>${r.intervention
               ? html`, ${r.intervention.kind}, ${num(r.intervention.targets.length)} target(s)`
               : nothing}, started ${ago(r.startedAt)}.
           </span>
