@@ -25,9 +25,24 @@
 #      and then reported those hosts as failed rollouts. Each host is now asked
 #      what it has, and judged against its own answer.
 #
+#   4. Nor is the login uniform. Five hosts carrying 45 of the 152 masternodes
+#      log in as their own unprivileged users, not root. Testing only root
+#      against them returned "Permission denied (publickey)" on every one, and
+#      that was read as "no key exists for these hosts" -- from which followed a
+#      declaration that 45 masternodes were unreachable and a gated consensus
+#      rollout was blocked. All of it was wrong, and all of it came from one
+#      wrong username. So the inventory carries the user, and anything
+#      privileged goes through sudo.
+#
 # Inventory lives on the jump host, never here: this repository is public and
-# the fleet addresses are not. Provide it as one address per line in
-# $FLEET_INVENTORY (default /root/fleet-nodes.txt) on the jump host.
+# the fleet addresses are not. Provide it in $FLEET_INVENTORY (default
+# /root/fleet-nodes.txt) on the jump host, one entry per line:
+#
+#   198.51.100.10            # logs in as root
+#   deploy@198.51.100.11     # logs in as deploy, and sudos for the install
+#
+# Blank lines and # comments are skipped. A bare address still means root, so
+# an inventory written before this change keeps working unchanged.
 #
 # Usage:
 #   ops/fleet-deploy.sh <defcond> <defcon-cli>          # deploy
@@ -85,12 +100,13 @@ echo "==> does it run on a fleet host"
 # and fatal on the target.
 ssh "$JUMP" "bash -s" <<REMOTE_CHECK
 set -euo pipefail
-first=\$(head -1 "$INVENTORY")
+first=\$(grep -v '^[[:space:]]*\(#\|$\)' "$INVENTORY" | head -1)
 [ -n "\$first" ] || { echo "empty inventory: $INVENTORY" >&2; exit 1; }
+case "\$first" in *@*) ;; *) first="root@\$first" ;; esac
 SSH="ssh -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
 SCP="scp -q -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
-\$SCP "$STAGE/defcond" "root@\$first:/tmp/fleet-deploy-probe"
-\$SSH "root@\$first" 'chmod +x /tmp/fleet-deploy-probe
+\$SCP "$STAGE/defcond" "\$first:/tmp/fleet-deploy-probe"
+\$SSH "\$first" 'chmod +x /tmp/fleet-deploy-probe
   missing=\$(ldd /tmp/fleet-deploy-probe 2>/dev/null | grep -c "not found" || true)
   if [ "\$missing" != "0" ]; then
     echo "    REFUSING: \$missing shared librar(ies) missing on the target:"
@@ -116,14 +132,24 @@ set -uo pipefail
 SSH="ssh -n -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
 SCP="scp -q -i $NODE_KEY -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=no"
 failed=0
-while read -r ip; do
-  [ -n "\$ip" ] || continue
-  printf '    %-18s ' "\$ip"
-  if ! \$SCP "$STAGE/defcond" "$STAGE/defcon-cli" "root@\$ip:/tmp/" 2>/dev/null; then
+while read -r entry; do
+  case "\$entry" in ""|\#*) continue ;; esac
+  case "\$entry" in *@*) target="\$entry" ;; *) target="root@\$entry" ;; esac
+  printf '    %-30s ' "\$target"
+  if ! \$SCP "$STAGE/defcond" "$STAGE/defcon-cli" "\$target:/tmp/" 2>/dev/null; then
     echo "COPY FAILED"; failed=\$((failed+1)); continue
   fi
-  out=\$(\$SSH "root@\$ip" 'set -e
+  out=\$(\$SSH "\$target" 'set -e
     B=/opt/defcon-devnet/bin
+    # Not every host logs in as root. Anything that writes into $B or drives
+    # systemd goes through sudo, and -n makes a host that would prompt fail
+    # here and now rather than hang the whole rollout on a password it will
+    # never be given.
+    S=""
+    if [ "\$(id -u)" != "0" ]; then
+      S="sudo -n"
+      \$S true 2>/dev/null || { echo "NO PASSWORDLESS SUDO"; exit 1; }
+    fi
     # The instances this host actually has. Read from the datadirs rather than
     # assumed, and filtered to numbers so a stray directory cannot become a unit
     # name that never comes up and fails the host.
@@ -140,10 +166,10 @@ while read -r ip; do
     fi
     total=\$(echo \$idx | wc -w)
     [ "\$total" -gt 0 ] || { echo "NO INSTANCES FOUND"; exit 1; }
-    cp -a \$B/defcond \$B/defcond.bak-\$(date +%Y%m%d-%H%M)
-    install -m 0755 /tmp/defcond \$B/defcond
-    install -m 0755 /tmp/defcon-cli \$B/defcon-cli
-    for i in \$idx; do systemctl restart defcon-devnet-mn@\$i || true; done
+    \$S cp -a \$B/defcond \$B/defcond.bak-\$(date +%Y%m%d-%H%M)
+    \$S install -m 0755 /tmp/defcond \$B/defcond
+    \$S install -m 0755 /tmp/defcon-cli \$B/defcon-cli
+    for i in \$idx; do \$S systemctl restart defcon-devnet-mn@\$i || true; done
     sleep 6
     up=0
     for i in \$idx; do
