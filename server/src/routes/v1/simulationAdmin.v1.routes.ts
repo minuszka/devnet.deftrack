@@ -77,7 +77,14 @@ function publicControlMessage(error: unknown): string {
     error instanceof SimulationControlError ||
     error instanceof SimulationPersistenceError ||
     error instanceof SimulationControlPersistenceError ||
-    error instanceof SimulationStateError
+    error instanceof SimulationStateError ||
+    // A deliberate executor refusal answers 422, and used to carry the body
+    // "internal error" -- which is worse than the 500 it replaced: it blames the
+    // caller and then refuses to say what for. These messages name the fault kind
+    // or the target and carry no host identity.
+    error instanceof UnsupportedLiveFaultError ||
+    error instanceof UnscheduledLiveFaultError ||
+    error instanceof InvalidNetemTargetError
   ) {
     return error.message;
   }
