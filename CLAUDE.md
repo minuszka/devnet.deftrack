@@ -90,12 +90,24 @@ would print the password in `claude mcp list` output.
 |---|---|
 | Explorer + seed node | the devnet VPS; `deftrack-devnet.service`, `/opt/devnet-deftrack/app` |
 | Second devnet node | same host, `defcond-devnet2`, exists so the seed has a peer |
-| 80 masternodes | 8 DeFCoN fullnodes, 10 each, ports 19799-19808, `defcon-devnet-mn@N` |
-| 8 fleet stakers | **instance 11** of the same template on each host -- a masternode cannot stake, so block production needs its own daemon. 8 x 11 = 88 services in total |
+| 152 masternodes | 16 hosts, ports 19799-19808, `defcon-devnet-mn@N`. Eleven are in the rollout inventory and log in as root: the 8 DeFCoN fullnodes with 10 each, and three more with 9. The other five carry 14, 10, 7, 7 and 7, and log in as their own unprivileged users, not root |
+| 8 fleet stakers | **instance 11**, and only on the 8 DeFCoN fullnodes -- a masternode cannot stake, so block production needs its own daemon. The remaining hosts carry masternodes only, which is why a wallet-side staking fix gains them nothing and is not worth a restart |
 | Node binaries | `/usr/local/bin/defcond` (seed, BDB wallet) and a `--without-bdb` build for the fleet |
 
 Reach the fleet through the jump host; the per-node key lives there, not
 locally. `ssh devnet` reaches the explorer VPS directly.
+
+**The masternode count is a consensus input, not a statistic.**
+`CalcMaxPoSePenalty` is `max(100, GetAllMNsCount())` and a DKG exclusion costs
+66% of it (`deterministicmns.cpp:328-339`), so both the ban threshold and the
+penalty scale with the size of the network. At 152 registered nodes the
+threshold is 152 and one exclusion is 100, which puts **two exclusions within
+48 blocks over the line** -- and four profiles punish on interleaved schedules,
+two of them every 24 blocks. A single moment's outage at a height where three
+schedules coincide costs 300 and bans outright. This entry read 80 for a while
+after the fleet had grown; every ban estimate made against that number was
+wrong, because at 110 or fewer the penalty is 66, decays to zero inside the
+72-block `llmq_400_60` cycle, and that profile alone never bans at all.
 
 ## Operational notes earned the hard way
 
@@ -404,8 +416,21 @@ The Q60 profile the whole project was built to test now exists in the node:
 `LLMQ_DEFCON` (type 7), **60/44/41**, hourly DKG, `dkgBadVotesThreshold 48`.
 Selected by the simulator at
 github.com/minuszka/defcon-chainlock-pose-simulator; the decisive property is
-`2*threshold > size`, which makes two disjoint signer sets -- a dual ChainLock
-under partition -- impossible by construction.
+`2*threshold > size` -- 82 > 60 -- which makes two disjoint signer sets, and so
+a dual ChainLock under partition, impossible by construction.
+
+**That guarantee is about ChainLocks, and it does not extend to commitments.**
+`dkgsession.cpp:1108` bails out only once a member already holds two premature
+commitments, so **two per member are accepted** -- the code says so itself at
+:1156, "We only handle up to 2 commitments per member". `FinalizeCommitments`
+groups them by `validMembers` alone (:1220) and needs `minSize` of them per
+group (:1232), so one member's two commitments land in two different groups and
+set its signer bit in both. Two competing final commitments with different
+`validMembers` are therefore not arithmetically impossible on Q60; they require
+44 of 60 members to double-sign, which is 73% collusion. That is a strong
+economic barrier and a different kind of claim from the ChainLock one. Say Q60
+is structurally immune to a **dual ChainLock**; do not say it is structurally
+immune to divergent commitments.
 
 The switchover follows the simulator audit's design: a single, one-way,
 height-only resolver (`llmq::GetChainLocksLLMQType`) that both signing and
