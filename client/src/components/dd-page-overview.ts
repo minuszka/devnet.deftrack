@@ -56,6 +56,11 @@ export class DdPageOverview extends LitElement {
         border-radius: 6px;
         font-size: 13px;
       }
+      /* Two strips stack the way the state bar and the Q60 line already do --
+         touching -- and the 14px of air comes only after the last of them. */
+      .q60:has(+ .run) {
+        margin-bottom: 0;
+      }
       .q60.live {
         border-left-color: var(--accent);
       }
