@@ -18,7 +18,20 @@ UNIT=deftrack-devnet
 cd "$APP"
 
 echo "==> pull"
-git pull --ff-only
+# protocol.version=0 is not a preference, it is what works from this host.
+#
+# Observed on the VPS: any protocol-v2 fetch to github.com comes back with
+# `www-authenticate: Basic realm="GitHub"` and git then asks for a username --
+# on this public repository, and equally on github.com/git/git, so it is
+# nothing to do with our credentials or visibility. The same URL fetched with
+# curl in the same second returns 200 and the correct ref listing, and
+# `git -c protocol.version=0 ls-remote` succeeds. Whatever the cause sits
+# between git's v2 request and GitHub, a deploy is not the place to find out.
+#
+# Set here rather than in the checkout's config so a re-clone does not
+# silently reintroduce the failure: it stopped a deploy dead on 2026-09-02,
+# and the app had been running two-day-old code without anything saying so.
+git -c protocol.version=0 pull --ff-only
 
 echo "==> install (lockfile-exact)"
 npm ci --silent
