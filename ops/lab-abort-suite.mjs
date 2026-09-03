@@ -200,7 +200,18 @@ async function abortDuring(scenario) {
 
 const results = [];
 for (const scenario of SCENARIOS) {
-  if (results.length > 0) await wait(45_000); // the rate-limit window is a minute
+  /*
+   * A whole DKG round between scenarios, not a rate-limit window.
+   *
+   * Each fault disturbs the network the next one's baseline is measured against,
+   * and `baseline-ready` needs resolved rounds in a window that no longer
+   * contains the last experiment. At 24 blocks of 15 seconds that is six
+   * minutes, so a suite of four takes about half an hour -- and the alternative
+   * is what happened here: one run proved the first two scenarios and the next
+   * run proved the other two, each refused on a baseline the other had just
+   * disturbed. Both halves were true and neither run proved the whole.
+   */
+  if (results.length > 0) await wait(7 * 60_000);
   results.push(await abortDuring(scenario));
 }
 
