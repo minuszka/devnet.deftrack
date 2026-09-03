@@ -164,49 +164,66 @@ async function observeContainer(container) {
   };
 }
 
+/**
+ * One pass over every container, asked CONCURRENTLY.
+ *
+ * Sequential asking did two things wrong at eleven nodes and neither was
+ * visible at four. It lagged -- a full pass took longer than the poll interval,
+ * so heights went stale and the resolver refused targets as HOST_HEIGHT_STALE on
+ * a perfectly healthy lab. And it skewed: the first container was seen seconds
+ * before the last, so a "snapshot" spanned a range of chain rather than an
+ * instant, in a tool whose whole subject is when things were seen.
+ *
+ * Each container is still independent: one that cannot be reached is reported by
+ * nobody, and one whose post fails is retried on the next pass.
+ */
 async function observeOnce() {
-  let reported = 0;
-  let unreachable = 0;
-  let failed = 0;
-  for (const container of CONTAINERS) {
-    let payload;
-    try {
-      payload = await observeContainer(container);
-    } catch (error) {
-      // Deliberately no report: an unreachable node's telemetry must go stale,
-      // because that staleness is what tells the preflight the node is down.
-      unreachable++;
-      console.error(`skipped ${container}: ${error.message}`);
-      continue;
-    }
-    // A failed post is reported and dropped, never fatal.
-    //
-    // It used to throw, which ended the observer. The moments the ingest is
-    // unavailable -- a lab server restarting, a fault run in progress -- are
-    // exactly the moments its telemetry matters most, and an observer that dies
-    // then leaves a silent gap that reads afterwards as a healthy quiet period.
-    // This sighting is lost; the next pass reports the same blocks again,
-    // because the ingest keys them by (height, host) and re-posting is a no-op.
-    try {
-      const res = await fetch(`${API}/api/v1/peers/observations`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-ingest-token': TOKEN },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    } catch (error) {
-      failed++;
-      console.error(`could not report ${container}: ${error.message}`);
-      // Re-report this container's blocks next pass rather than skipping them.
-      lastSeenHeight.delete(container);
-      continue;
-    }
-    reported++;
-    console.log(`observed ${container}: height=${payload.status.height} peers=${payload.status.peers} build=${payload.status.nodeBuild.slice(0, 8) || '(unknown)'}`);
+  const results = await Promise.all(
+    CONTAINERS.map(async (container) => {
+      let payload;
+      try {
+        payload = await observeContainer(container);
+      } catch (error) {
+        // Deliberately no report: an unreachable node's telemetry must go
+        // stale, because that staleness is what tells the preflight it is down.
+        console.error(`skipped ${container}: ${error.message}`);
+        return 'unreachable';
+      }
+      // A failed post is reported and dropped, never fatal. The moments the
+      // ingest is unavailable -- a lab server restarting, a fault run in
+      // progress -- are exactly when its telemetry matters most, and an observer
+      // that died then left a gap that reads afterwards as a healthy quiet
+      // period. The sighting is lost; the next pass reports the same blocks
+      // again, because the ingest keys them by (height, host).
+      try {
+        const res = await fetch(`${API}/api/v1/peers/observations`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-ingest-token': TOKEN },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      } catch (error) {
+        console.error(`could not report ${container}: ${error.message}`);
+        lastSeenHeight.delete(container);
+        return 'failed';
+      }
+      console.log(
+        `observed ${container}: height=${payload.status.height} peers=${payload.status.peers} ` +
+          `build=${payload.status.nodeBuild.slice(0, 8) || '(unknown)'}`
+      );
+      return 'reported';
+    })
+  );
+  const count = (kind) => results.filter((entry) => entry === kind).length;
+  const unreachable = count('unreachable');
+  const failed = count('failed');
+  if (unreachable > 0) {
+    console.error(`${unreachable}/${CONTAINERS.length} container(s) unreachable and deliberately unreported`);
   }
-  if (unreachable > 0) console.error(`${unreachable}/${CONTAINERS.length} container(s) unreachable and deliberately unreported`);
-  if (failed > 0) console.error(`${failed}/${CONTAINERS.length} report(s) could not be delivered; they will be resent`);
-  return { reported, unreachable, failed };
+  if (failed > 0) {
+    console.error(`${failed}/${CONTAINERS.length} report(s) could not be delivered; they will be resent`);
+  }
+  return { reported: count('reported'), unreachable, failed };
 }
 
 if (CONTAINERS.length === 0) {
