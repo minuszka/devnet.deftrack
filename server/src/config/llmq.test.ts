@@ -4,10 +4,12 @@ import {
   DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT,
   LLMQ_PROFILES,
   TRACKED_PROFILE_NAMES,
+  applyProfileOverrides,
   chainlockProfileNameAtHeight,
   dkgBadVotesThresholdAtHeight,
   maxPossibleBan,
   trackedProfiles,
+  type LlmqProfile,
 } from './llmq.js';
 
 describe('llmq profile registry', () => {
@@ -132,5 +134,53 @@ describe('llmq profile registry', () => {
     expect(dkgBadVotesThresholdAtHeight(p400, gate)).toBe(300);
     // A profile with no V2 value keeps its flat threshold at every height.
     expect(dkgBadVotesThresholdAtHeight(LLMQ_PROFILES.llmq_defcon!, gate + 1000)).toBe(48);
+  });
+});
+
+describe('declaring the profile this deployment runs', () => {
+  const base = (): Record<string, LlmqProfile> => ({
+    llmq_test: { ...LLMQ_PROFILES.llmq_test! },
+  });
+
+  it('leaves the table alone when nothing is declared', () => {
+    expect(applyProfileOverrides(base(), '')).toEqual(base());
+    expect(applyProfileOverrides(base(), '   ')).toEqual(base());
+  });
+
+  it('applies what the node was actually started with', () => {
+    // -llmqtestparams=10:6 really is 10/6/6/6: the node sets minSize, threshold
+    // AND dkgBadVotesThreshold all to the threshold.
+    const merged = applyProfileOverrides(
+      base(),
+      JSON.stringify({ llmq_test: { size: 10, minSize: 6, threshold: 6, dkgBadVotesThreshold: 6 } })
+    );
+    expect(merged.llmq_test).toMatchObject({ size: 10, minSize: 6, threshold: 6, dkgBadVotesThreshold: 6 });
+    // Untouched fields keep the built-in values rather than becoming undefined.
+    expect(merged.llmq_test!.dkgInterval).toBe(LLMQ_PROFILES.llmq_test!.dkgInterval);
+  });
+
+  it('throws rather than falling back, on anything it cannot honour', () => {
+    // Falling back to the defaults would be the same silent wrongness in a new
+    // place -- and worse, because someone had tried to say otherwise.
+    expect(() => applyProfileOverrides(base(), 'not json')).toThrow(/not valid JSON/);
+    expect(() => applyProfileOverrides(base(), '[]')).toThrow(/keyed by profile name/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_nope":{"size":4}}')).toThrow(/unknown profile/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"llmqName":"x"}}')).toThrow(/cannot set/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"size":0}}')).toThrow(/positive integer/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"size":1.5}}')).toThrow(/positive integer/);
+  });
+
+  it('refuses a profile the node could not be running', () => {
+    // A quorum cannot need more members to form than it has, nor sign with more
+    // than it holds. A declaration like that would be recorded on every round as
+    // though it were the rule.
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"size":3,"minSize":5}}'))
+      .toThrow(/minSize 5 exceeds size 3/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"size":3,"threshold":5}}'))
+      .toThrow(/threshold 5 exceeds size 3/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"dkgMiningWindowEnd":10}}'))
+      .toThrow(/mining window/);
+    expect(() => applyProfileOverrides(base(), '{"llmq_test":{"dkgMiningWindowStart":4}}'))
+      .toThrow(/before the five/);
   });
 });

@@ -18,6 +18,27 @@ import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { LAB_WRAPPER_VERSION, labPaths, labSecret } from './lab-paths.mjs';
 import { cookieOf, docker, endpointOf, rpc } from './lab-rpc.mjs';
+import { llmqProfileOverridesFor } from '../server/dist/simulator/labCompose.js';
+import { readFileSync as readLabFile } from 'node:fs';
+
+/**
+ * The topology this lab is actually running, read back from the generated
+ * compose rather than re-derived.
+ *
+ * The compose is the artefact the containers were started from, so it is the one
+ * thing that cannot disagree with them. `llmqTestParams` is stripped from the
+ * document itself (Compose rejects unknown keys), so it is recovered from the
+ * arguments the nodes carry -- which is where it ended up.
+ */
+function labSpec() {
+  const file = process.env.LAB_COMPOSE_FILE ?? 'lab-compose.yml';
+  const parsed = JSON.parse(readLabFile(file, 'utf8'));
+  const command = Object.values(parsed.services ?? {})[0]?.command ?? [];
+  const arg = command.find((entry) => String(entry).startsWith('-llmqtestparams='));
+  if (arg === undefined) return { llmqTestParams: null };
+  const [size, threshold] = String(arg).split('=')[1].split(':').map(Number);
+  return { llmqTestParams: { size, threshold } };
+}
 
 const WALLET_NODE = process.env.LAB_RPC_CONTAINER ?? 'mn01';
 const LAB_PORT = process.env.LAB_PORT ?? '4210';
@@ -99,6 +120,11 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     SYNC_INTERVAL_MS: process.env.SYNC_INTERVAL_MS ?? '1500',
     MN_POLL_INTERVAL_MS: process.env.MN_POLL_INTERVAL_MS ?? '10000',
     QUORUM_POLL_INTERVAL_MS: process.env.QUORUM_POLL_INTERVAL_MS ?? '15000',
+    // What the nodes were actually started with, derived from the same topology
+    // the compose was generated from. No RPC returns these numbers, so without
+    // this the explorer would record the built-in defaults on every round -- and
+    // a campaign comparing two parameter sets would compare neither.
+    LLMQ_PROFILE_OVERRIDES: process.env.LLMQ_PROFILE_OVERRIDES ?? llmqProfileOverridesFor(labSpec()),
     TRACKED_LLMQ_NAMES: process.env.TRACKED_LLMQ_NAMES ?? 'llmq_test',
     CHAINLOCK_LLMQ_NAME: process.env.CHAINLOCK_LLMQ_NAME ?? 'llmq_test',
     CHAINLOCK_V2_LLMQ_NAME: process.env.CHAINLOCK_V2_LLMQ_NAME ?? 'llmq_test',

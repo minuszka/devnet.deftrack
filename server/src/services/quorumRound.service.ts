@@ -318,6 +318,28 @@ export class QuorumRoundService {
       detailsComplete = info !== null;
     }
 
+    /*
+     * The one cross-check the chain can give on a declared profile.
+     *
+     * No RPC returns a quorum's size, minSize or threshold, so the profile table
+     * is taken on trust -- and a table written for one binary is simply wrong
+     * under another, or under `-llmqtestparams`. What IS observable is how many
+     * members a formed quorum actually has, and that can never exceed the size
+     * the node was configured with. When it does, the declaration is wrong, and
+     * every round recorded under it carries rules the node was not applying.
+     *
+     * Only the impossible direction is reported. Fewer members than `size` is
+     * ordinary: CalculateQuorum returns min(size, available masternodes), which
+     * is what `effectiveSize` records.
+     */
+    if (observedSize !== null && observedSize > p.size) {
+      logger.error(
+        `${p.llmqName} round at ${expectedHeight} has ${observedSize} members but the profile ` +
+          `declares size ${p.size}; the declared numbers do not match the running node ` +
+          `(set LLMQ_PROFILE_OVERRIDES) and every round recorded under them is misattributed`
+      );
+    }
+
     // A failed DKG mines no commitment, and the node's punishment loop is
     // guarded by a non-null commitment -- so nobody is punished. That zero is
     // an assertion about consensus, not a missing value.
