@@ -37,6 +37,8 @@ import {
 import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
 import { SimulationRun } from '../../models/SimulationRun.js';
 import { rpc } from '../../services/rpc.service.js';
+import { MongoSimulationActionRepository } from '../../services/simulationAction.repository.js';
+import { SimulationActionDispatcher } from '../../services/simulationDispatcher.service.js';
 import { SimulationTarget } from '../../models/SimulationTarget.js';
 import {
   registryUpdateFrom,
@@ -359,6 +361,32 @@ const defaultService = new SimulationControlService(
   async () => {
     const height = await rpc.getBlockCount();
     return { height, hash: await rpc.getBlockHash(height) };
+  },
+  // The queue a run's scheduled actions are written to. Without it the executor
+  // refuses any plan whose actions are not all immediate, which is the right
+  // answer when nothing would perform them.
+  new MongoSimulationActionRepository()
+);
+
+/**
+ * The worker that performs those actions, exported so an entrypoint can start it.
+ *
+ * Not started here: a module that starts a background sweep on import would run
+ * one in every process that imports the routes, including tests.
+ */
+export const defaultActionDispatcher = new SimulationActionDispatcher(
+  new MongoSimulationActionRepository(),
+  {
+    loadRun: (runKey) => defaultService.status(runKey),
+    loadPlan: (run) => defaultService.planFor(run),
+    dispatch: async (input) => {
+      const executor = buildLabExecutor();
+      if (executor === undefined) {
+        throw new Error('no lab executor is configured, so no scheduled action can be applied');
+      }
+      await executor.dispatchScheduledAction(input);
+    },
+    workerId: `dispatcher:${process.pid}`,
   }
 );
 

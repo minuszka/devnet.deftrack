@@ -36,6 +36,7 @@ import {
 } from './services/simulationMongo.repository.js';
 import { SimulationPersistenceService } from './services/simulationPersistence.service.js';
 import { SimulationReconcileService } from './services/simulationReconcile.service.js';
+import { defaultActionDispatcher } from './routes/v1/simulationAdmin.v1.routes.js';
 import { SimulationObservationService } from './services/simulationObservation.service.js';
 import { SimulationMeasurementService } from './services/simulationMeasurement.service.js';
 import { MongoSimulationMeasurementRepository } from './services/simulationMeasurementMongo.repository.js';
@@ -199,6 +200,11 @@ async function main(): Promise<void> {
     }
   );
   simulationObservationService.start();
+  // Performs the actions a plan scheduled for after activation -- a flapping
+  // cycle, a staggered reconnect. Without it the executor refuses any plan whose
+  // actions are not all immediate, because collapsing a cycle into a single stop
+  // would report every action applied while measuring none of them.
+  defaultActionDispatcher.start();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);

@@ -10,6 +10,8 @@ import type {
 } from '../models/SimulationRun.js';
 import type { SimulationControlRole } from '../models/SimulationControlRequest.js';
 import { dkgAnchorRefusal } from '../simulator/dkgAnchorGate.js';
+import { scheduledActionRowsFor } from './simulationDispatcher.service.js';
+import type { SimulationActionRepository } from './simulationAction.repository.js';
 import { authorizeSimulationApproval } from '../simulator/simulationApproval.js';
 import { parseScenarioRequest, scenarioDescriptors } from '../simulator/scenarioRegistry.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
@@ -222,7 +224,15 @@ export class SimulationControlService {
      * then simply records no anchor, which the measurement window already treats
      * as "fall back to the live tip", exactly as before.
      */
-    private readonly chainTip: (() => Promise<ChainAnchor>) | undefined = undefined
+    private readonly chainTip: (() => Promise<ChainAnchor>) | undefined = undefined,
+    /**
+     * The queue a run's scheduled actions are written to, and retired from.
+     *
+     * Optional so a deployment without a dispatcher keeps the behaviour it had:
+     * the executor then refuses any plan whose actions are not all immediate,
+     * which is the right answer when nothing would ever perform them.
+     */
+    private readonly scheduledActions: Pick<SimulationActionRepository, 'enqueue' | 'cancelPending'> | undefined = undefined
   ) {}
 
   /**
@@ -279,6 +289,17 @@ export class SimulationControlService {
       role: this.identity.role,
       nowMs: this.clock(),
     });
+  }
+
+  /**
+   * The run's immutable plan.
+   *
+   * Public because the dispatcher re-derives every scheduled command from it
+   * rather than from anything the queue stored -- so a persisted command can
+   * never drift from the plan it came from.
+   */
+  async planFor(run: SimulationRunProjection): Promise<DryRunPlan> {
+    return this.loadPlan(run);
   }
 
   private async loadPlan(run: SimulationRunProjection): Promise<DryRunPlan> {
@@ -549,6 +570,18 @@ export class SimulationControlService {
       // the run's own envelope, so an abandoned run stops blocking on its own.
       await this.acquireLiveRunLock(run, request);
       await this.executor.activateFault({ run, plan, faultLeaseExpiresAtMs });
+      // Written AFTER the immediate faults land, so a failure to apply them
+      // leaves no schedule behind for a dispatcher to act on.
+      if (this.scheduledActions !== undefined) {
+        await this.scheduledActions.enqueue(
+          scheduledActionRowsFor({
+            runKey: run.runKey,
+            actions: plan.actions,
+            activatedAtMs: request.acceptedAtMs,
+            faultLeaseExpiresAtMs,
+          })
+        );
+      }
       // Read AFTER the fault is applied, so the anchor is a height the fault was
       // already in force at rather than one it had not reached yet.
       const activatedAt = await this.anchor();
@@ -593,6 +626,12 @@ export class SimulationControlService {
       // The run is already held in recovery above; the executor now clears the
       // fault and proves the lab is clean, and the outcome is recorded atomically.
       const plan = await this.loadPlan(run);
+      // Cancelled BEFORE the recovery proof: an action still waiting could
+      // otherwise be claimed while the lab is being proven clean, and land a
+      // fault seconds after the run reported all-clear.
+      if (this.scheduledActions !== undefined) {
+        await this.scheduledActions.cancelPending({ runKey: run.runKey, nowMs: this.clock() });
+      }
       const recovery = await this.executor.proveRecovery({ run, plan });
       const recoveredAt = recovery.allClear ? await this.anchor() : {};
       run = await this.runs.recordRecoveryResult({
@@ -665,6 +704,12 @@ export class SimulationControlService {
       // the outcome and its findings are recorded atomically. A live run stops at
       // cooldown (or failed) -- its cooldown is a real budget, not auto-completed.
       const plan = await this.loadPlan(run);
+      // Cancelled BEFORE the recovery proof: an action still waiting could
+      // otherwise be claimed while the lab is being proven clean, and land a
+      // fault seconds after the run reported all-clear.
+      if (this.scheduledActions !== undefined) {
+        await this.scheduledActions.cancelPending({ runKey: run.runKey, nowMs: this.clock() });
+      }
       const recovery = await this.executor.proveRecovery({ run, plan });
       const recoveredAt = recovery.allClear ? await this.anchor() : {};
       run = await this.runs.recordRecoveryResult({

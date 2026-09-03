@@ -8,6 +8,8 @@ import {
   labFaultsForPlan,
   faultRecoveryTargetsForPlan,
   indexTargetsById,
+  scheduledLabActionsForPlan,
+  UnsupportedLiveFaultError,
   type LabRecoveryTarget,
 } from './liveExecutorPlan.js';
 import type { CommandQueue } from './netemWrapperHost.js';
@@ -116,12 +118,54 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
       expiresAtMs: input.faultLeaseExpiresAtMs,
       nowMs: this.clock.now(),
       strict: true,
+      // Scheduled actions belong to the dispatcher below, not to this path.
+      deferScheduled: true,
     }).faults;
+    // Translated too, and strictly: a run must not reach fault_active carrying a
+    // schedule that cannot be performed. Refusing later, mid-run, would mean a
+    // fault applied and a cycle abandoned half way.
+    const scheduled = scheduledLabActionsForPlan({
+      plan: input.plan,
+      targetsById,
+      runTag: input.run.runKey,
+      expiresAtMs: input.faultLeaseExpiresAtMs,
+    }).actions;
     const commands = faults.map((fault) => fault.apply);
     // Every container is checked BEFORE the first enqueue: a refusal must leave
-    // no half-applied fault behind.
+    // no half-applied fault behind. Scheduled containers are checked here too,
+    // for the same reason -- the check must not first run when the fault is
+    // already on.
     for (const fault of faults) await this.assertContainerIsOurs(fault.container);
+    for (const action of scheduled) await this.assertContainerIsOurs(action.container);
     for (const command of commands) await this.queue.enqueue(command);
+  }
+
+  /**
+   * Perform ONE action the plan scheduled for later.
+   *
+   * Re-derived from the immutable plan rather than from anything the queue
+   * stored, so a persisted command can never drift from the plan it came from --
+   * the same reason the audit rebuilds events from state rather than storing
+   * their payloads.
+   */
+  async dispatchScheduledAction(input: {
+    run: SimulationRunProjection;
+    plan: DryRunPlan;
+    actionId: string;
+    faultLeaseExpiresAtMs: number;
+  }): Promise<void> {
+    const scheduled = scheduledLabActionsForPlan({
+      plan: input.plan,
+      targetsById: indexTargetsById(input.run.metadata.targetSnapshot),
+      runTag: input.run.runKey,
+      expiresAtMs: input.faultLeaseExpiresAtMs,
+    }).actions;
+    const action = scheduled.find((entry) => entry.actionId === input.actionId);
+    if (action === undefined) {
+      throw new UnsupportedLiveFaultError(`action ${input.actionId} is not in this run's schedule`);
+    }
+    await this.assertContainerIsOurs(action.container);
+    await this.queue.enqueue(action.command);
   }
 
   /**

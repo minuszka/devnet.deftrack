@@ -214,10 +214,27 @@ describe('faultRecoveryTargetsForPlan', () => {
   });
 
   it('never throws where apply would, so recovery cannot strand a run mid-teardown', () => {
-    const plan = planWith([action('mn-9', netemPayload()), action('mn-1', stopPayload, 1, 30_000)]);
+    const plan = planWith([action('mn-9', netemPayload()), action('mn-9', stopPayload, 1, 30_000)]);
     const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
     expect(recovery).toEqual([]);
-    expect(skipped).toBe(2); // unknown target, and a staged outage
+    expect(skipped).toBe(2); // an unknown target twice: immediate and scheduled
+  });
+
+  it('clears a target whose only outage is a scheduled one', () => {
+    // It would otherwise be missing here, and recovery would report all-clear
+    // over a node the dispatcher had stopped. Its clear is the same job id, so
+    // adding it is exact rather than approximate.
+    const plan = planWith([action('mn-1', stopPayload, 0, 30_000)]);
+    const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
+    expect(recovery).toEqual([
+      {
+        targetId: 'mn-1',
+        container: 'mn01',
+        faultClass: 'service',
+        clear: { op: 'clear', jobId: serviceJobId('run-1', 'mn01') },
+      },
+    ]);
+    expect(skipped).toBe(0);
   });
 });
 
@@ -227,7 +244,7 @@ describe('scheduledLabActionsForPlan', () => {
 
   it('returns nothing for a plan whose actions are all immediate', () => {
     const plan = { actions: [action('mn-1', stopPayload, 0, 0)] } as DryRunPlan;
-    expect(scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000 })).toEqual([]);
+    expect(scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000 }).actions).toEqual([]);
   });
 
   it('turns a flapping cycle into stops and the clears that restart them', () => {
@@ -242,7 +259,7 @@ describe('scheduledLabActionsForPlan', () => {
         action('mn-1', startPayload, 3, 30_000),
       ],
     } as DryRunPlan;
-    const scheduled = scheduledLabActionsForPlan({
+    const { actions: scheduled } = scheduledLabActionsForPlan({
       plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000,
     });
     expect(scheduled.map((entry) => [entry.notBeforeOffsetMs, entry.command.op])).toEqual([
@@ -263,7 +280,7 @@ describe('scheduledLabActionsForPlan', () => {
         action('mn-1', stopPayload, 0, 10_000),
       ],
     } as DryRunPlan;
-    const scheduled = scheduledLabActionsForPlan({
+    const { actions: scheduled } = scheduledLabActionsForPlan({
       plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000,
     });
     expect(scheduled.map((entry) => entry.notBeforeOffsetMs)).toEqual([10_000, 30_000]);

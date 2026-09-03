@@ -12,7 +12,7 @@ import { chainLockService } from './services/chainLock.service.js';
 import { zmqService } from './services/zmq.service.js';
 import { assertLabChain, assertLabDatabaseIsolated } from './domain/labIsolation.js';
 import { EXECUTOR_LAB_NETWORK } from './services/simulationControl.service.js';
-import simulationAdminRoutes from './routes/v1/simulationAdmin.v1.routes.js';
+import simulationAdminRoutes, { defaultActionDispatcher } from './routes/v1/simulationAdmin.v1.routes.js';
 import peersRoutes from './routes/v1/peers.v1.routes.js';
 import {
   initializeSimulationPersistenceIndexes,
@@ -94,6 +94,11 @@ async function main(): Promise<void> {
     }
   );
   observationService.start();
+  // Performs the actions a plan scheduled for after activation -- a flapping
+  // cycle, a staggered reconnect. Without it the executor refuses any plan whose
+  // actions are not all immediate, because collapsing a cycle into a single stop
+  // would report every action applied while measuring none of them.
+  defaultActionDispatcher.start();
   // Indexes the LAB chain into the LAB database. The devnet record is out of
   // reach by construction: this process never opened that connection.
   syncService.start();
