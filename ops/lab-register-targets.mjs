@@ -88,7 +88,13 @@ for (let index = 2; index <= NODES; index++) {
     p2pPort: 19799,
     role: 'masternode',
     network: 'regtest',
-    capabilities: ['service-control', 'netem-p2p'],
+    // Everything a lab container can actually take. `partition-p2p` was missing,
+    // so node-isolation was refused as CAPABILITY_MISSING on nodes that can
+    // plainly be partitioned -- the tc mechanism was proven by hand on one of
+    // them. A capability the target does not really have would be worse, so this
+    // list is what the compose grants: NET_ADMIN, its own interface, and a
+    // container the executor may stop.
+    capabilities: ['service-control', 'netem-p2p', 'partition-p2p'],
     labels: ['lab'],
   });
   await api('POST', `/targets/${name}/enable`);
