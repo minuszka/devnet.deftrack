@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  generateLabCompose,
-  labNodeName,
-  ringPeers,
-  toComposeDocument,
-  type LabComposeSpec,
-} from './labCompose.js';
+import { generateLabCompose, labNodeAddress, labNodeName, ringPeers, toComposeDocument, type LabComposeSpec } from './labCompose.js';
 
 /** Every node reachable from node 1 by following the addnode edges. */
 function connectedComponentSize(spec: LabComposeSpec): number {
@@ -123,6 +117,23 @@ describe('generateLabCompose', () => {
     }
   });
 
+  it('starts only the named nodes as masternodes, leaving the rest able to hold a wallet', () => {
+    // A node cannot be both: the daemon soft-sets disablewallet=1 whenever a
+    // masternode BLS key is present, and refuses to start if that is overridden.
+    // So a lab that wants blocks needs at least one node without a key.
+    const spec = generateLabCompose({ nodes: 3, masternodeKeys: { mn01: 'a'.repeat(32), mn02: 'b'.repeat(32) } });
+    expect(spec.services.mn01!.command).toContain(`-masternodeblsprivkey=${'a'.repeat(32)}`);
+    expect(spec.services.mn02!.command).toContain(`-masternodeblsprivkey=${'b'.repeat(32)}`);
+    expect(spec.services.mn03!.command.some((a) => a.startsWith('-masternodeblsprivkey='))).toBe(false);
+  });
+
+  it('starts no masternode at all by default', () => {
+    const spec = generateLabCompose({ nodes: 2 });
+    for (const service of Object.values(spec.services)) {
+      expect(service.command.some((a) => a.startsWith('-masternodeblsprivkey='))).toBe(false);
+    }
+  });
+
   it('rejects a node count outside the supported range', () => {
     expect(() => generateLabCompose({ nodes: 1 })).toThrow(/2\.\.40/);
     expect(() => generateLabCompose({ nodes: 41 })).toThrow(/2\.\.40/);
@@ -136,5 +147,33 @@ describe('generateLabCompose', () => {
     expect(parsed.name).toBe('defcon-finality-lab');
     expect(Object.keys(parsed.services)).toEqual(['mn01', 'mn02']);
     expect(parsed.services.mn01.command).toContain(`-addnode=${labNodeName(2)}:19799`);
+  });
+});
+
+describe('pinned addresses', () => {
+  it('gives each node a fixed address on the lab subnet, first node at .2', () => {
+    expect(labNodeAddress(1)).toBe('172.28.0.2');
+    expect(labNodeAddress(4)).toBe('172.28.0.5');
+  });
+
+  it('refuses a subnet it cannot pin addresses inside', () => {
+    expect(() => labNodeAddress(1, '172.28.0.0/16')).toThrow(/must be a \/24/);
+  });
+
+  it('enters the network at that address and advertises it', () => {
+    const spec = generateLabCompose({ nodes: 3 });
+    // The compose is the only definition of a node's address: a ProTx pins the
+    // service it registered with, so an address that moves on recreate leaves a
+    // masternode holding a key for a ProTx naming some other container.
+    expect(spec.services.mn02?.networks.lab?.ipv4_address).toBe('172.28.0.3');
+    expect(spec.services.mn02?.command).toContain('-externalip=172.28.0.3');
+    expect(spec.networks.lab?.ipam.config[0]?.subnet).toBe('172.28.0.0/24');
+  });
+
+  it('keeps every pinned address inside the CIDR allowed to reach RPC', () => {
+    const spec = generateLabCompose({ nodes: 8 });
+    for (const service of Object.values(spec.services)) {
+      expect(service.networks.lab?.ipv4_address).toMatch(/^172\.28\.0\.\d+$/);
+    }
   });
 });

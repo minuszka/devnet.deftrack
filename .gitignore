@@ -38,3 +38,7 @@ KICKOFF_PROMPT.md
 # The pre-built defcond the lab image copies in (docker/Dockerfile expects it at
 # the context root). Several hundred MB, and this repository is public.
 /defcond
+
+# Generated lab topology -- carries BLS operator secrets for the regtest lab.
+lab-compose.yml
+lab-masternode-keys.json
