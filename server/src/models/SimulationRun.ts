@@ -101,6 +101,8 @@ export interface SimulationRunDocument extends Document {
   preflight: SimulationPreflightResult[];
   recovery: SimulationRecoveryResult;
   dataQuality: SimulationDataQualitySnapshot | null;
+  /** Set once when the run's boundaries leave nothing to measure; see the schema. */
+  measurement: { unavailable: true; reason: string; decidedAtMs: number } | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -182,6 +184,15 @@ const chainAnchorSchema = new Schema<{ height: number; hash: string }>(
     // A height is not an identity: after a reorg the block at that height is a
     // different block, so the hash is what lets a later reader tell.
     hash: { type: String, required: true },
+  },
+  { _id: false, strict: 'throw' }
+);
+
+const measurementOutcomeSchema = new Schema<{ unavailable: true; reason: string; decidedAtMs: number }>(
+  {
+    unavailable: { type: Boolean, required: true },
+    reason: { type: String, required: true },
+    decidedAtMs: { type: Number, required: true, min: 0 },
   },
   { _id: false, strict: 'throw' }
 );
@@ -275,6 +286,13 @@ export const simulationRunSchema = new Schema<SimulationRunDocument>(
     preflight: { type: [preflightSchema], default: [] },
     recovery: { type: recoverySchema, default: () => ({ required: false, targets: [], allClear: false }) },
     dataQuality: { type: dataQualitySchema, default: null },
+    /**
+     * Set when the run's own boundaries leave nothing to measure, so the sweep
+     * stops offering it for finalization. Root-level on purpose: it is not part
+     * of the state machine, and the state sub-schema is also the audit event's
+     * stateAfter, where an extra field would change what replay must reproduce.
+     */
+    measurement: { type: measurementOutcomeSchema, default: null },
   },
   { timestamps: true, strict: 'throw', versionKey: false }
 );

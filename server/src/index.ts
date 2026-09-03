@@ -196,6 +196,7 @@ async function main(): Promise<void> {
         return { height, hash: await rpc.getBlockHash(height) };
       },
       warmupBlocks: SIMULATION_CONTROL_POLICY.measurement.warmupBlocks,
+      markUnmeasurable: (input) => simulationReconcileRepository.markMeasurementUnavailable(input),
       logger,
     }
   );

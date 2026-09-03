@@ -18,6 +18,13 @@ describe('commitment punishment', () => {
     expect(commitmentPunishedCount(0, 50)).toBe(0);
   });
 
+  it('knows a null commitment punished nobody even when its member list cannot be resolved', () => {
+    // No quorum is built for a failed DKG, so `quorum info` has nothing to say
+    // about it; zero is still the answer. Reading it as unknown had blanked
+    // 3145 of the 3632 unresolved rows on the lab.
+    expect(commitmentPunishedCount(0, null)).toBe(0);
+  });
+
   it('holds a quorum to the members it selected, not the seats its profile defines', () => {
     // The regression this module exists to prevent: llmq_400_60 nominally seats
     // 400 and forms with 80 here. Charging it 400 would report a perfectly

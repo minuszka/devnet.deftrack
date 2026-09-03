@@ -104,6 +104,15 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     ...process.env,
     MONGODB_URI: EXPLORER_MONGO,
     ADMIN_API_KEY: adminKey,
+    // Browser sign-in, lab flavour: the "identity proxy" is anyone on loopback
+    // asserting a header, which is acceptable only because loopback IS the
+    // trust boundary of this lab. Secure is off because the lab is plain http;
+    // that is the one place it may be, and it is said here rather than
+    // defaulted anywhere.
+    ADMIN_IDENTITY_HEADER: process.env.ADMIN_IDENTITY_HEADER ?? 'x-lab-identity',
+    ADMIN_TRUSTED_PROXIES: process.env.ADMIN_TRUSTED_PROXIES ?? '127.0.0.1,::1',
+    ADMIN_IDENTITIES: process.env.ADMIN_IDENTITIES ?? JSON.stringify({ 'lab-admin@local': 'safety-admin', 'lab-operator@local': 'operator' }),
+    ADMIN_COOKIE_SECURE: 'false',
     INGEST_TOKEN: ingestToken,
     LAB_MONGODB_URI: LAB_MONGO,
     LAB_PORT,

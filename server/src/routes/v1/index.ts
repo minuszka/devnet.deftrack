@@ -14,6 +14,7 @@ import fairnessRoutes from './fairness.v1.routes.js';
 import metricsRoutes from './metrics.v1.routes.js';
 import simulationRoutes from './simulations.v1.routes.js';
 import simulationAdminRoutes from './simulationAdmin.v1.routes.js';
+import adminSessionRoutes from './adminSession.v1.routes.js';
 
 const router = Router();
 
@@ -43,6 +44,9 @@ router.use('/fairness/selection', heavyLimiter);
 
 router.use('/quorum-rounds', quorumRoundRoutes);
 router.use('/operators', operatorRoutes);
+// Browser sign-in for the admin surface: the one route an unauthenticated peer
+// may reach, and only from the identity proxy.
+router.use('/admin/session', adminSessionRoutes);
 router.use('/admin/simulations', simulationAdminRoutes);
 router.use('/admin', adminRoutes);
 router.use('/masternodes', masternodeRoutes);

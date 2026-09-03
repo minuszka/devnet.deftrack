@@ -126,6 +126,28 @@ describe('finalizing the measurement', () => {
     expect(h.errors).toEqual([]);
   });
 
+  it('records a run with nothing to measure once, as a finding, and moves on', async () => {
+    // The anchors are immutable, so this refusal is permanent. Retrying it every
+    // tick and logging an error each time -- which is what happened -- is noise
+    // that hides real failures. It is recorded so the run is not offered again.
+    const marked: unknown[] = [];
+    const h = harness({
+      finalizeCandidates: ['run-1'],
+      state: { status: 'aborted', faultActivatedTip: START, recoveredTip: START },
+      finalize: vi.fn(async () => {
+        throw coded('WINDOW_UNMEASURABLE');
+      }),
+      deps: {
+        markUnmeasurable: async (input) => {
+          marked.push(input);
+        },
+      },
+    });
+    await h.service.tick();
+    expect(marked).toEqual([{ runKey: 'run-1', reason: 'WINDOW_UNMEASURABLE', nowMs: 5_000 }]);
+    expect(h.errors).toEqual([]);
+  });
+
   it('reports a genuine failure and still runs the next candidate', async () => {
     const finalize = vi
       .fn()

@@ -13,6 +13,7 @@ import { zmqService } from './services/zmq.service.js';
 import { assertLabChain, assertLabDatabaseIsolated } from './domain/labIsolation.js';
 import { EXECUTOR_LAB_NETWORK } from './services/simulationControl.service.js';
 import simulationAdminRoutes, { defaultActionDispatcher } from './routes/v1/simulationAdmin.v1.routes.js';
+import adminSessionRoutes from './routes/v1/adminSession.v1.routes.js';
 import peersRoutes from './routes/v1/peers.v1.routes.js';
 import {
   initializeSimulationPersistenceIndexes,
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
         return { height, hash: await rpc.getBlockHash(height) };
       },
       warmupBlocks: SIMULATION_CONTROL_POLICY.measurement.warmupBlocks,
+      markUnmeasurable: (input) => reconcileRepository.markMeasurementUnavailable(input),
       logger,
     }
   );
@@ -131,7 +133,18 @@ async function main(): Promise<void> {
   app.get('/health', (_req, res) => {
     res.json({ success: true, data: { lab: true, chain: info.chain, network: EXECUTOR_LAB_NETWORK } });
   });
-  app.use('/api/v1/simulations', simulationAdminRoutes);
+  /*
+   * The same paths as production, deliberately.
+   *
+   * This used to be `/api/v1/simulations`, a lab-only shape. The browser
+   * session cookie is scoped to `/api/v1/admin`, so on the lab it would never
+   * have been sent to the routes it exists to authenticate -- and a door that
+   * cannot be walked on the lab cannot be proven here, which is the whole
+   * reason the lab exists. Mounting under `/admin` like the devnet does means
+   * what is proven here is what runs there.
+   */
+  app.use('/api/v1/admin/session', adminSessionRoutes);
+  app.use('/api/v1/admin/simulations', simulationAdminRoutes);
   // The observation ingest, so lab telemetry arrives by the SAME path the fleet
   // uses. The preflight's observer-fresh check then measures the same thing here
   // as it does on the devnet; a lab that synthesised HostStatus rows directly

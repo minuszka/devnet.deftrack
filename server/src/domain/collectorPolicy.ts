@@ -24,6 +24,13 @@ export function shouldRefreshRound(
   return round.status === 'formed' && round.detailsComplete !== true;
 }
 
-export function payeeRetryDelayMs(attempt: number): number {
+/**
+ * When a backfill asks again after a refusal: five minutes, doubling, capped
+ * at a day. Shared by the payee and the member-count backfills, so a row the
+ * node cannot answer costs one question a day, not one a pass.
+ */
+export function backfillRetryDelayMs(attempt: number): number {
   return Math.min(24 * 60 * 60_000, 5 * 60_000 * 2 ** Math.min(8, Math.max(0, attempt - 1)));
 }
+/** The payee backfill was the first user of the schedule and still calls it by this name. */
+export const payeeRetryDelayMs = backfillRetryDelayMs;

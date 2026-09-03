@@ -56,6 +56,13 @@ export class SimulationMeasurementError extends Error {
       | 'INVALID_ANCHOR'
       | 'CHAIN_REORG'
       | 'EVIDENCE_NOT_SETTLED'
+      /**
+       * The run's own boundaries leave nothing to measure: a fault aborted
+       * within the warm-up has an empty observation window. The anchors are
+       * immutable, so this is permanent for the run, and a sweep must record
+       * it once rather than retry it for ever.
+       */
+      | 'WINDOW_UNMEASURABLE'
       | 'REPORT_CONFLICT'
       | 'REPORT_NOT_FOUND',
     message: string
@@ -96,6 +103,30 @@ function sameRecord(a: SimulationMeasurementRecord, b: SimulationMeasurementReco
   );
 }
 
+
+/**
+ * The measurement windows for an anchor, or a coded refusal.
+ *
+ * The planner throws a plain Error when the fault window is empty after the
+ * warm-up exclusion -- a run aborted eight seconds after activation, say. That
+ * is not a transient condition: the anchors are immutable, so the same anchor
+ * is refused the same way for ever. Given a code, a sweep can tell it from
+ * "not yet" and stop retrying.
+ */
+function planWindowsFor(
+  input: Parameters<typeof planMeasurementWindowsForLlmqFault>[0]
+): ReturnType<typeof planMeasurementWindowsForLlmqFault> {
+  try {
+    return planMeasurementWindowsForLlmqFault(input);
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    if (/too short|at least one block/.test(text)) {
+      throw new SimulationMeasurementError('WINDOW_UNMEASURABLE', `nothing to measure: ${text}`);
+    }
+    throw error;
+  }
+}
+
 export class SimulationMeasurementService {
   constructor(private readonly repository: SimulationMeasurementRepository) {}
 
@@ -119,7 +150,7 @@ export class SimulationMeasurementService {
       throw new SimulationMeasurementError('RUN_NOT_FOUND', 'simulation run or immutable DryRun plan was not found');
     }
     const primaryLlmqName = chainlockProfileNameAtHeight(input.anchor.faultStartHeight);
-    const windows = planMeasurementWindowsForLlmqFault({
+    const windows = planWindowsFor({
       primaryLlmqName,
       faultStartHeight: input.anchor.faultStartHeight,
       faultEndHeight: input.anchor.faultEndHeight,

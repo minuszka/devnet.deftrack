@@ -93,10 +93,22 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
    * already written would otherwise be recomputed on every tick for ever, and
    * `compute` re-reads the whole evidence set to do it.
    */
+  /** Records, once, that a run's boundaries leave nothing to measure. */
+  async markMeasurementUnavailable(input: { runKey: string; reason: string; nowMs: number }): Promise<void> {
+    await SimulationRun.updateOne(
+      { runKey: input.runKey, 'measurement.unavailable': { $ne: true } },
+      { $set: { measurement: { unavailable: true, reason: input.reason, decidedAtMs: input.nowMs } } }
+    );
+  }
+
   async findFinalizeCandidateRunKeys(limit = 50): Promise<string[]> {
     const rows = await SimulationRun.find({
       'state.faultActivatedTip.height': { $exists: true },
       'state.recoveredTip.height': { $exists: true },
+      // A run already found to have nothing to measure is not a candidate. The
+      // decision is permanent -- its anchors cannot change -- so offering it
+      // again would only be retrying a refusal.
+      'measurement.unavailable': { $ne: true },
     })
       .select('runKey')
       .sort({ 'state.updatedAtMs': 1 })

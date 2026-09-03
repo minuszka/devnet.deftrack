@@ -274,19 +274,34 @@ export class SimulationControlService {
     return scenarioDescriptors();
   }
 
+  /**
+   * The identity a request acts as.
+   *
+   * The constructor identity is the API key's -- one actor, one role, fixed for
+   * the process. A browser session is a different caller each time, so every
+   * public method accepts the identity the request was authenticated as and
+   * falls back to the key's when none is given. The audit record therefore
+   * names the person, not the key they signed in beside.
+   */
+  private identityFor(input: { identity?: SimulationControlIdentity }): SimulationControlIdentity {
+    return input.identity ?? this.identity;
+  }
+
   private claim(input: {
     operation: 'create' | 'validate' | 'arm' | 'start' | 'abort' | 'recover';
     runKey: string | null;
     idempotencyKey: string;
     payload: unknown;
+    identity?: SimulationControlIdentity;
   }): Promise<SimulationControlRequestRecord> {
+    const identity = this.identityFor(input);
     return this.control.claim({
       operation: input.operation,
       runKey: input.runKey,
       idempotencyKey: input.idempotencyKey,
       requestPayload: input.payload,
-      actor: this.identity.actor,
-      role: this.identity.role,
+      actor: identity.actor,
+      role: identity.role,
       nowMs: this.clock(),
     });
   }
@@ -313,13 +328,14 @@ export class SimulationControlService {
 
   async create(input: {
     idempotencyKey: string;
+    identity?: SimulationControlIdentity;
     network: SimulationNetwork;
     live: boolean;
     scenario: unknown;
   }) {
     const scenario = parseScenarioRequest(input.scenario);
     const request = await this.claim({
-      operation: 'create',
+      operation: 'create', identity: input.identity,
       runKey: null,
       idempotencyKey: input.idempotencyKey,
       payload: { network: input.network, live: input.live, scenario },
@@ -345,7 +361,7 @@ export class SimulationControlService {
         // still look fresh hours later. It remains the audit event's atMs, which is
         // what it is for.
         nowMs: this.clock(),
-        requestedBy: this.identity.actor,
+        requestedBy: this.identityFor(input).actor,
       });
       await this.control.appendArtifact({
         request,
@@ -380,9 +396,9 @@ export class SimulationControlService {
     return { run, plan: prepared.dryRunPlan, idempotentReplay: false };
   }
 
-  async validate(input: { runKey: string; idempotencyKey: string }) {
+  async validate(input: { runKey: string; idempotencyKey: string; identity?: SimulationControlIdentity }) {
     const request = await this.claim({
-      operation: 'validate', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {},
+      operation: 'validate', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {}, identity: input.identity,
     });
     let run = await this.runs.loadRun(input.runKey);
     const plan = await this.loadPlan(run);
@@ -438,10 +454,11 @@ export class SimulationControlService {
   async arm(input: {
     runKey: string;
     idempotencyKey: string;
+    identity?: SimulationControlIdentity;
     acknowledgedRiskClass: string;
   }) {
     const request = await this.claim({
-      operation: 'arm', runKey: input.runKey, idempotencyKey: input.idempotencyKey,
+      operation: 'arm', runKey: input.runKey, idempotencyKey: input.idempotencyKey, identity: input.identity,
       payload: { acknowledgedRiskClass: input.acknowledgedRiskClass },
     });
     let run = await this.runs.loadRun(input.runKey);
@@ -536,9 +553,9 @@ export class SimulationControlService {
     }
   }
 
-  async start(input: { runKey: string; idempotencyKey: string }) {
+  async start(input: { runKey: string; idempotencyKey: string; identity?: SimulationControlIdentity }) {
     const request = await this.claim({
-      operation: 'start', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {},
+      operation: 'start', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {}, identity: input.identity,
     });
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.status === 'completed' && !run.state.live) return { run, idempotentReplay: true };
@@ -600,9 +617,9 @@ export class SimulationControlService {
     return { run, idempotentReplay: false };
   }
 
-  async abort(input: { runKey: string; idempotencyKey: string }) {
+  async abort(input: { runKey: string; idempotencyKey: string; identity?: SimulationControlIdentity }) {
     const request = await this.claim({
-      operation: 'abort', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {},
+      operation: 'abort', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {}, identity: input.identity,
     });
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.status === 'aborted') return { run, idempotentReplay: true };
@@ -651,9 +668,9 @@ export class SimulationControlService {
     return { run, idempotentReplay: false };
   }
 
-  async recover(input: { runKey: string; idempotencyKey: string }) {
+  async recover(input: { runKey: string; idempotencyKey: string; identity?: SimulationControlIdentity }) {
     const request = await this.claim({
-      operation: 'recover', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {},
+      operation: 'recover', runKey: input.runKey, idempotencyKey: input.idempotencyKey, payload: {}, identity: input.identity,
     });
     let run = await this.runs.loadRun(input.runKey);
     // Guard the network before touching a live run, but do not stop here: the
