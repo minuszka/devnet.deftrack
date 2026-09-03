@@ -22,7 +22,8 @@ import { SyncState } from '../models/SyncState.js';
 import { chainLockService } from './chainLock.service.js';
 import { mapConcurrent } from '../utils/concurrency.js';
 import { metricsService } from './metrics.service.js';
-import { payeeRetryDelayMs } from '../domain/collectorPolicy.js';
+import { QuorumMemberCountResolver } from './quorumMemberCount.js';
+import { backfillRetryDelayMs } from '../domain/collectorPolicy.js';
 import { canonicalDslOrder, resolveMissedMembers } from '../domain/dslCanonicalOrder.js';
 
 const SYNC_KEY = 'blocks';
@@ -36,33 +37,11 @@ const TRANSACTION_POSE_SERVICE_COMMITMENT = 10;
 const PROGRESS_EVERY = 25;
 
 /**
- * How many members a quorum actually seated, from `quorum info`.
- *
- * This is the number Core punishes over, and nothing in the commitment carries
- * it: the profile size is an upper bound the chain rarely reaches, and the
- * validMembers bitfield is allocated at that same profile size regardless of
- * how many members were selected. Cached because one quorum is referenced by
- * several commitments, and answered as null -- unknown -- when the RPC cannot
- * resolve it, so a failure never turns into a fabricated punishment count.
+ * Member counts, resolved once per quorum and never remembered as a failure.
+ * The tip needs a second question a few hundred milliseconds after the first;
+ * QuorumMemberCountResolver says why.
  */
-const memberCountCache = new Map<string, number | null>();
-
-async function quorumMemberCount(llmqType: number, quorumHash: string): Promise<number | null> {
-  const key = `${llmqType}:${quorumHash}`;
-  const cached = memberCountCache.get(key);
-  if (cached !== undefined) return cached;
-
-  let count: number | null = null;
-  try {
-    const info = await rpc.call<{ members?: unknown[] }>("quorum", ["info", llmqType, quorumHash]);
-    if (Array.isArray(info?.members)) count = info.members.length;
-  } catch {
-    // An aged-out or unknown quorum is not an error worth failing a block over;
-    // the punishment count simply stays unknown.
-  }
-  memberCountCache.set(key, count);
-  return count;
-}
+const memberCounts = new QuorumMemberCountResolver(rpc);
 
 const dec = (value: number | string): mongoose.Types.Decimal128 =>
   mongoose.Types.Decimal128.fromString(String(value));
@@ -116,7 +95,7 @@ async function lookupPayee(blockhash: string): Promise<PayeeLookup> {
 }
 
 function payeeRetryAt(attempt: number, nowMs = Date.now()): Date {
-  return new Date(nowMs + payeeRetryDelayMs(attempt));
+  return new Date(nowMs + backfillRetryDelayMs(attempt));
 }
 
 export class SyncService {
@@ -204,13 +183,79 @@ export class SyncService {
     logger.info(`Payee backfill checked ${pending.length} block(s): ${found} found, ${none} none, ${failed} retry`);
   }
 
+  /**
+   * Come back for the punished counts the tip asked for too early.
+   *
+   * Same shape as the payee backfill: bounded, newest first, idempotent, and a
+   * refusal puts the row on the shared doubling schedule. A quorum the node
+   * can no longer describe stays unknown and is asked about once a day --
+   * unknown is a real answer, but it is not a final one. A null commitment
+   * settles here without the node at all, because it punished nobody.
+   */
+  private async backfillMemberCounts(limit = 100): Promise<void> {
+    const now = new Date();
+    const pending = await QuorumCommitment.find({
+      punishedCount: null,
+      memberCountCheckedAt: null,
+      quorumHash: { $ne: null },
+      $or: [{ memberCountRetryAt: null }, { memberCountRetryAt: { $lte: now } }],
+    })
+      .sort({ minedHeight: -1 })
+      .limit(limit)
+      .select('commitmentKey llmqType quorumHash validMembersCount memberCountAttempts')
+      .lean();
+    if (pending.length === 0) return;
+
+    const results = await mapConcurrent(pending, Math.min(4, config.sync.txConcurrency), async (row) => ({
+      row,
+      punishedCount: commitmentPunishedCount(
+        row.validMembersCount,
+        row.validMembersCount === 0
+          ? null
+          : await memberCounts.resolve(row.llmqType, row.quorumHash as string, { retryBriefly: false })
+      ),
+    }));
+
+    const ops = [];
+    let settled = 0;
+    let retry = 0;
+    for (const { row, punishedCount } of results) {
+      if (punishedCount !== null) {
+        settled++;
+        ops.push({
+          updateOne: {
+            filter: { commitmentKey: row.commitmentKey, memberCountCheckedAt: null },
+            update: { $set: { punishedCount, memberCountCheckedAt: now, memberCountRetryAt: null } },
+          },
+        });
+      } else {
+        retry++;
+        const attempt = (row.memberCountAttempts ?? 0) + 1;
+        ops.push({
+          updateOne: {
+            filter: { commitmentKey: row.commitmentKey, memberCountCheckedAt: null },
+            update: {
+              $set: { memberCountRetryAt: new Date(now.getTime() + backfillRetryDelayMs(attempt)) },
+              $inc: { memberCountAttempts: 1 },
+            },
+          },
+        });
+      }
+    }
+    await QuorumCommitment.bulkWrite(ops, { ordered: false });
+    logger.info(`Member-count backfill checked ${pending.length} commitment(s): ${settled} settled, ${retry} retry`);
+  }
+
   /** One pass. Overlapping timer ticks are dropped rather than queued. */
   async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
       const caughtUp = await this.syncOnce();
-      if (caughtUp) await this.backfillPayees();
+      if (caughtUp) {
+        await this.backfillPayees();
+        await this.backfillMemberCounts();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Block sync failed: ${message}`);
@@ -244,7 +289,7 @@ export class SyncService {
 
     let lastHash = state.lastSyncedHash;
     for (let height = from; height <= to; height++) {
-      lastHash = await this.indexBlock(height);
+      lastHash = await this.indexBlock(height, tip);
       // Checkpoint inside the batch. Writing progress only at the end left the
       // health endpoint reporting -1 while thousands of blocks were already
       // stored, and made a restart mid-batch redo all of it.
@@ -343,7 +388,7 @@ export class SyncService {
     return cursor;
   }
 
-  private async indexBlock(height: number): Promise<string> {
+  private async indexBlock(height: number, tip: number): Promise<string> {
     const hash = await rpc.getBlockHash(height);
 
     // The genesis coinbase is not in the transaction index and the node refuses
@@ -430,7 +475,15 @@ export class SyncService {
       // with 80 here, and allocates a 400-bit bitfield either way. `quorum info`
       // returns the real member list and resolves for historical quorums too;
       // when it cannot, the count stays null rather than becoming a guess.
-      const memberCount = quorumHash === null ? null : await quorumMemberCount(llmqType, quorumHash);
+      // A null commitment punishes nobody whatever the member list says, and no
+      // quorum was built for it that `quorum info` could describe -- asking would
+      // only be refused. Everything else needs the list, and at the tip it is
+      // worth a brief wait for the node's quorum cache to catch up with the block.
+      const memberCount =
+        quorumHash === null || valid === 0
+          ? null
+          : await memberCounts.resolve(llmqType, quorumHash, { retryBriefly: height >= tip - 1 });
+      const punishedCount = commitmentPunishedCount(valid, memberCount);
 
       commitmentOps.push({
         updateOne: {
@@ -448,7 +501,11 @@ export class SyncService {
               minedBlockHash: block.hash,
               validMembersCount: valid,
               signersCount: signers,
-              punishedCount: commitmentPunishedCount(valid, memberCount),
+              punishedCount,
+              // Settled now, or left for the backfill to come back to.
+              memberCountCheckedAt: punishedCount === null ? null : new Date(),
+              memberCountAttempts: 0,
+              memberCountRetryAt: null,
               detectedAt: new Date(),
             },
           },

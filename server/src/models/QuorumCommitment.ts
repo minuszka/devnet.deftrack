@@ -51,7 +51,18 @@ export interface QuorumCommitmentDocument extends Document {
    * answer here, and better than a fabricated count.
    */
   punishedCount: number | null;
-
+  /**
+   * When the member list was last resolved, or null while it never has been.
+   *
+   * A commitment indexed at the tip asks the node about a quorum the node is
+   * still building -- the block notification runs ahead of the quorum cache by
+   * a few hundred milliseconds -- and a null written then is not an answer,
+   * it is a question asked too early. These three fields let the sync come
+   * back for it, on the same schedule the payee backfill uses.
+   */
+  memberCountCheckedAt: Date | null;
+  memberCountAttempts: number;
+  memberCountRetryAt: Date | null;
   detectedAt: Date;
 }
 
@@ -69,12 +80,17 @@ const quorumCommitmentSchema = new Schema<QuorumCommitmentDocument>({
   validMembersCount: { type: Number, default: 0 },
   signersCount: { type: Number, default: 0 },
   punishedCount: { type: Number, default: null },
+  memberCountCheckedAt: { type: Date, default: null },
+  memberCountAttempts: { type: Number, default: 0 },
+  memberCountRetryAt: { type: Date, default: null },
 
   detectedAt: { type: Date, default: () => new Date() },
 });
 
 // The PoSe view asks "what was mined at the height these bans landed".
 quorumCommitmentSchema.index({ minedHeight: -1, llmqType: 1 });
+// The member-count backfill asks "which rows are still unanswered", newest first.
+quorumCommitmentSchema.index({ memberCountCheckedAt: 1, punishedCount: 1, minedHeight: -1 });
 
 export const QuorumCommitment = mongoose.model<QuorumCommitmentDocument>(
   'QuorumCommitment',

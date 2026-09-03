@@ -32,9 +32,13 @@ export function commitmentPunishedCount(
   validMembersCount: number,
   memberCount: number | null
 ): number | null {
-  if (memberCount === null) return null;
   // A null commitment -- the failed-DKG marker -- carries zero valid members and
   // punishes nobody: Core's punishment loop is guarded on a non-null commitment.
+  // That answer does not depend on the member list, and the list is usually
+  // unresolvable for exactly these quorums -- none was ever built -- so this
+  // check must come first, or every failed round reads as "unknown" instead
+  // of as the zero the whole project exists to show.
   if (validMembersCount === 0) return 0;
+  if (memberCount === null) return null;
   return Math.max(0, memberCount - validMembersCount);
 }
