@@ -169,15 +169,23 @@ Two corrections to what this entry said before, both verified at
   like a network fault. Compare `md5sum`, not the version string, and ship the
   binary with any consensus change.
 
-- **Once masternodes exist, every transaction waits 10 minutes to be mined.**
-  `BlockAssembler::TestPackageTransactions` drops any package whose transaction
-  is not InstantSend-locked unless `CChainLocksHandler::IsTxSafeForMining`
-  agrees, and that is simply `txAge >= WAIT_FOR_ISLOCK_TIMEOUT`
-  (`llmq/chainlocks.h:45`, 600 s). With no InstantSend quorum yet, no lock can
-  ever arrive, so the full ten minutes is always paid. A transaction sitting in
-  the mempool with an enormous fee is therefore normal, not stuck -- raising the
-  fee changes nothing, and `prioritisetransaction` only appeared to help because
-  the timeout expired at the same moment.
+- **An unlocked transaction waits `WAIT_FOR_ISLOCK_TIMEOUT` to be mined; a
+  locked one is mined at once.** `BlockAssembler::TestPackageTransactions`
+  drops any package whose transaction is not InstantSend-locked unless
+  `CChainLocksHandler::IsTxSafeForMining` agrees, and that is simply
+  `txAge >= WAIT_FOR_ISLOCK_TIMEOUT` (`llmq/chainlocks.h`; 600 s inherited,
+  120 s from the InstantSend-on-Q60 change). Before `llmq_60_75` first formed
+  no lock could arrive and the full wait was always paid -- an earlier version
+  of this note said "every transaction waits 10 minutes", and that was true
+  then. Measured 2026-09-03 at height 7014: `sendrawtransaction` at 10:58:07,
+  ISDLOCK at the seed 10:58:08, mined 10:58:10. **Mainnet still pays the full
+  wait on every transaction**, because its InstantSend profile is one the
+  enabling switch never admits there; the fix rides the v23 bundle. A
+  transaction sitting in the mempool with an enormous fee is therefore normal,
+  not stuck -- raising the fee changes nothing. And read the lock *before* the
+  block is ChainLocked: `HandleFullyConfirmedBlock` then prunes the islock, so
+  `instantlock_internal` reverts to false and `getislocks` answers `None`,
+  while `instantlock` stays true through the ChainLock.
 
 - **A masternode can never also stake.** `init.cpp:997` soft-sets
   `disablewallet=1` whenever `masternodeblsprivkey` is present, and overriding
