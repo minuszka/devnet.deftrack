@@ -45,6 +45,12 @@ export interface ObservationSweepDeps {
   findFinalizeCandidates(): Promise<string[]>;
   chainTip(): Promise<ChainAnchor>;
   /**
+   * Records that a run can never be finalized, so it is not offered again.
+   * Optional so a deployment without it keeps today's behaviour -- which is to
+   * retry for ever, and is why this exists.
+   */
+  markUnmeasurable?(input: { runKey: string; reason: string; nowMs: number }): Promise<void>;
+  /**
    * Blocks after the fault lands that are deliberately not measured, because the
    * network is still reacting to it. Observation begins once they have passed.
    */
@@ -172,6 +178,17 @@ export class SimulationObservationService {
         );
       } catch (error) {
         if (isSkippable(error)) continue;
+        if ((error as { code?: string } | null)?.code === 'WINDOW_UNMEASURABLE') {
+          // A finding, not a failure: the run's own boundaries leave nothing to
+          // measure, and they cannot change. Recorded once so the run is not
+          // offered again, and logged as information rather than as an error
+          // repeating every tick for ever -- which is what it did.
+          if (this.deps.markUnmeasurable !== undefined) {
+            await this.deps.markUnmeasurable({ runKey, reason: message(error), nowMs: this.clock() });
+          }
+          this.logger.info(`${runKey} has nothing to measure and will not be finalized: ${message(error)}`);
+          continue;
+        }
         this.logger.error(`finalize for ${runKey} failed: ${message(error)}`);
       }
     }
