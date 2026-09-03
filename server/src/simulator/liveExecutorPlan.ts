@@ -134,6 +134,16 @@ export function labFaultsForPlan(input: {
   expiresAtMs: number;
   nowMs: number;
   strict: boolean;
+  /**
+   * Leave actions scheduled after activation to a dispatcher.
+   *
+   * Without one, a scheduled service-stop is refused outright, because
+   * collapsing a flapping cycle into a single stop would report every action
+   * applied while measuring none of them. With one, the same action is simply
+   * not this path's to apply -- so it is skipped silently here and performed
+   * later, rather than refused or quietly folded into the immediate set.
+   */
+  deferScheduled?: boolean;
 }): { faults: LabFault[]; skipped: number } {
   if (input.strict && input.expiresAtMs - input.nowMs > MAX_TTL_MS) {
     throw new UnsupportedLiveFaultError(
@@ -180,7 +190,13 @@ export function labFaultsForPlan(input: {
         // One immediate outage per target. A staged or repeated stop belongs to a
         // dispatcher that does not exist, and silently collapsing a flapping
         // schedule into one stop would measure nothing it claims to.
-        if (action.notBeforeOffsetMs !== 0 || stoppedTargets.has(action.targetId)) {
+        if (action.notBeforeOffsetMs !== 0) {
+          // Not counted as skipped: `skipped` means recovery could not speak for
+          // it, and a deferred action's target IS in the recovery set.
+          if (input.deferScheduled === true) continue;
+          throw new UnscheduledLiveFaultError(action.actionId);
+        }
+        if (stoppedTargets.has(action.targetId)) {
           throw new UnscheduledLiveFaultError(action.actionId);
         }
         const target = requireLabTarget(input.targetsById, action.targetId, 'service-control');
@@ -239,15 +255,35 @@ export function scheduledLabActionsForPlan(input: {
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
   runTag: string;
   expiresAtMs: number;
-}): ScheduledLabAction[] {
+  /**
+   * Strict is the apply direction, which must refuse a schedule it cannot
+   * faithfully perform. Lenient is recovery, which must never be the thing that
+   * fails closed and strands a run mid-teardown -- it undoes what it understands
+   * and counts what it does not.
+   */
+  strict?: boolean;
+}): { actions: ScheduledLabAction[]; skipped: number } {
   const scheduled: ScheduledLabAction[] = [];
+  let skipped = 0;
+  const strict = input.strict !== false;
   for (const action of input.plan.actions) {
     if (action.notBeforeOffsetMs <= 0) continue;
     const { payload } = action;
     if (payload.kind !== 'service-stop' && payload.kind !== 'service-start') {
+      if (!strict) {
+        skipped++;
+        continue;
+      }
       throw new UnsupportedLiveFaultError(`a scheduled "${payload.kind}"`);
     }
-    const target = requireLabTarget(input.targetsById, action.targetId, 'service-control');
+    let target: SimulationTargetSnapshot;
+    try {
+      target = requireLabTarget(input.targetsById, action.targetId, 'service-control');
+    } catch (error) {
+      if (strict) throw error;
+      skipped++;
+      continue;
+    }
     const jobId = serviceJobId(input.runTag, target.hostRef);
     scheduled.push({
       actionId: action.actionId,
@@ -264,9 +300,10 @@ export function scheduledLabActionsForPlan(input: {
             { op: 'clear', jobId },
     });
   }
-  return scheduled.sort(
+  scheduled.sort(
     (a, b) => a.notBeforeOffsetMs - b.notBeforeOffsetMs || compareByCodeUnit(a.actionId, b.actionId)
   );
+  return { actions: scheduled, skipped };
 }
 
 /**
@@ -318,14 +355,33 @@ export function faultRecoveryTargetsForPlan(input: {
 }): { targets: LabRecoveryTarget[]; skipped: number } {
   // The lease is irrelevant here: recovery only needs the job ids, which are
   // minted from the run tag and the spec, never from the expiry.
-  const { faults, skipped } = labFaultsForPlan({ ...input, expiresAtMs: 1, nowMs: 0, strict: false });
-  return {
-    targets: faults.map((fault) => ({
-      targetId: fault.targetId,
-      container: fault.container,
-      faultClass: fault.faultClass,
-      clear: { op: 'clear', jobId: fault.jobId },
-    })),
-    skipped,
-  };
+  const { faults, skipped } = labFaultsForPlan({
+    ...input,
+    expiresAtMs: 1,
+    nowMs: 0,
+    strict: false,
+    deferScheduled: true,
+  });
+  const targets: LabRecoveryTarget[] = faults.map((fault) => ({
+    targetId: fault.targetId,
+    container: fault.container,
+    faultClass: fault.faultClass,
+    clear: { op: 'clear', jobId: fault.jobId },
+  }));
+  // A target whose ONLY stop is scheduled would otherwise be missing here, and
+  // recovery would report all-clear over a node a dispatcher had stopped. Its
+  // clear is the same job id, so adding it is exact rather than approximate.
+  const seen = new Set(targets.map((entry) => entry.container));
+  const deferred = scheduledLabActionsForPlan({ ...input, expiresAtMs: 1, strict: false });
+  for (const scheduled of deferred.actions) {
+    if (seen.has(scheduled.container)) continue;
+    seen.add(scheduled.container);
+    targets.push({
+      targetId: scheduled.targetId,
+      container: scheduled.container,
+      faultClass: scheduled.faultClass,
+      clear: { op: 'clear', jobId: serviceJobId(input.runTag, scheduled.container) },
+    });
+  }
+  return { targets, skipped: skipped + deferred.skipped };
 }

@@ -56,7 +56,25 @@ function toLeased(row: LeanAction | null): LeasedSimulationAction | null {
   };
 }
 
+/** One action a run scheduled for later, as it is written to the queue. */
+export interface ScheduledActionRow {
+  actionId: string;
+  runKey: string;
+  sequence: number;
+  targetId: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  payloadDigest: string;
+  notBeforeMs: number;
+  expiresAtMs: number;
+  maxAttempts: number;
+}
+
 export interface SimulationActionRepository {
+  /** Write a run's schedule. Idempotent: a repeat inserts nothing. */
+  enqueue(rows: readonly ScheduledActionRow[]): Promise<number>;
+  /** Retire everything still waiting for a run, so nothing lands after recovery. */
+  cancelPending(input: { runKey: string; nowMs: number }): Promise<number>;
   claimDue(input: { claimedBy: string; nowMs: number; leaseMs: number; runKey?: string }): Promise<LeasedSimulationAction | null>;
   renewLease(input: { actionId: string; claimedBy: string; nowMs: number; leaseMs: number }): Promise<LeasedSimulationAction | null>;
   settle(input: { actionId: string; claimedBy: string; status: SettledActionStatus; result: SimulationActionResult; executedAtMs: number }): Promise<boolean>;
@@ -64,6 +82,58 @@ export interface SimulationActionRepository {
 }
 
 export class MongoSimulationActionRepository implements SimulationActionRepository {
+  /**
+   * Writes the schedule, once.
+   *
+   * `$setOnInsert` on the action id rather than a plain insert: activation can be
+   * retried -- a start that timed out after the executor had already run, a
+   * reconcile resuming -- and a second write must not reset an action that has
+   * already been claimed or performed.
+   */
+  async enqueue(rows: readonly ScheduledActionRow[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const result = await SimulationAction.bulkWrite(
+      rows.map((row) => ({
+        updateOne: {
+          filter: { actionId: row.actionId },
+          update: { $setOnInsert: { ...row, status: 'pending', revision: 0, attempts: 0 } },
+          upsert: true,
+        },
+      })),
+      { ordered: false }
+    );
+    return result.upsertedCount ?? 0;
+  }
+
+  /**
+   * Retires everything still waiting once a run is over.
+   *
+   * Without this a fault lands AFTER recovery proved the lab clean -- the run
+   * reports all-clear and a node stops seconds later. Only work that has not
+   * started is touched: an action already claimed is settled by the worker
+   * holding it, and overwriting that would lose its outcome.
+   */
+  async cancelPending(input: { runKey: string; nowMs: number }): Promise<number> {
+    const result = await SimulationAction.updateMany(
+      { runKey: input.runKey, status: 'pending' },
+      {
+        $set: {
+          status: 'compensated',
+          executedAtMs: input.nowMs,
+          result: {
+            code: 'already-clear',
+            publicMessage: 'Cancelled: the run ended before this action was due.',
+            privateDetail: null,
+            wrapperVersion: null,
+            finishedAtMs: input.nowMs,
+          },
+        },
+        $inc: { revision: 1 },
+      }
+    );
+    return result.modifiedCount ?? 0;
+  }
+
   /**
    * Atomically take the single next due action. findOneAndUpdate does the match
    * and the lease write in one step, so two workers racing for the same action
