@@ -112,13 +112,14 @@ describe('finalizing the measurement', () => {
   });
 
   it('retries quietly while the evidence is still moving', async () => {
-    // NOT_SETTLED is the measurement refusing to fingerprint a value the pollers
-    // are still rewriting. That is the gate working, not a sweep failure.
+    // EVIDENCE_NOT_SETTLED is the measurement refusing to fingerprint a value the
+    // pollers are still rewriting. That is the gate working, not a sweep failure
+    // -- and the code is asserted here because it was first guessed wrong.
     const h = harness({
       finalizeCandidates: ['run-1'],
       state: { status: 'cooldown', faultActivatedTip: START, recoveredTip: END },
       finalize: vi.fn(async () => {
-        throw coded('NOT_SETTLED');
+        throw coded('EVIDENCE_NOT_SETTLED');
       }),
     });
     await h.service.tick();

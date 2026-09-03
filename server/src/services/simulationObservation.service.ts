@@ -31,8 +31,10 @@ function isSkippable(error: unknown): boolean {
     code === 'STALE_EVENT' ||
     // The measurement's own gate: the rounds its verdict reads are still being
     // rewritten by the pollers, so finalizing now would fingerprint a value that
-    // is going to change.
-    code === 'NOT_SETTLED'
+    // is going to change. Its code was guessed as NOT_SETTLED at first, and the
+    // sweep then logged a working gate as a failure every tick -- the name is
+    // EVIDENCE_NOT_SETTLED.
+    code === 'EVIDENCE_NOT_SETTLED'
   );
 }
 

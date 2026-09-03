@@ -8,6 +8,7 @@ import {
   faultApplyCommandsForPlan,
   faultRecoveryTargetsForPlan,
   indexTargetsById,
+  scheduledLabActionsForPlan,
 } from './liveExecutorPlan.js';
 import { netemJobId, serviceJobId, tcApplyArgs } from './netemLease.js';
 import { MAX_TTL_MS } from './netemRunner.js';
@@ -217,5 +218,74 @@ describe('faultRecoveryTargetsForPlan', () => {
     const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
     expect(recovery).toEqual([]);
     expect(skipped).toBe(2); // unknown target, and a staged outage
+  });
+});
+
+describe('scheduledLabActionsForPlan', () => {
+  const targets = indexTargetsById([target(), target({ targetId: 'mn-2', hostRef: 'mn02' })]);
+  const startPayload: PlannedActionPayload = { kind: 'service-start' };
+
+  it('returns nothing for a plan whose actions are all immediate', () => {
+    const plan = { actions: [action('mn-1', stopPayload, 0, 0)] } as DryRunPlan;
+    expect(scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000 })).toEqual([]);
+  });
+
+  it('turns a flapping cycle into stops and the clears that restart them', () => {
+    // A restart mid-run IS clearing the stop: the wrapper's undo for a service
+    // job is `docker start`, so a cycle and the recovery teardown travel the
+    // same path and cannot diverge.
+    const plan = {
+      actions: [
+        action('mn-1', stopPayload, 0, 0),
+        action('mn-1', startPayload, 1, 10_000),
+        action('mn-1', stopPayload, 2, 20_000),
+        action('mn-1', startPayload, 3, 30_000),
+      ],
+    } as DryRunPlan;
+    const scheduled = scheduledLabActionsForPlan({
+      plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000,
+    });
+    expect(scheduled.map((entry) => [entry.notBeforeOffsetMs, entry.command.op])).toEqual([
+      [10_000, 'clear'],
+      [20_000, 'service-stop'],
+      [30_000, 'clear'],
+    ]);
+    expect(scheduled[0]!.command).toEqual({ op: 'clear', jobId: serviceJobId('run-1', 'mn01') });
+    expect(scheduled[1]!.command).toEqual({
+      op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 60_000,
+    });
+  });
+
+  it('orders by offset so a dispatcher can walk them forwards', () => {
+    const plan = {
+      actions: [
+        action('mn-2', stopPayload, 1, 30_000),
+        action('mn-1', stopPayload, 0, 10_000),
+      ],
+    } as DryRunPlan;
+    const scheduled = scheduledLabActionsForPlan({
+      plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000,
+    });
+    expect(scheduled.map((entry) => entry.notBeforeOffsetMs)).toEqual([10_000, 30_000]);
+  });
+
+  it('refuses a scheduled fault it cannot express, rather than dropping it', () => {
+    // A fault-clear carries no impairment, so its job id can only come from the
+    // matching apply. Pairing those across a schedule is a design, not a lookup.
+    const plan = {
+      actions: [action('mn-1', { kind: 'fault-clear', scope: 'run' }, 0, 10_000)],
+    } as DryRunPlan;
+    expect(() =>
+      scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000 })
+    ).toThrow(UnsupportedLiveFaultError);
+  });
+
+  it('holds a scheduled action to the same target rules as an immediate one', () => {
+    // Otherwise a schedule would be a way around the checks the immediate path
+    // makes: a fault landing later must not reach a host it could not reach now.
+    const plan = { actions: [action('mn-9', stopPayload, 0, 10_000)] } as DryRunPlan;
+    expect(() =>
+      scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000 })
+    ).toThrow(InvalidNetemTargetError);
   });
 });
