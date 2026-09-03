@@ -42,6 +42,14 @@ const ABORT_ACTIVE = process.argv.includes('--abort-active');
  * attempt prints why it failed, so a retry can never hide a different cause.
  */
 const ATTEMPTS = Number(arg('--attempts', '4'));
+/**
+ * Seconds to hold the fault before recovering, or 0 to leave the run live.
+ *
+ * Arming is not the end of the walkthrough. A run that applies a fault and is
+ * never recovered leaves a stopped container and a held live slot behind, and
+ * proves only half the path -- the half that does not have to undo anything.
+ */
+const RECOVER_AFTER_S = Number(arg('--recover-after', '0'));
 const TARGET = arg('--target', 'mn02');
 
 let step = 0;
@@ -117,13 +125,29 @@ async function attemptRun() {
 
 let runKey = null;
 for (let attempt = 1; attempt <= ATTEMPTS && runKey === null; attempt++) {
-  if (attempt > 1) console.log(`
+  if (attempt > 1) {
+    console.log(`
 -- attempt ${attempt} of ${ATTEMPTS}`);
+    // Spaced, not immediate. The gap this retry exists for is the ~1.5 s between
+    // a new block and the next indexer pass, and three attempts fired back to
+    // back all land inside the SAME gap -- retrying an instant instead of
+    // retrying the condition.
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+  }
   runKey = await attemptRun();
 }
 if (runKey === null) process.exit(1);
 
 const state = await api('GET', `/runs/${runKey}`);
 console.log(`status: ${state.data?.state?.status ?? state.data?.run?.state?.status ?? 'unknown'}`);
-console.log(`
+
+if (RECOVER_AFTER_S > 0) {
+  console.log(`holding the fault for ${RECOVER_AFTER_S}s`);
+  await new Promise((resolve) => setTimeout(resolve, RECOVER_AFTER_S * 1000));
+  report('recover', await api('POST', `/runs/${runKey}/recover`, {}));
+  const after = await api('GET', `/runs/${runKey}`);
+  console.log(`status: ${after.data?.state?.status ?? 'unknown'}`);
+} else {
+  console.log(`
 runKey ${runKey} is live -- recover it with the recover route when done.`);
+}
