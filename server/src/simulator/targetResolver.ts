@@ -12,6 +12,7 @@ export interface SimulationTargetRegistryRecord {
   operatorId: string | null;
   proTxHash: string | null;
   hostRef: string;
+  chainHostRef?: string | null;
   unitRef: string;
   p2pPort: number;
   role: SimulationTargetRole;
@@ -234,10 +235,13 @@ export function resolveSimulationTargetInventory(input: {
             'MASTERNODE_HOST_UNRESOLVED', target.targetId, 'Masternode host identity is unknown.',
             `observed hostRef is null for ${target.proTxHash}`
           );
-        } else if (mn.hostRef !== target.hostRef) {
+        } else if (mn.hostRef !== (target.chainHostRef ?? target.hostRef)) {
+          // Compared against the host the CHAIN sees, which is hostRef itself
+          // unless the target declared them apart. See SimulationTarget.
+          const declared = target.chainHostRef ?? target.hostRef;
           mark(
             'MASTERNODE_HOST_MISMATCH', target.targetId, 'Masternode host mapping changed.',
-            `registry=${target.hostRef}, observed=${mn.hostRef}`
+            `registry=${declared}, observed=${mn.hostRef}`
           );
         }
       }
@@ -281,6 +285,11 @@ export function resolveSimulationTargetInventory(input: {
       operatorId: target.operatorId,
       proTxHash: target.proTxHash,
       hostRef: target.hostRef,
+      // Carried only when declared: absent means "the same as hostRef", which is
+      // every devnet target, and an absent key is dropped by canonicalJson.
+      ...(target.chainHostRef === null || target.chainHostRef === undefined
+        ? {}
+        : { chainHostRef: target.chainHostRef }),
       unitRef: target.unitRef,
       p2pPort: target.p2pPort,
       role: target.role,

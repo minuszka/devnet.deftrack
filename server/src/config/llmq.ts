@@ -62,6 +62,30 @@ export interface LlmqProfile {
 }
 
 export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
+  /**
+   * The regtest lab's only quorum profile, and the reason it is in this registry
+   * at all: the simulator lab runs on regtest, where no devnet profile exists.
+   * The collector reconstructing devnet schedules against a lab chain does not
+   * fail -- it writes rounds for heights at which the node never held a session,
+   * and reports llmq_400_60 as `below minSize` on a three-node network. Set
+   * TRACKED_LLMQ_NAMES=llmq_test there.
+   *
+   * Read from src/llmq/params.h at v22.1.x, same as every other entry.
+   */
+  llmq_test: {
+    llmqType: 100,
+    llmqName: 'llmq_test',
+    size: 3,
+    minSize: 2,
+    threshold: 2,
+    dkgInterval: 24,
+    dkgPhaseBlocks: 2,
+    dkgMiningWindowStart: 10,
+    dkgMiningWindowEnd: 18,
+    dkgBadVotesThreshold: 2,
+    useRotation: false,
+    signingActiveQuorumCount: 2,
+  },
   llmq_50_60: {
     llmqType: 1,
     llmqName: 'llmq_50_60',

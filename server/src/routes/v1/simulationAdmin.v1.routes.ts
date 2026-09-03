@@ -11,7 +11,7 @@ import {
   SimulationControlService,
 } from '../../services/simulationControl.service.js';
 import { SimulationControlPersistenceError } from '../../services/simulationControlPersistence.service.js';
-import { SimulationStateError } from '../../domain/simulationRunState.js';
+import { SimulationStateError, TERMINAL_SIMULATION_STATUSES } from '../../domain/simulationRunState.js';
 import { MongoRpcSimulationEvidenceService } from '../../services/simulationEvidence.service.js';
 import {
   MongoSimulationLiveRunLockRepository,
@@ -35,6 +35,7 @@ import {
   UnsupportedLiveFaultError,
 } from '../../simulator/liveExecutorPlan.js';
 import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
+import { SimulationRun } from '../../models/SimulationRun.js';
 import { SimulationTarget } from '../../models/SimulationTarget.js';
 import {
   registryUpdateFrom,
@@ -266,6 +267,38 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
       sendData(res, await invoke(runKey(req), idempotencyKey(req)));
     }));
   }
+
+  /**
+   * Which runs hold the live slot.
+   *
+   * The one question an operator could not answer through this API. Only one
+   * live run may exist at a time, and `no-active-experiment` refuses the next arm
+   * while naming the incumbent ONLY inside a preflight detail -- so finding it
+   * meant reading Mongo by hand, and a cleanup script that tried to enumerate
+   * runs got nothing back and silently did nothing.
+   *
+   * Deliberately narrow: this lists the live slot, not the run archive. A general
+   * listing is a different endpoint with different paging and a different
+   * disclosure question, and inventing it here would answer neither well.
+   */
+  router.get('/runs', controlRoute(async (req, res) => {
+    if (req.query.live !== 'true') {
+      throw new SimulationControlError('INVALID_REQUEST', 'only ?live=true is listed');
+    }
+    const found = await SimulationRun.find({
+      'state.live': true,
+      'state.status': { $nin: TERMINAL_SIMULATION_STATUSES },
+    })
+      .select('runKey state.status state.stateEnteredAtMs')
+      .sort({ runKey: 1 })
+      .lean();
+    const items = found.map((run) => ({
+      runKey: run.runKey,
+      status: run.state.status,
+      stateEnteredAtMs: run.state.stateEnteredAtMs,
+    }));
+    sendData(res, { items, total: items.length });
+  }));
 
   router.get('/runs/:runKey', controlRoute(async (req, res) => {
     sendData(res, await service.status(runKey(req)));

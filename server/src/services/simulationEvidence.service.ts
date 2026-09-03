@@ -2,6 +2,7 @@ import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { config } from '../config.js';
 import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
+import { TERMINAL_SIMULATION_STATUSES } from '../domain/simulationRunState.js';
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
 import { ExperimentRun } from '../models/ExperimentRun.js';
@@ -27,7 +28,9 @@ import {
 import type { SimulationRunProjection } from './simulationPersistence.service.js';
 import { rpc, type RpcService } from './rpc.service.js';
 
-const TERMINAL_RUN_STATUSES = ['rejected', 'completed', 'aborted'] as const;
+// Defined once in the domain: the same list decides which runs hold the live
+// slot here and which the /runs?live=true listing reports.
+const TERMINAL_RUN_STATUSES = TERMINAL_SIMULATION_STATUSES;
 const ESTIMATED_BLOCK_INTERVAL_MS = 150_000;
 const OBSERVATION_MAX_AGE_MS = 2 * 60_000;
 
@@ -81,6 +84,12 @@ function snapshotPublicIdentity(value: PreparedSimulationDraft['targetInventory'
     operatorId: target.operatorId,
     proTxHash: target.proTxHash,
     hostRef: target.hostRef,
+    // Only when the target declares one, so a devnet run's identity hash is
+    // byte-identical to one taken before this field existed and no in-flight run
+    // reads as drifted across a deploy.
+    ...(target.chainHostRef === null || target.chainHostRef === undefined
+      ? {}
+      : { chainHostRef: target.chainHostRef }),
     unitRef: target.unitRef,
     p2pPort: target.p2pPort,
     role: target.role,
@@ -100,7 +109,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     const [genesisHash, registryDocs, mnDocs, hostDocs, quorum] = await Promise.all([
       this.rpcClient.getBlockHash(0),
       SimulationTarget.find({ network }).select(
-        'targetId displayLabel operatorId proTxHash hostRef unitRef p2pPort role network capabilities expectedBuild enabled maintenance'
+        'targetId displayLabel operatorId proTxHash hostRef chainHostRef unitRef p2pPort role network capabilities expectedBuild enabled maintenance'
       ).lean(),
       MasternodeState.find({ active: true }).select('proTxHash active hostIp').lean(),
       HostStatus.find().select('host height nodeBuild reportedAt').lean(),
@@ -115,6 +124,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       operatorId: target.operatorId,
       proTxHash: target.proTxHash,
       hostRef: target.hostRef,
+      chainHostRef: target.chainHostRef,
       unitRef: target.unitRef,
       p2pPort: target.p2pPort,
       role: target.role,

@@ -31,8 +31,41 @@ export interface LabTopology {
   datadir: string;
   /** CIDR allowed to reach RPC -- the lab subnet only. */
   rpcAllowIp: string;
+  /**
+   * The lab's own /24, so every node has a FIXED address.
+   *
+   * Not cosmetic. A masternode's ProTx pins the service address it registered
+   * with, and Docker hands out addresses in start order -- so recreating the
+   * stack silently permuted them, leaving each node holding an operator key for
+   * a ProTx that named a different container. Nothing errors; the masternode
+   * simply never recognises itself. Pinning the address is what makes a
+   * registration survive a restart, which the whole fault lab is built on.
+   */
+  subnet: string;
+  /**
+   * The regtest spork signing key, given to node 1 only.
+   *
+   * Without it the lab is inert: every spork defaults to 4070908800 -- the
+   * far-future "off" timestamp -- and `SPORK_17_QUORUM_DKG_ENABLED` off means no
+   * DKG session ever runs. Blocks still carry commitments, but null ones, so the
+   * lab looks like it is holding rounds while forming nothing.
+   *
+   * This is upstream's published regtest test key, valid only against the regtest
+   * spork address; it signs nothing on any real network.
+   */
+  sporkKey: string;
   /** First loopback port for the published RPCs; node i takes base + i - 1. */
   hostRpcBasePort: number;
+  /**
+   * BLS operator keys, by node name. A node listed here starts AS A MASTERNODE.
+   *
+   * A node cannot be both: the daemon soft-sets `disablewallet=1` whenever a
+   * masternode BLS key is present, and refuses to start if that is overridden. So
+   * a lab that wants blocks needs at least one node left out of this map to hold
+   * the wallet and mine -- which is also why the keys are per node rather than a
+   * flag on the topology.
+   */
+  masternodeKeys: Readonly<Record<string, string>>;
 }
 
 export interface LabComposeService {
@@ -46,7 +79,8 @@ export interface LabComposeService {
   container_name: string;
   cap_add: string[];
   command: string[];
-  networks: string[];
+  /** The one lab network, entered at this node's pinned address. */
+  networks: Record<string, { ipv4_address: string }>;
   volumes: string[];
   /** Nothing may resurrect a node the simulator deliberately stopped. */
   restart: 'no';
@@ -65,10 +99,14 @@ export interface LabComposeService {
   ports: string[];
 }
 
+export interface LabComposeNetwork {
+  ipam: { config: Array<{ subnet: string }> };
+}
+
 export interface LabComposeSpec {
   name: string;
   services: Record<string, LabComposeService>;
-  networks: Record<string, Record<string, never>>;
+  networks: Record<string, LabComposeNetwork>;
   volumes: Record<string, Record<string, never>>;
 }
 
@@ -80,7 +118,10 @@ export const DEFAULT_LAB_TOPOLOGY: Omit<LabTopology, 'nodes'> = {
   rpcPort: 19798,
   datadir: '/var/lib/defcon',
   rpcAllowIp: '172.16.0.0/12',
+  subnet: '172.28.0.0/24',
+  sporkKey: 'cP4EKFyJsHT39LDqgdcB43Y3YXjNyjb5Fuas1GQSeAtjnZWmZEQK',
   hostRpcBasePort: 19800,
+  masternodeKeys: {},
 };
 
 const MIN_NODES = 2;
@@ -95,6 +136,22 @@ export function labNodeName(index: number): string {
  * nodes, wrapping, never itself and never a duplicate. With `fanout` >= 1 the
  * union of these edges is a single ring that reaches every node.
  */
+/**
+ * The pinned address of node `index` on the lab subnet: host `index + 1`, so the
+ * first node takes .2 and .1 is left to the gateway.
+ *
+ * This is the single definition of a node's address. The bring-up registers a
+ * masternode at exactly the address Compose will give it, rather than reading one
+ * back from a running container and hoping the next recreate agrees.
+ */
+export function labNodeAddress(index: number, subnet: string = DEFAULT_LAB_TOPOLOGY.subnet): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)\.\d+\/24$/.exec(subnet);
+  if (match === null) throw new Error(`lab subnet must be a /24, got ${subnet}`);
+  const host = index + 1;
+  if (host > 254) throw new Error(`node index ${index} does not fit the lab /24`);
+  return `${match[1]}.${match[2]}.${match[3]}.${host}`;
+}
+
 export function ringPeers(index: number, nodes: number, fanout: number): number[] {
   const peers: number[] = [];
   const reach = Math.min(fanout, nodes - 1);
@@ -134,11 +191,20 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
       `-rpcport=${topology.rpcPort}`,
       '-rpcbind=0.0.0.0',
       `-rpcallowip=${topology.rpcAllowIp}`,
+      // Discovery is off, so the node would otherwise not know its own address.
+      // A masternode must advertise the one its ProTx names.
+      `-externalip=${labNodeAddress(index, topology.subnet)}`,
       // The peering the prototype lacked: each ring neighbour by service name,
       // reachable on the shared network.
       ...ringPeers(index, topology.nodes, topology.fanout).map(
         (peer) => `-addnode=${labNodeName(peer)}:${topology.p2pPort}`
       ),
+      // Only node 1 signs sporks -- it is the one node guaranteed to keep a
+      // wallet, and a second signer would add nothing on a single-key chain.
+      ...(index === 1 ? [`-sporkkey=${topology.sporkKey}`] : []),
+      ...(topology.masternodeKeys[name] === undefined
+        ? []
+        : [`-masternodeblsprivkey=${topology.masternodeKeys[name]}`]),
     ];
     services[name] = {
       image: topology.image,
@@ -146,7 +212,7 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
       ports: [`127.0.0.1:${topology.hostRpcBasePort + index - 1}:${topology.rpcPort}`],
       cap_add: ['NET_ADMIN'],
       command,
-      networks: [topology.network],
+      networks: { [topology.network]: { ipv4_address: labNodeAddress(index, topology.subnet) } },
       volumes: [`${dataVolume}:${topology.datadir}`],
       restart: 'no',
       stop_grace_period: '30s',
@@ -157,7 +223,7 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
   return {
     name: 'defcon-finality-lab',
     services,
-    networks: { [topology.network]: {} },
+    networks: { [topology.network]: { ipam: { config: [{ subnet: topology.subnet }] } } },
     volumes,
   };
 }

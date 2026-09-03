@@ -22,6 +22,8 @@ const targetSnapshotSchema = z
     operatorId: z.string().max(200).nullable(),
     proTxHash: z.string().max(128).nullable(),
     hostRef: z.string().min(1).max(200),
+    // Optional, because absent means "the same as hostRef" -- see SimulationTarget.
+    chainHostRef: z.string().min(1).max(200).nullable().optional(),
     unitRef: z.string().min(1).max(200),
     p2pPort: z.number().int().min(1).max(65_535),
     role: z.enum(['masternode', 'staker', 'seed']),

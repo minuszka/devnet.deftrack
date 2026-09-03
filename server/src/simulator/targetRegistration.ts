@@ -32,6 +32,7 @@ export const simulationTargetRegistrationSchema = z
     proTxHash: z.string().regex(HEX64, 'proTxHash must be 64 lowercase hex').nullable().default(null),
     // Private registry references. Never returned from a public DTO.
     hostRef: z.string().min(1).max(200),
+    chainHostRef: z.string().min(1).max(200).nullable().default(null),
     unitRef: z.string().min(1).max(200),
     p2pPort: z.number().int().min(1).max(65_535),
     role: z.enum(['masternode', 'staker', 'seed']),

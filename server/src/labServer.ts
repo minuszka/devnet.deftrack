@@ -5,6 +5,9 @@ import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './db.js';
 import { rpc } from './services/rpc.service.js';
 import { syncService } from './services/sync.service.js';
+import { masternodePollerService } from './services/masternodePoller.service.js';
+import { mnListDiffService } from './services/mnListDiff.service.js';
+import { quorumRoundService } from './services/quorumRound.service.js';
 import { assertLabChain, assertLabDatabaseIsolated } from './domain/labIsolation.js';
 import { EXECUTOR_LAB_NETWORK } from './services/simulationControl.service.js';
 import simulationAdminRoutes from './routes/v1/simulationAdmin.v1.routes.js';
@@ -34,17 +37,18 @@ import { sendError } from './utils/http.js';
  * noticed.
  *
  * It composes the simulation control API, its persistence, its reconcile sweep,
- * the observation ingest and the block indexer -- against the lab chain and the
- * lab's OWN database, so nothing here can read or write the devnet record. What
- * it still does not start is everything the lab has no use for: the masternode
- * and quorum pollers, ZMQ, and the public explorer views.
+ * the observation ingest, and the collectors the preflight reads -- against the
+ * lab chain and the lab's OWN database, so nothing here can read or write the
+ * devnet record. ZMQ and the public explorer views stay out: the lab has no use
+ * for them.
  *
- * The indexer is here because the preflight requires it. `explorer-synced` is a
- * required check and reads SyncState and indexed blocks; the baseline and the
- * whole measurement pipeline read them too. A lab that cannot index its own
- * chain can never produce a measurement, so excluding the indexer -- which the
- * first version of this file did -- left a gate nothing could pass. Isolation is
- * the separate database's job, not the indexer's absence.
+ * The collectors are here because the preflight requires their output, and a
+ * gate nothing can pass is worse than no gate. `explorer-synced` reads SyncState
+ * and indexed blocks; `target-resolved` needs a MasternodeState row before a
+ * masternode target can be resolved at all; the quorum and baseline checks read
+ * QuorumRound. The first version of this file started none of them, on the
+ * reasoning that isolation demanded it -- but isolation is the separate
+ * database's job, not the collectors' absence.
  */
 
 async function main(): Promise<void> {
@@ -70,6 +74,11 @@ async function main(): Promise<void> {
   // Indexes the LAB chain into the LAB database. The devnet record is out of
   // reach by construction: this process never opened that connection.
   syncService.start();
+  // What the preflight reads: masternode identity and state, the deterministic
+  // list diff behind it, and the DKG rounds the baseline is measured over.
+  masternodePollerService.start();
+  mnListDiffService.start();
+  quorumRoundService.start();
 
   const app = express();
   app.disable('x-powered-by');
@@ -99,6 +108,9 @@ async function main(): Promise<void> {
     logger.info(`${signal} received, stopping the simulator lab`);
     reconcileService.stop();
     syncService.stop();
+    masternodePollerService.stop();
+    mnListDiffService.stop();
+    quorumRoundService.stop();
     server.close();
     await disconnectDatabase();
     process.exit(0);

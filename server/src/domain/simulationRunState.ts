@@ -204,6 +204,16 @@ const TIMEOUT_RECOVERY_STATUSES = new Set<SimulationRunStatus>([
 ]);
 
 /**
+ * The statuses from which a run can never act again. A run in one of these holds
+ * no live slot and needs no recovery.
+ */
+export const TERMINAL_SIMULATION_STATUSES: readonly SimulationRunStatus[] = [
+  'rejected',
+  'completed',
+  'aborted',
+];
+
+/**
  * Every status a periodic reconcile can move on its own: the timeout-recoverable
  * ones, plus `aborting`, which reconcile resumes into recovery regardless of any
  * deadline. A run in any other status is either terminal or waiting on an

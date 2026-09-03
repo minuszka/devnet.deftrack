@@ -27,6 +27,14 @@ export interface SimulationTargetSnapshot {
   proTxHash: string | null;
   /** Private registry reference. Never return from a public DTO. */
   hostRef: string;
+  /**
+   * The host the chain sees, when it differs from hostRef. See the target model.
+   *
+   * Optional, not nullable-required: absent and null both mean "the same as
+   * hostRef", and canonicalJson drops undefined -- so a devnet run's fingerprint
+   * is byte-identical to one taken before this field existed.
+   */
+  chainHostRef?: string | null;
   /** Private local allowlist reference, not a caller-supplied unit name. */
   unitRef: string;
   p2pPort: number;
@@ -117,6 +125,7 @@ const targetSnapshotSchema = new Schema<SimulationTargetSnapshot>(
     operatorId: { type: String, default: null },
     proTxHash: { type: String, default: null },
     hostRef: { type: String, required: true },
+    chainHostRef: { type: String, default: null },
     unitRef: { type: String, required: true },
     p2pPort: { type: Number, required: true, min: 1, max: 65_535 },
     role: { type: String, enum: ['masternode', 'staker', 'seed'], required: true },
@@ -178,6 +187,17 @@ export const simulationRunStateSchema = new Schema<SimulationRunState>(
     stateEnteredAtMs: { type: Number, required: true, min: 0 },
     runExpiresAtMs: { type: Number, required: true, min: 0 },
     faultLeaseExpiresAtMs: { type: Number, default: null, min: 0 },
+    /**
+     * When the cooldown ends, carried separately from `runExpiresAtMs`.
+     *
+     * Optional in the domain and so optional here, but it must EXIST in this
+     * schema: `strict: 'throw'` rejects an unknown path even when the value is
+     * undefined, and this sub-schema is also the audit event's `stateAfter`. A
+     * field added to the state and not to this list therefore does not degrade --
+     * it makes the first transition that carries it unwritable, which is every
+     * live run at its first preflight.
+     */
+    cooldownExpiresAtMs: { type: Number, default: undefined, min: 0 },
     faultMayBeActive: { type: Boolean, required: true },
     abortRequested: { type: Boolean, required: true },
     lastTransition: { type: transitionSchema, default: null },

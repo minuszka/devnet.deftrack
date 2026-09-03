@@ -243,3 +243,25 @@ describe('simulation Mongo schemas', () => {
     await expect(SimulationMeasurementReportModel.deleteMany({}).exec()).rejects.toThrow(/append-only/i);
   });
 });
+
+describe('run state persistence surface', () => {
+  it('accepts every field the domain state carries, including the optional ones', () => {
+    // The state sub-schema is `strict: 'throw'` and is ALSO the audit event's
+    // stateAfter, so a field added to the domain and not here does not degrade --
+    // it makes the first transition carrying it unwritable. That is every live
+    // run at its first preflight, and no in-memory repository test can see it.
+    const state = {
+      ...createSimulationRunState({
+        runKey: `sim_${'a'.repeat(32)}`,
+        live: true,
+        createdAtMs: 1_000,
+        runExpiresAtMs: 100_000,
+      }),
+      cooldownExpiresAtMs: 90_000,
+    };
+    const event = new SimulationAuditEvent(
+      creationAuditRecord({ state, metadata: metadata(), actor })
+    );
+    expect(event.validateSync()).toBeUndefined();
+  });
+});

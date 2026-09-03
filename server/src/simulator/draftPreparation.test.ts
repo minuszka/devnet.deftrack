@@ -88,3 +88,16 @@ describe('simulation draft preparation', () => {
     expect(peers.every((targetId) => snapshotted.has(targetId))).toBe(true);
   });
 });
+
+describe('inventory failure reporting', () => {
+  it('names the targets behind each code, so one retired entry is not read as a fault in the others', () => {
+    // A single unusable target blocks every run, including runs that never
+    // reference it. Without the names the operator sees only a code and inspects
+    // the targets they did ask for.
+    const targets = registry();
+    const retired = { ...targets[0]!, targetId: 'retired', hostRef: 'gone' };
+    expect(() =>
+      prepareSimulationDraft({ ...validInput(), registry: [...targets.slice(1), retired] })
+    ).toThrow(/MISSING_HOST_OBSERVATION\(retired\)/);
+  });
+});
