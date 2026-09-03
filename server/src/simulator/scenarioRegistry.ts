@@ -1,13 +1,32 @@
 import { z } from 'zod';
+import { BLOCK_SECONDS } from '../domain/dkgWindows.js';
 import {
   SIMULATION_SCENARIO_IDS,
   type ScenarioDescriptor,
   type SimulationScenarioId,
 } from './scenarioTypes.js';
 
+/**
+ * The longest outage a scenario may ask for, in BLOCKS.
+ *
+ * Stated in blocks because the question every fault scenario is measured
+ * against is how many DKG contribution windows a node was absent across, and
+ * that is block arithmetic -- see domain/dkgWindows. As seconds the number said
+ * nothing about what it permitted.
+ *
+ * What it permits, said plainly: six blocks guarantees ZERO missed windows at
+ * any alignment. An unanchored outage must run 25 blocks -- 62 minutes on
+ * devnet -- before it must miss even one, which is longer than the wrapper's own
+ * TTL ceiling allows a fault to live. So an unanchored run cannot express the
+ * experiment at all, and the answer is to anchor the outage on the schedule
+ * rather than to raise either ceiling: anchored, one missed window costs two
+ * blocks. See docs/simulator/OUTAGE_WINDOWS_HU.md before changing this.
+ */
+const MAX_OUTAGE_BLOCKS = 6;
+
 export const SCENARIO_LIMITS = Object.freeze({
   maxTargets: 20,
-  maxDurationSeconds: 15 * 60,
+  maxDurationSeconds: MAX_OUTAGE_BLOCKS * BLOCK_SECONDS,
   maxLatencyMs: 2_000,
   maxJitterMs: 1_000,
   maxPacketLossPercent: 30,

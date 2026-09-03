@@ -2,6 +2,7 @@ import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { config } from '../config.js';
 import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
+import { BLOCK_INTERVAL_MS } from '../domain/dkgWindows.js';
 import { TERMINAL_SIMULATION_STATUSES } from '../domain/simulationRunState.js';
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
@@ -31,7 +32,7 @@ import { rpc, type RpcService } from './rpc.service.js';
 // Defined once in the domain: the same list decides which runs hold the live
 // slot here and which the /runs?live=true listing reports.
 const TERMINAL_RUN_STATUSES = TERMINAL_SIMULATION_STATUSES;
-const ESTIMATED_BLOCK_INTERVAL_MS = 150_000;
+
 const OBSERVATION_MAX_AGE_MS = 2 * 60_000;
 
 interface EvidenceSnapshot {
@@ -226,7 +227,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     const faultStartHeight = baselineEndHeight + 1;
     const estimatedFaultBlocks = Math.max(
       1,
-      Math.ceil(maxPlannedOffsetMs(input.plan) / ESTIMATED_BLOCK_INTERVAL_MS)
+      Math.ceil(maxPlannedOffsetMs(input.plan) / BLOCK_INTERVAL_MS)
     );
     const measurementPlan = planMeasurementWindowsForLlmqFault({
       primaryLlmqName: evidence.quorumProfile.llmqName,
