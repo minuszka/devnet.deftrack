@@ -54,6 +54,21 @@ export interface LabTopology {
    * spork address; it signs nothing on any real network.
    */
   sporkKey: string;
+  /**
+   * The LLMQ size and threshold every node is started with, or null for the
+   * build's own defaults.
+   *
+   * `-llmqtestparams` is regtest-only and exists so a lab can be run under
+   * parameters other than the three-member default -- which is what a comparison
+   * across wallet versions or quorum shapes needs.
+   *
+   * Read the node's own assignment before using it: it sets size, and then
+   * minSize, threshold AND dkgBadVotesThreshold all to the threshold. So
+   * `10:6` is really 10/6/6/6, not 10/x/6/y. The gap between minSize and size --
+   * where "formed but punished" lives -- is therefore always size minus
+   * threshold, and cannot be set independently.
+   */
+  llmqTestParams: { size: number; threshold: number } | null;
   /** First loopback port for the published RPCs; node i takes base + i - 1. */
   hostRpcBasePort: number;
   /** Internal ZMQ publish port on node 1, and the loopback port it is published on. */
@@ -111,6 +126,12 @@ export interface LabComposeSpec {
   services: Record<string, LabComposeService>;
   networks: Record<string, LabComposeNetwork>;
   volumes: Record<string, Record<string, never>>;
+  /**
+   * Carried on the spec so the explorer can be told what the nodes were started
+   * with. Not part of the compose document -- `toComposeDocument` drops it,
+   * because Compose rejects an unknown top-level key.
+   */
+  llmqTestParams: { size: number; threshold: number } | null;
 }
 
 export const DEFAULT_LAB_TOPOLOGY: Omit<LabTopology, 'nodes'> = {
@@ -123,6 +144,7 @@ export const DEFAULT_LAB_TOPOLOGY: Omit<LabTopology, 'nodes'> = {
   rpcAllowIp: '172.16.0.0/12',
   subnet: '172.28.0.0/24',
   sporkKey: 'cP4EKFyJsHT39LDqgdcB43Y3YXjNyjb5Fuas1GQSeAtjnZWmZEQK',
+  llmqTestParams: null,
   hostRpcBasePort: 19800,
   zmqPort: 28332,
   hostZmqPort: 28332,
@@ -204,6 +226,11 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
       ...ringPeers(index, topology.nodes, topology.fanout).map(
         (peer) => `-addnode=${labNodeName(peer)}:${topology.p2pPort}`
       ),
+      // Every node, not just node 1: these are consensus parameters, and a node
+      // started without them would form quorums by different rules and fork off.
+      ...(topology.llmqTestParams === null
+        ? []
+        : [`-llmqtestparams=${topology.llmqTestParams.size}:${topology.llmqTestParams.threshold}`]),
       // Only node 1 signs sporks -- it is the one node guaranteed to keep a
       // wallet, and a second signer would add nothing on a single-key chain.
       ...(index === 1 ? [`-sporkkey=${topology.sporkKey}`] : []),
@@ -253,7 +280,33 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
     services,
     networks: { [topology.network]: { ipam: { config: [{ subnet: topology.subnet }] } } },
     volumes,
+    llmqTestParams: topology.llmqTestParams,
   };
+}
+
+/**
+ * What the explorer must be told about the profile this lab actually runs.
+ *
+ * Derived from the same topology the compose is generated from, so the reader's
+ * numbers and the nodes' arguments cannot drift apart -- which is the whole
+ * failure this exists to prevent. No RPC returns these numbers, so nothing
+ * downstream could catch a disagreement except the member-count check, and that
+ * only fires in one direction.
+ *
+ * Mirrors the node's own assignment exactly: `-llmqtestparams=<size>:<threshold>`
+ * sets minSize, threshold AND dkgBadVotesThreshold all to the threshold.
+ */
+export function llmqProfileOverridesFor(spec: Pick<LabComposeSpec, 'llmqTestParams'>): string {
+  const params = spec.llmqTestParams;
+  if (params === null) return '';
+  return JSON.stringify({
+    llmq_test: {
+      size: params.size,
+      minSize: params.threshold,
+      threshold: params.threshold,
+      dkgBadVotesThreshold: params.threshold,
+    },
+  });
 }
 
 /**
@@ -262,5 +315,8 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
  * of hand-rolled YAML quoting around the `=`, `:` and `${}` in the commands.
  */
 export function toComposeDocument(spec: LabComposeSpec): string {
-  return `${JSON.stringify(spec, null, 2)}\n`;
+  // llmqTestParams rides on the spec for the explorer's benefit, not for
+  // Compose, which rejects an unknown top-level key.
+  const { llmqTestParams: _explorerOnly, ...document } = spec;
+  return `${JSON.stringify(document, null, 2)}\n`;
 }

@@ -61,7 +61,7 @@ export interface LlmqProfile {
   formationGateHeight?: number;
 }
 
-export const LLMQ_PROFILES: Record<string, LlmqProfile> = {
+const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
   /**
    * The regtest lab's only quorum profile, and the reason it is in this registry
    * at all: the simulator lab runs on regtest, where no devnet profile exists.
@@ -274,6 +274,129 @@ export function chainlockProfileAtHeight(height: number): LlmqProfile {
  * llmq_devnet stays in the registry but is not tracked: the mainnet-parity
  * change retired it here.
  */
+/**
+ * Profile numbers this deployment declares, overriding the table above.
+ *
+ * The node exposes NONE of these over RPC -- there is no `quorum` subcommand
+ * that returns size, minSize, threshold or the bad-votes threshold -- so this
+ * table is the only source, and it is written for one binary on one network.
+ * The moment a lab overrides them with `-llmqtestparams`, or a campaign runs an
+ * older wallet whose compiled-in parameters differ, every round document
+ * snapshots rules the node is not applying and every report built on them
+ * compares the wrong things. That has already happened once on this project:
+ * the table sat pinned to v22.1.4 long after the node took the
+ * mainnet-proportional bad-votes fix.
+ *
+ * A comparison across binaries or parameter sets is exactly the experiment this
+ * explorer exists to support, so the numbers have to be declarable by whoever
+ * starts the node rather than compiled into the reader.
+ *
+ * `LLMQ_PROFILE_OVERRIDES` is JSON, for example:
+ *
+ *   {"llmq_test": {"size": 10, "minSize": 6, "threshold": 6}}
+ *
+ * A malformed or impossible declaration throws at startup. Falling back to the
+ * defaults would be the same silent wrongness in a new place -- and worse,
+ * because someone had tried to say otherwise.
+ */
+const OVERRIDABLE_FIELDS = [
+  'size',
+  'minSize',
+  'threshold',
+  'dkgInterval',
+  'dkgPhaseBlocks',
+  'dkgMiningWindowStart',
+  'dkgMiningWindowEnd',
+  'dkgBadVotesThreshold',
+  'dkgBadVotesThresholdV2',
+  'signingActiveQuorumCount',
+] as const;
+
+type OverridableField = (typeof OVERRIDABLE_FIELDS)[number];
+
+export function applyProfileOverrides(
+  profiles: Record<string, LlmqProfile>,
+  raw: string
+): Record<string, LlmqProfile> {
+  if (raw.trim() === '') return profiles;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`LLMQ_PROFILE_OVERRIDES is not valid JSON: ${(error as Error).message}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('LLMQ_PROFILE_OVERRIDES must be an object keyed by profile name');
+  }
+  const merged = { ...profiles };
+  for (const [name, fields] of Object.entries(parsed as Record<string, unknown>)) {
+    const base = merged[name];
+    if (base === undefined) {
+      throw new Error(`LLMQ_PROFILE_OVERRIDES names unknown profile "${name}"`);
+    }
+    if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
+      throw new Error(`LLMQ_PROFILE_OVERRIDES["${name}"] must be an object`);
+    }
+    const next: LlmqProfile = { ...base };
+    for (const [field, value] of Object.entries(fields as Record<string, unknown>)) {
+      if (!(OVERRIDABLE_FIELDS as readonly string[]).includes(field)) {
+        throw new Error(
+          `LLMQ_PROFILE_OVERRIDES["${name}"] cannot set "${field}"; allowed: ${OVERRIDABLE_FIELDS.join(', ')}`
+        );
+      }
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+        throw new Error(`LLMQ_PROFILE_OVERRIDES["${name}"].${field} must be a positive integer`);
+      }
+      (next as unknown as Record<OverridableField, number>)[field as OverridableField] = value;
+    }
+    assertCoherentProfile(name, next);
+    merged[name] = next;
+  }
+  return merged;
+}
+
+/**
+ * Refuses a declaration the node could not be running.
+ *
+ * Not a style check: a quorum cannot need more members to form than it has, nor
+ * sign with more than it holds, and a mining window that ends before it starts
+ * describes a round that can never be mined. A declaration like that would be
+ * recorded on every round as though it were the rule.
+ */
+function assertCoherentProfile(name: string, profile: LlmqProfile): void {
+  const say = (message: string): never => {
+    throw new Error(`LLMQ profile "${name}" is not coherent: ${message}`);
+  };
+  if (profile.minSize > profile.size) say(`minSize ${profile.minSize} exceeds size ${profile.size}`);
+  if (profile.threshold > profile.size) say(`threshold ${profile.threshold} exceeds size ${profile.size}`);
+  if (profile.dkgBadVotesThreshold > profile.size) {
+    say(`dkgBadVotesThreshold ${profile.dkgBadVotesThreshold} exceeds size ${profile.size}`);
+  }
+  if (profile.dkgMiningWindowEnd <= profile.dkgMiningWindowStart) {
+    say(`mining window [${profile.dkgMiningWindowStart}, ${profile.dkgMiningWindowEnd}) is empty`);
+  }
+  if (profile.dkgMiningWindowEnd > profile.dkgInterval) {
+    say(`mining window ends at ${profile.dkgMiningWindowEnd}, past the ${profile.dkgInterval}-block interval`);
+  }
+  // Five phases of dkgPhaseBlocks precede the mining window; a start before them
+  // would put the window inside a phase that is still running.
+  if (profile.dkgMiningWindowStart < profile.dkgPhaseBlocks * 5) {
+    say(
+      `mining window starts at ${profile.dkgMiningWindowStart}, before the five ` +
+        `${profile.dkgPhaseBlocks}-block DKG phases have finished`
+    );
+  }
+}
+
+/**
+ * The profiles this deployment reads rounds under: the built-in table, with
+ * whatever this deployment declared applied over it.
+ */
+export const LLMQ_PROFILES: Record<string, LlmqProfile> = applyProfileOverrides(
+  BUILT_IN_PROFILES,
+  process.env.LLMQ_PROFILE_OVERRIDES ?? ''
+);
+
 export const TRACKED_PROFILE_NAMES: readonly string[] = (
   process.env.TRACKED_LLMQ_NAMES ?? 'llmq_50_60,llmq_60_75,llmq_400_60,llmq_400_85,llmq_defcon'
 )

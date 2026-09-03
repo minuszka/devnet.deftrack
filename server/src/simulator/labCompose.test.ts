@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generateLabCompose, labNodeAddress, labNodeName, ringPeers, toComposeDocument, type LabComposeSpec } from './labCompose.js';
+import { generateLabCompose, labNodeAddress, labNodeName, llmqProfileOverridesFor, ringPeers, toComposeDocument, type LabComposeSpec } from './labCompose.js';
 
 /** Every node reachable from node 1 by following the addnode edges. */
 function connectedComponentSize(spec: LabComposeSpec): number {
@@ -195,5 +195,37 @@ describe('event-time observation', () => {
     const spec = generateLabCompose({ nodes: 3 });
     expect(spec.services.mn01?.ports).toContain('127.0.0.1:28332:28332');
     expect(spec.services.mn02?.ports).toHaveLength(1);
+  });
+});
+
+describe('declaring the LLMQ profile the lab runs', () => {
+  it('starts every node with the parameters, not just one', () => {
+    // These are consensus parameters: a node started without them would form
+    // quorums by different rules and fork off.
+    const spec = generateLabCompose({ nodes: 3, llmqTestParams: { size: 10, threshold: 6 } });
+    for (const service of Object.values(spec.services)) {
+      expect(service.command).toContain('-llmqtestparams=10:6');
+    }
+  });
+
+  it('tells the explorer what the node really set, not what was asked for', () => {
+    // -llmqtestparams=10:6 is 10/6/6/6: the node assigns minSize, threshold AND
+    // dkgBadVotesThreshold all from the threshold.
+    const spec = generateLabCompose({ nodes: 3, llmqTestParams: { size: 10, threshold: 6 } });
+    expect(JSON.parse(llmqProfileOverridesFor(spec))).toEqual({
+      llmq_test: { size: 10, minSize: 6, threshold: 6, dkgBadVotesThreshold: 6 },
+    });
+  });
+
+  it('declares nothing when the build uses its own defaults', () => {
+    const spec = generateLabCompose({ nodes: 3 });
+    expect(spec.services.mn01?.command.some((arg) => arg.startsWith('-llmqtestparams'))).toBe(false);
+    expect(llmqProfileOverridesFor(spec)).toBe('');
+  });
+
+  it('keeps the declaration out of the compose document itself', () => {
+    // Compose rejects an unknown top-level key; this field is for the explorer.
+    const document = JSON.parse(toComposeDocument(generateLabCompose({ nodes: 3 })));
+    expect(document).not.toHaveProperty('llmqTestParams');
   });
 });
