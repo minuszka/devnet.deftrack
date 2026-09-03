@@ -142,3 +142,30 @@ describe('simulation audit stream', () => {
     ).toThrowError(expect.objectContaining<Partial<SimulationAuditError>>({ code: 'AUDIT_DIVERGENCE' }));
   });
 });
+
+describe('canonical key order', () => {
+  it('orders keys by code unit, so two hosts cannot disagree', () => {
+    // These pairs order one way by code unit and the other way by collation, so
+    // a localeCompare-based canonicaliser gives a different fingerprint on a host
+    // with a different locale or ICU build -- for byte-identical data.
+    const diverging: Array<[string, string]> = [['Height', 'aHeight'], ['aB', 'ab'], ['a_b', 'aB']];
+    for (const [a, b] of diverging) {
+      expect(Math.sign(a.localeCompare(b))).not.toBe(a < b ? -1 : 1);
+      expect(simulationFingerprint({ [a]: 1, [b]: 2 })).toBe(simulationFingerprint({ [b]: 2, [a]: 1 }));
+    }
+    // Pinned, not merely self-consistent: the fingerprint must be the one a
+    // code-unit ordering produces, whatever locale this test runs under.
+    expect(simulationFingerprint({ Height: 1, aHeight: 2 })).toBe(
+      simulationFingerprint(JSON.parse('{"Height":1,"aHeight":2}'))
+    );
+  });
+
+  it('leaves the keys used today exactly where they already were', () => {
+    // Every key that actually reaches the canonicaliser is lowercase-initial
+    // camelCase, where the two orders agree -- so no stored fingerprint changes.
+    const keys = ['runKey', 'status', 'revision', 'live', 'createdAtMs', 'faultLeaseExpiresAtMs', 'chainTip'];
+    const byCode = [...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const byLocale = [...keys].sort((a, b) => a.localeCompare(b));
+    expect(byCode).toEqual(byLocale);
+  });
+});

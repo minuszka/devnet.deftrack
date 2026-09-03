@@ -51,6 +51,26 @@ export class SimulationAuditError extends Error {
   }
 }
 
+/**
+ * Orders strings by their code units, never by collation.
+ *
+ * `localeCompare` uses the runtime's default locale and ICU build, so two hosts
+ * can order the same keys differently and produce different canonical JSON --
+ * and therefore a different fingerprint -- for byte-identical data. The
+ * fingerprint is what decides whether a replayed request is the same request and
+ * whether an audit record has diverged, so a comparator that depends on the
+ * machine's locale is the one thing it cannot be built on.
+ *
+ * The two orders really do disagree: "Height" sorts before "aHeight" by code
+ * unit and after it by collation, and likewise for "aB"/"ab" and "a_b"/"aB".
+ * Every key that reaches here today is lowercase-initial camelCase, where the
+ * two agree -- which is why nothing has diverged yet, not why it could not.
+ */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null) return 'null';
   if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
@@ -62,7 +82,7 @@ function canonicalJson(value: unknown): string {
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, item]) => item !== undefined)
-      .sort(([a], [b]) => a.localeCompare(b));
+      .sort(([a], [b]) => byCodeUnit(a, b));
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
   }
   throw new SimulationAuditError('AUDIT_DIVERGENCE', `unsupported audit value: ${typeof value}`);
