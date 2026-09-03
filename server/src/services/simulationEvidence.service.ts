@@ -2,6 +2,7 @@ import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { config } from '../config.js';
 import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
+import { BLOCK_INTERVAL_MS } from '../domain/dkgWindows.js';
 import { TERMINAL_SIMULATION_STATUSES } from '../domain/simulationRunState.js';
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
@@ -31,7 +32,7 @@ import { rpc, type RpcService } from './rpc.service.js';
 // Defined once in the domain: the same list decides which runs hold the live
 // slot here and which the /runs?live=true listing reports.
 const TERMINAL_RUN_STATUSES = TERMINAL_SIMULATION_STATUSES;
-const ESTIMATED_BLOCK_INTERVAL_MS = 150_000;
+
 const OBSERVATION_MAX_AGE_MS = 2 * 60_000;
 
 interface EvidenceSnapshot {
@@ -222,16 +223,25 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       capturedAtHeight: input.run.metadata.targetSnapshot[0]?.capturedAtHeight ?? 0,
     };
 
-    const baselineEndHeight = evidence.chain.blocks;
-    const faultStartHeight = baselineEndHeight + 1;
+    // Anchored on the height the fault was actually applied at, when the run
+    // recorded one. Derived from the live tip it was not a property of the run:
+    // the same run measured twice described two different spans of chain, and
+    // after the fault ended the window drifted forward with every later block --
+    // so a report generated an hour late measured an hour of quiet instead.
+    const activatedHeight = input.run.state.faultActivatedTip?.height;
+    const faultStartHeight = activatedHeight ?? evidence.chain.blocks + 1;
+    const baselineEndHeight = faultStartHeight - 1;
     const estimatedFaultBlocks = Math.max(
       1,
-      Math.ceil(maxPlannedOffsetMs(input.plan) / ESTIMATED_BLOCK_INTERVAL_MS)
+      Math.ceil(maxPlannedOffsetMs(input.plan) / BLOCK_INTERVAL_MS)
     );
     const measurementPlan = planMeasurementWindowsForLlmqFault({
       primaryLlmqName: evidence.quorumProfile.llmqName,
       faultStartHeight,
-      faultEndHeight: faultStartHeight + 2 + estimatedFaultBlocks,
+      // The height recovery was proven at when the run recorded one; otherwise
+      // the plan's own estimate, which is what it always used.
+      faultEndHeight:
+        input.run.state.recoveredTip?.height ?? faultStartHeight + 2 + estimatedFaultBlocks,
     });
     const selectedTargets = input.run.metadata.targetSnapshot.filter(
       (target) => input.plan.selectedTargetIds.includes(target.targetId)

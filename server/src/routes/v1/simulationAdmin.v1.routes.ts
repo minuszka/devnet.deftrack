@@ -36,6 +36,7 @@ import {
 } from '../../simulator/liveExecutorPlan.js';
 import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
 import { SimulationRun } from '../../models/SimulationRun.js';
+import { rpc } from '../../services/rpc.service.js';
 import { SimulationTarget } from '../../models/SimulationTarget.js';
 import {
   registryUpdateFrom,
@@ -64,6 +65,9 @@ function statusFor(error: unknown): number {
       case 'EXECUTOR_NOT_AVAILABLE': return 503;
       case 'EXECUTOR_NETWORK_FORBIDDEN': return 403;
       case 'LIVE_RUN_LOCKED': return 409;
+      // The chain is not where the run needs it to be yet. A conflict, not a bad
+      // request: the same call succeeds a few blocks later.
+      case 'ANCHOR_NOT_READY': return 409;
       case 'CORRUPT_ARTIFACT': return 500;
     }
   }
@@ -347,7 +351,15 @@ const defaultService = new SimulationControlService(
   // One live run at a time, decided atomically. The preflight's conflict check is
   // an ordinary query, so two validations could both pass before either
   // transitioned, and an abandoned draft had no expiry to stop blocking on.
-  new SimulationLiveRunLockService(new MongoSimulationLiveRunLockRepository())
+  new SimulationLiveRunLockService(new MongoSimulationLiveRunLockRepository()),
+  // Where the chain stands, recorded when the fault is applied and when recovery
+  // is proven. Read as height-then-hash-of-that-height rather than
+  // getbestblockhash, so the two always describe the same block even if the tip
+  // advances between the calls.
+  async () => {
+    const height = await rpc.getBlockCount();
+    return { height, hash: await rpc.getBlockHash(height) };
+  }
 );
 
 export default createSimulationAdminRouter(defaultService);

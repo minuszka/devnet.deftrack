@@ -388,3 +388,41 @@ describe('persisted run reconciliation after restart', () => {
     );
   });
 });
+
+describe('chain anchors', () => {
+  const TIP = { height: 1_000, hash: 'a'.repeat(64) };
+  const RECOVERED = { height: 1_012, hash: 'b'.repeat(64) };
+
+  it('records where the fault began and where recovery was proven', () => {
+    const armed = stateAt('armed');
+    const active = transitionSimulationRun(armed, {
+      type: 'activate_fault',
+      eventId: 'act',
+      atMs: 500,
+      faultLeaseExpiresAtMs: 900,
+      chainTip: TIP,
+    });
+    expect(active.faultActivatedTip).toEqual(TIP);
+
+    const recovering = transition(active, 'begin_recovery', 600);
+    const done = transitionSimulationRun(recovering, {
+      type: 'recovery_succeeded',
+      eventId: 'rec',
+      atMs: 700,
+      chainTip: RECOVERED,
+    });
+    expect(done.recoveredTip).toEqual(RECOVERED);
+    // The activation anchor is a fact about the run and survives every later
+    // transition; recomputing it from a live tip is exactly what it replaces.
+    expect(done.faultActivatedTip).toEqual(TIP);
+  });
+
+  it('carries no anchor at all when none was supplied', () => {
+    // Absent, not null or zero: a deployment with no tip source records nothing
+    // rather than a height it did not read, and canonicalJson drops undefined so
+    // runs made before anchors existed keep their fingerprints.
+    const active = transitionSimulationRun(stateAt('armed'), activateEvent('act', 500));
+    expect('faultActivatedTip' in active).toBe(false);
+    expect(Object.keys(active)).not.toContain('recoveredTip');
+  });
+});

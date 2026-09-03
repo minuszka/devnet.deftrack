@@ -259,3 +259,40 @@ describe('simulation measurement pipeline', () => {
     expect(report.baseline.dkg.byProfile.find((row) => row.llmqName === primary)?.rounds.formed).toBe(3);
   });
 });
+
+describe('observation gap correlation', () => {
+  const input = {
+    faultStartHeight: 1_000,
+    faultEndHeight: 1_010,
+    generatedAtMs: GENERATED_AT_MS,
+    impact: impact(),
+  };
+
+  it('says so when there was no window to correlate against', () => {
+    // An empty gap list means "none happened" only when a window was actually
+    // searched. With no block arrival time anywhere in the range there is no
+    // window, and reporting zero missed messages would be a failed lookup
+    // contributing a zero.
+    const report = computeSimulationMeasurementReport({
+      ...input,
+      evidence: { ...completeEvidence(), observationGaps: [], observationGapWindowKnown: false },
+    });
+    const reasons = [
+      ...report.baseline.dataQuality.reasons,
+      ...report.observation.dataQuality.reasons,
+    ].join(' ');
+    expect(reasons).toMatch(/observation gaps could not be correlated/);
+  });
+
+  it('stays silent when the window was known and simply held no gaps', () => {
+    const report = computeSimulationMeasurementReport({
+      ...input,
+      evidence: { ...completeEvidence(), observationGaps: [] },
+    });
+    const reasons = [
+      ...report.baseline.dataQuality.reasons,
+      ...report.observation.dataQuality.reasons,
+    ].join(' ');
+    expect(reasons).not.toMatch(/could not be correlated/);
+  });
+});

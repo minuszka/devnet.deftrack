@@ -97,6 +97,16 @@ export interface SimulationMeasurementEvidence {
   dslEpochs: MeasurementDslEpochEvidence[];
   peerObservations: MeasurementPeerObservationEvidence[];
   observationGaps: MeasurementObservationGapEvidence[];
+  /**
+   * False when no block in the range carried an arrival time, so the window to
+   * correlate observation gaps against could not be established at all.
+   *
+   * `observationGaps` is then empty because nothing was looked up -- not because
+   * nothing happened -- and an empty list that means "unknown" is exactly the
+   * failed call contributing a zero. Absent means known, so measurements taken
+   * before this field existed keep their fingerprints.
+   */
+  observationGapWindowKnown?: boolean;
   hosts: MeasurementHostEvidence[];
   expectedHostIds: string[];
   /**
@@ -299,6 +309,11 @@ function normalizeEvidence(evidence: SimulationMeasurementEvidence): SimulationM
     observationGaps: [...evidence.observationGaps]
       .map((row) => ({ ...row }))
       .sort((a, b) => a.detectedAtMs - b.detectedAtMs || a.topic.localeCompare(b.topic)),
+    // Carried only when false. This function rebuilds the evidence from a fixed
+    // field list -- that is what makes the report order-independent -- so a flag
+    // not named here is dropped, and the report goes back to reading "no gaps"
+    // where it means "no window to look in".
+    ...(evidence.observationGapWindowKnown === false ? { observationGapWindowKnown: false } : {}),
     hosts: [...evidence.hosts]
       .map((row) => ({ ...row }))
       .sort((a, b) => a.hostId.localeCompare(b.hostId) || a.reportedAtMs - b.reportedAtMs),
@@ -327,6 +342,7 @@ function evidenceForRange(
       fromTime === null || toTime === null
         ? evidence.observationGaps
         : evidence.observationGaps.filter((row) => row.detectedAtMs >= fromTime && row.detectedAtMs <= toTime),
+    ...(evidence.observationGapWindowKnown === false ? { observationGapWindowKnown: false } : {}),
     hosts: evidence.hosts,
     expectedHostIds: evidence.expectedHostIds,
   });
@@ -548,6 +564,12 @@ function dataQualitySnapshot(
   if (duplicateHeights > 0) reasons.push(`${duplicateHeights} duplicate block heights were returned`);
   if (duplicatePeerObservations > 0) reasons.push(`${duplicatePeerObservations} duplicate peer observations were returned`);
   if (expectedHosts.length === 0) reasons.push('no expected observer hosts were pinned');
+  if (evidence.observationGapWindowKnown === false) {
+    // Said out loud rather than left as a zero: with no arrival time anywhere in
+    // the range there is no window to correlate gaps against, so
+    // observationMessagesMissed below is "not measured", not "none".
+    reasons.push('observation gaps could not be correlated: no block arrival time in range');
+  }
   if (staleHosts > policy.maximumStaleHosts) reasons.push(`${staleHosts} expected observer hosts are stale or missing`);
   if (firstSeenCoveragePercent < policy.minimumObservedBlockTimeCoveragePercent) {
     reasons.push(`observed block-arrival coverage is ${firstSeenCoveragePercent.toFixed(1)}%`);

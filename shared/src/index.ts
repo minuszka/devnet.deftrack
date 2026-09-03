@@ -5,8 +5,16 @@
 /** Devnet network name. Every node must pass the identical `-devnet=` value. */
 export const DEVNET_NAME = 'defcon-q60';
 
-/** Shown in the client header so devnet data can never be mistaken for mainnet. */
-export const DEVNET_BANNER = 'DEVNET — test network, coins have no value';
+/**
+ * Shown in the client header so devnet data can never be mistaken for mainnet.
+ *
+ * It names the two things a visitor can actually be misled by: that this is not
+ * mainnet, and that the history under it is not durable. "Coins have no value"
+ * said neither -- someone reading a height, a ChainLock or a PoSe ban here could
+ * still take it for a permanent record of a production network.
+ */
+export const DEVNET_BANNER =
+  'DEVNET / EXPERIMENTAL NETWORK — NOT MAINNET — DATA MAY RESET OR REORG AT ANY TIME';
 
 /** Successful response envelope used by every v1 endpoint. */
 export interface ApiSuccess<T> {

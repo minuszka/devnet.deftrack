@@ -27,7 +27,7 @@ const POSE_MEASUREMENT_TYPES: MeasurementPoSeEventEvidence['type'][] = [
   'banned', 'revived', 'penalty_up', 'penalty_down',
   'service_missed', 'service_recovered', 'service_suspended', 'service_banned',
 ];
-const ESTIMATED_BLOCK_INTERVAL_MS = 150_000;
+
 
 function isDuplicateKey(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: number }).code === 11_000;
@@ -151,15 +151,31 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
     const observedTimes = blocks
       .map((block) => block.firstSeenAt?.getTime() ?? null)
       .filter((value): value is number => value !== null);
-    const fallbackSpanMs = (input.toHeight - input.fromHeight + 10) * ESTIMATED_BLOCK_INTERVAL_MS;
-    const gapFromMs = observedTimes.length > 0 ? Math.min(...observedTimes) : input.generatedAtMs - fallbackSpanMs;
-    const gapToMs = observedTimes.length > 0 ? Math.max(...observedTimes) : input.generatedAtMs;
-    const observationGaps = await ObservationGap.find({
-      detectedAt: { $gte: new Date(gapFromMs), $lte: new Date(gapToMs) },
-    }).sort({ detectedAt: 1 }).select('topic missed detectedAt').lean();
+    // Observation gaps are correlated against the window the measured blocks
+    // were actually SEEN in, so with no arrival time anywhere in the range there
+    // is no window -- and none is invented.
+    //
+    // It used to guess one: `generatedAtMs` back by an estimated block interval
+    // per height. That window has no relation to the heights being measured, so
+    // it could pull in gaps from an unrelated period and hand them to the report
+    // as this run's, and it did so silently -- the sum below is a real-looking
+    // number either way. The honest answer to "when were these blocks seen?" when
+    // nothing recorded it is that it is not known.
+    const observationGapWindowKnown = observedTimes.length > 0;
+    const observationGaps = !observationGapWindowKnown
+      ? []
+      : await ObservationGap.find({
+        detectedAt: {
+          $gte: new Date(Math.min(...observedTimes)),
+          $lte: new Date(Math.max(...observedTimes)),
+        },
+      }).sort({ detectedAt: 1 }).select('topic missed detectedAt').lean();
 
     return {
       primaryLlmqName: chainlockProfileNameAtHeight(input.faultStartHeight),
+      // Only when false: absent means known, so a measurement taken before this
+      // field existed keeps the fingerprint it had.
+      ...(observationGapWindowKnown ? {} : { observationGapWindowKnown: false }),
       blocks: blocks.map((block) => {
         const stakerScript = scriptByHeight.get(block.height) ?? null;
         return {
