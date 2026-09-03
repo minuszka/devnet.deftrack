@@ -320,10 +320,13 @@ describe('scheduledLabActionsForPlan', () => {
   });
 
   it('refuses a scheduled fault it cannot express, rather than dropping it', () => {
-    // A fault-clear carries no impairment, so its job id can only come from the
-    // matching apply. Pairing those across a schedule is a design, not a lookup.
+    // A staged partition would need its own qdisc built at a later moment, which
+    // is a design rather than a lookup. Refused loudly, not silently dropped.
+    //
+    // Deliberately NOT a fault-clear: that one belongs to recovery, and refusing
+    // it here once made a clean recovery report allClear: false.
     const plan = {
-      actions: [action('mn-1', { kind: 'fault-clear', scope: 'run' }, 0, 10_000)],
+      actions: [action('mn-1', partitionPayload, 0, 10_000)],
     } as DryRunPlan;
     expect(() =>
       scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000 })
@@ -337,5 +340,31 @@ describe('scheduledLabActionsForPlan', () => {
     expect(() =>
       scheduledLabActionsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 60_000 })
     ).toThrow(InvalidNetemTargetError);
+  });
+});
+
+describe('a scheduled fault-clear belongs to recovery', () => {
+  const targets = indexTargetsById([target()]);
+
+  it('is not the dispatcher\u2019s to perform, and not something recovery cannot speak for', () => {
+    // network-degradation plans netem-apply at 0 and fault-clear at the duration.
+    // Refusing the clear here counted it as skipped, so a run that had not even
+    // armed recovered every target cleanly and still reported allClear: false --
+    // then held the live slot in `failed` for ever.
+    const plan = planWith([
+      action('mn-1', netemPayload(), 0, 0),
+      action('mn-1', { kind: 'fault-clear', scope: 'run' }, 1, 120_000),
+    ]);
+    const scheduled = scheduledLabActionsForPlan({
+      plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 300_000,
+    });
+    expect(scheduled.actions).toEqual([]);
+    expect(scheduled.skipped).toBe(0);
+
+    const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({
+      plan, targetsById: targets, runTag: 'run-1',
+    });
+    expect(recovery).toHaveLength(1);
+    expect(skipped).toBe(0);
   });
 });

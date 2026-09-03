@@ -4,6 +4,15 @@ import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { BLOCK_INTERVAL_MS } from '../domain/dkgWindows.js';
 import { TERMINAL_SIMULATION_STATUSES } from '../domain/simulationRunState.js';
+
+/**
+ * How far behind the chain the indexer may be and still be trusted.
+ *
+ * Named once because two places must agree on it: the check that compares
+ * heights, and the one that decides whether an unindexed block is a hole or
+ * merely the newest one.
+ */
+const MAX_EXPLORER_LAG_BLOCKS = 2;
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
 import { ExperimentRun } from '../models/ExperimentRun.js';
@@ -229,7 +238,25 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     // after the fault ended the window drifted forward with every later block --
     // so a report generated an hour late measured an hour of quiet instead.
     const activatedHeight = input.run.state.faultActivatedTip?.height;
-    const faultStartHeight = activatedHeight ?? evidence.chain.blocks + 1;
+    /*
+     * Before activation the window is planned against the INDEXED tip, not the
+     * chain tip.
+     *
+     * A baseline is what can actually be read, and a block the indexer has not
+     * reached yet cannot be read. Anchored on the chain tip, the newest block was
+     * always missing from its own window -- so `baseline has 71/72 indexed
+     * blocks` was reported on a lab whose indexer was working perfectly, one and
+     * a half seconds behind a chain that moves every fifteen. Every run was a
+     * race, and it was lost often enough to look like a fault in the network.
+     *
+     * Once the run HAS activated, the recorded height wins outright: where the
+     * fault began is a fact about the run, and must not move because the reader
+     * is behind.
+     */
+    const indexedTip = (await SyncState.findOne({ key: 'blocks' }).select('lastSyncedHeight').lean())
+      ?.lastSyncedHeight;
+    const readableTip = Math.min(evidence.chain.blocks, indexedTip ?? evidence.chain.blocks);
+    const faultStartHeight = activatedHeight ?? readableTip + 1;
     const baselineEndHeight = faultStartHeight - 1;
     const estimatedFaultBlocks = Math.max(
       1,
@@ -296,9 +323,24 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         ExperimentRun.find({ status: 'running' }).select('runKey').lean(),
       ]);
     const indexedSet = new Set(indexedHeights.map((block) => block.height));
+    /*
+     * A hole is reported; a block the indexer has simply not reached yet is not.
+     *
+     * The baseline window ends at the tip, so ANY indexer lag put the newest
+     * block in this list -- and the check that reads it fails on a non-empty
+     * list regardless of `maxExplorerLagBlocks`. The two conditions contradicted
+     * each other: the policy allowed two blocks of lag and the code made one
+     * fatal, so the tolerance was dead and every run was a race against the
+     * indexer. On a lab mining every fifteen seconds that race is lost often.
+     *
+     * "Not yet" and "never" are different findings, and only the second is a
+     * defect in the record. A gap anywhere below the tolerated lag is still
+     * reported, because that is a hole the indexer has passed over.
+     */
+    const notYetIndexedFrom = evidence.chain.blocks - MAX_EXPLORER_LAG_BLOCKS;
     const missingHeights: number[] = [];
     for (let height = measurementPlan.baseline.fromHeight; height <= measurementPlan.baseline.toHeight; height += 1) {
-      if (!indexedSet.has(height)) missingHeights.push(height);
+      if (!indexedSet.has(height) && height < notYetIndexedFrom) missingHeights.push(height);
     }
     const targetIdsByProTx = new Map(
       inventory.snapshots
@@ -329,7 +371,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         // targets for a server-side misconfiguration. Unset is now a clear,
         // actionable hard error from evaluateSimulationPreflight instead.
         expectedWrapperVersion: config.simulator.expectedWrapperVersion,
-        maxExplorerLagBlocks: 2,
+        maxExplorerLagBlocks: MAX_EXPLORER_LAG_BLOCKS,
         maxExplorerAgeMs: 2 * 60_000,
         maxObserverAgeMs: OBSERVATION_MAX_AGE_MS,
         maxTargetSnapshotAgeMs: 5 * 60_000,

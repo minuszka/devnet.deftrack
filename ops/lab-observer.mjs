@@ -84,11 +84,31 @@ async function rpc(endpoint, auth, method, params = []) {
   return body.result;
 }
 
-/** The binary fingerprint, read from the container. The version string cannot answer this. */
+/**
+ * The binary fingerprint, read from the container. The version string cannot
+ * answer this -- it has named three different binaries at once on this project.
+ *
+ * Cached against the container's start time, because hashing a 100 MB binary
+ * costs about half a second and the binary cannot change while the container
+ * runs. Paid on every container on every pass, it was the single largest cost in
+ * the observation loop, and it made reports stale enough that the resolver
+ * refused targets as HOST_HEIGHT_STALE on a healthy lab.
+ *
+ * Keyed on the start time rather than the name alone: a restart is exactly when
+ * the binary CAN differ, and that is the one case a cache must not hide.
+ */
+const buildCache = new Map();
+
 function nodeBuild(container) {
+  const inspect = docker(['inspect', '-f', '{{.State.StartedAt}}', container]);
+  const started = inspect.status === 0 ? String(inspect.stdout ?? '').trim() : '';
+  const cached = buildCache.get(container);
+  if (cached !== undefined && cached.startedAt === started && started !== '') return cached.build;
   const r = docker(['exec', container, 'sha256sum', BINARY]);
   if (r.status !== 0 || typeof r.stdout !== 'string') return '';
-  return (r.stdout.trim().split(/\s+/)[0] ?? '').toLowerCase();
+  const build = (r.stdout.trim().split(/\s+/)[0] ?? '').toLowerCase();
+  if (started !== '') buildCache.set(container, { startedAt: started, build });
+  return build;
 }
 
 /**
@@ -233,5 +253,22 @@ if (CONTAINERS.length === 0) {
 
 await observeOnce();
 if (!process.argv.includes('--once')) {
-  setInterval(() => { void observeOnce().catch((e) => console.error(`observe failed: ${e.message}`)); }, INTERVAL_MS);
+  /*
+   * A gap BETWEEN passes, not a fixed tick.
+   *
+   * `setInterval` fired every interval whether the previous pass had finished or
+   * not, so a slow pass was overtaken by the next: eleven containers times
+   * several passes in flight, all competing for the same Docker daemon, each
+   * making the others slower. The rows then aged past the resolver's tolerance
+   * and it refused targets on a healthy lab -- the load was self-inflicted and
+   * looked like staleness.
+   */
+  for (;;) {
+    await new Promise((done) => setTimeout(done, INTERVAL_MS));
+    try {
+      await observeOnce();
+    } catch (error) {
+      console.error(`observe failed: ${error.message}`);
+    }
+  }
 }
