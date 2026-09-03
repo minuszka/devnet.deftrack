@@ -51,6 +51,17 @@ const ATTEMPTS = Number(arg('--attempts', '4'));
  */
 const RECOVER_AFTER_S = Number(arg('--recover-after', '0'));
 const TARGET = arg('--target', 'mn02');
+/**
+ * How many targets to fault at once.
+ *
+ * Above one the registry picks them, because naming five by hand would be
+ * choosing the sample -- and a storm is meant to hit whoever it hits. With ten
+ * masternodes and a three-member quorum, five stopped nodes miss the quorum
+ * entirely only about 8% of the time, and land on two of its three members about
+ * as often as on one: the run produces both "formed but punished" and "did not
+ * form", which is the distinction the whole tool exists to make.
+ */
+const COUNT = Number(arg('--count', '1'));
 
 let step = 0;
 async function api(method, path, body) {
@@ -93,8 +104,12 @@ async function attemptRun() {
     scenario: {
       scenarioId: SCENARIO,
       scenarioVersion: 1,
-      seed: `lab-${TARGET}-${step}`,
-      parameters: { count: 1, durationSeconds: 60, targetIds: [TARGET] },
+      seed: `lab-${COUNT > 1 ? `storm${COUNT}` : TARGET}-${step}`,
+      parameters: {
+        count: COUNT,
+        durationSeconds: 60,
+        ...(COUNT > 1 ? {} : { targetIds: [TARGET] }),
+      },
     },
   });
   if (!report('create', created)) return null;
