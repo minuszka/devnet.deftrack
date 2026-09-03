@@ -124,21 +124,22 @@ async function abortDuring(scenario) {
   const validated = await api('POST', `/runs/${runKey}/validate`);
   if (!validated.ok) return { scenario: scenario.id, outcome: `validate ${validated.status}`, detail: validated.error };
   /*
-   * Arming is retried, spaced.
+   * Arming is retried, spaced, and the previous attempt is CLOSED first.
    *
-   * `explorer-synced` requires the indexer to hold EVERY block up to the tip, so
-   * between a new block and the next indexer pass it is legitimately false. Four
-   * scenarios armed back to back all landed in the same gap and all four
-   * reported a failure that was about the clock, not about them. Retrying an
-   * instant is not retrying the condition.
+   * Two things made this loop fight itself. A rejected run cannot be armed
+   * again, so each retry needs a fresh one -- but the old one is still live and
+   * non-terminal, so it holds the single live slot against its own replacement,
+   * and every retry then failed `no-active-experiment` because of the attempt
+   * before it. And the control API allows thirty requests a minute; six attempts
+   * across four scenarios spent that on retries alone.
+   *
+   * So: abort before replacing, few attempts, wide gaps.
    */
   let armed = null;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    if (attempt > 0) await wait(6_000);
-    armed = await api('POST', `/runs/${runKey}/arm`, { acknowledgedRiskClass: scenario.risk });
-    if (armed.ok) break;
-    // A rejected run cannot be armed again; build a fresh one and try that.
-    if (armed.status === 409) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      await api('POST', `/runs/${runKey}/abort`, {});
+      await wait(20_000);
       const again = await api('POST', '/runs', {
         network: 'regtest',
         mode: 'live',
@@ -151,8 +152,11 @@ async function abortDuring(scenario) {
       });
       if (!again.ok) continue;
       runKey = again.data.runKey ?? again.data.run?.runKey;
-      await api('POST', `/runs/${runKey}/validate`);
+      const revalidated = await api('POST', `/runs/${runKey}/validate`);
+      if (!revalidated.ok) continue;
     }
+    armed = await api('POST', `/runs/${runKey}/arm`, { acknowledgedRiskClass: scenario.risk });
+    if (armed.ok) break;
   }
   if (armed === null || !armed.ok) {
     return { scenario: scenario.id, outcome: `arm ${armed?.status}`, detail: armed?.error };
@@ -195,7 +199,10 @@ async function abortDuring(scenario) {
 }
 
 const results = [];
-for (const scenario of SCENARIOS) results.push(await abortDuring(scenario));
+for (const scenario of SCENARIOS) {
+  if (results.length > 0) await wait(45_000); // the rate-limit window is a minute
+  results.push(await abortDuring(scenario));
+}
 
 console.log('\n=== summary');
 for (const result of results) {

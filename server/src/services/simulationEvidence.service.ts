@@ -238,7 +238,25 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     // after the fault ended the window drifted forward with every later block --
     // so a report generated an hour late measured an hour of quiet instead.
     const activatedHeight = input.run.state.faultActivatedTip?.height;
-    const faultStartHeight = activatedHeight ?? evidence.chain.blocks + 1;
+    /*
+     * Before activation the window is planned against the INDEXED tip, not the
+     * chain tip.
+     *
+     * A baseline is what can actually be read, and a block the indexer has not
+     * reached yet cannot be read. Anchored on the chain tip, the newest block was
+     * always missing from its own window -- so `baseline has 71/72 indexed
+     * blocks` was reported on a lab whose indexer was working perfectly, one and
+     * a half seconds behind a chain that moves every fifteen. Every run was a
+     * race, and it was lost often enough to look like a fault in the network.
+     *
+     * Once the run HAS activated, the recorded height wins outright: where the
+     * fault began is a fact about the run, and must not move because the reader
+     * is behind.
+     */
+    const indexedTip = (await SyncState.findOne({ key: 'blocks' }).select('lastSyncedHeight').lean())
+      ?.lastSyncedHeight;
+    const readableTip = Math.min(evidence.chain.blocks, indexedTip ?? evidence.chain.blocks);
+    const faultStartHeight = activatedHeight ?? readableTip + 1;
     const baselineEndHeight = faultStartHeight - 1;
     const estimatedFaultBlocks = Math.max(
       1,
