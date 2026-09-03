@@ -57,6 +57,33 @@ export const config = {
   // closed rather than quietly disable the check.
   adminApiKey: process.env.ADMIN_API_KEY ?? '',
 
+  /**
+   * Browser sign-in for the admin panel: a second door beside the API key.
+   *
+   * Every field is empty by default, and empty means OFF. The key path refuses
+   * any request carrying a cookie or an Origin so that the key can never reach a
+   * browser; this path exists so a panel can exist at all, and it must not
+   * weaken that. So nothing here trusts the client: identity is asserted by a
+   * reverse proxy (Cloudflare Access, a VPN gateway) in a header that is honoured
+   * only when the SOCKET peer is a listed proxy, and only a subject this
+   * deployment names may sign in, with the role this deployment gives it.
+   */
+  adminBrowser: {
+    // The header the proxy asserts the signed-in subject in, e.g.
+    // `cf-access-authenticated-user-email`. Empty disables browser sign-in.
+    identityHeader: (process.env.ADMIN_IDENTITY_HEADER ?? '').toLowerCase(),
+    // Socket addresses that may assert that header. Compared against the peer
+    // address, never X-Forwarded-For, which the client writes. Empty trusts nobody.
+    trustedProxies: (process.env.ADMIN_TRUSTED_PROXIES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    // JSON of subject to role. Parsed and validated at startup; a subject not
+    // listed here cannot sign in whatever the proxy says.
+    identities: process.env.ADMIN_IDENTITIES ?? '',
+    sessionTtlMs: optionalNumber('ADMIN_SESSION_TTL_MS', 8 * 60 * 60_000),
+    // The Secure cookie attribute. On by default; the only place it may be off
+    // is a lab served over plain http on loopback, and that has to be said.
+    cookieSecure: optionalBool('ADMIN_COOKIE_SECURE', true),
+  },
+
   simulator: {
     // The API key authenticates a machine/CLI. Actor and role are configured
     // server-side so a caller cannot self-assert safety-admin in a header.

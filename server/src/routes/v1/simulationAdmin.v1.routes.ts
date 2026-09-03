@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../../config.js';
-import { requireAdminApiKey } from '../../middleware/requireAdminApiKey.js';
+import { adminOf, requireAdminAuth } from '../../middleware/adminSession.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { MongoSimulationControlPersistenceRepository } from '../../services/simulationControlMongo.repository.js';
 import { SimulationControlPersistenceService } from '../../services/simulationControlPersistence.service.js';
@@ -147,6 +147,19 @@ function idempotencyKey(req: Request): string {
   return value;
 }
 
+/** The identity this request acts as, in the shape the control service takes. */
+function identityOf(res: Response) {
+  const admin = adminOf(res);
+  return {
+    actor: {
+      actorId: admin.via === 'session' ? admin.subject : config.simulator.adminActorId,
+      actorType: 'admin-session' as const,
+      displayName: admin.via === 'session' ? admin.subject : null,
+    },
+    role: admin.role,
+  };
+}
+
 function runKey(req: Request): string {
   return runKeySchema.parse(String(req.params.runKey ?? ''));
 }
@@ -159,21 +172,11 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
     standardHeaders: true,
     legacyHeaders: false,
   }));
-  router.use(requireAdminApiKey);
+  // Either the API key (machine, never a browser) or a signed-in session (a
+  // browser, never the key). The guard keeps the key path exactly as strict as
+  // before and adds the session door beside it, which is what day 10 promised.
+  router.use(requireAdminAuth);
   router.use(withCachePolicy('no-store'));
-  router.use((req, res, next) => {
-    // The current API-key contract is deliberately non-browser. Day 10 may
-    // add session + CSRF tokens on a separate adapter without weakening this.
-    if (req.get('origin') || req.get('cookie')) {
-      sendError(res, 403, 'browser credentials are not accepted by the simulator CLI API');
-      return;
-    }
-    if (req.get('x-simulation-client') !== 'deftrack-cli-v1') {
-      sendError(res, 400, 'X-Simulation-Client: deftrack-cli-v1 is required');
-      return;
-    }
-    next();
-  });
 
   router.get('/scenarios', controlRoute(async (_req, res) => {
     sendData(res, { items: service.scenarios() });
@@ -205,11 +208,11 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
   ] as const) {
     router.post(`/targets/:targetId/${path}`, controlRoute(async (req, res) => {
       emptySchema.parse(req.body ?? {});
-      if (requiresSafetyAdmin && config.simulator.adminRole !== 'safety-admin') {
-        throw new SimulationControlError(
-          'APPROVAL_DENIED',
-          `${config.simulator.adminRole} may not enable a simulation target`
-        );
+      // The role of WHO asked, not of the process: a session's role is the one
+      // this deployment gave that subject, and the key's is the configured one.
+      const admin = adminOf(res);
+      if (requiresSafetyAdmin && admin.role !== 'safety-admin') {
+        throw new SimulationControlError('APPROVAL_DENIED', `${admin.role} may not enable a simulation target`);
       }
       const targetId = String(req.params.targetId ?? '');
       const saved = await SimulationTarget.findOneAndUpdate(
@@ -236,6 +239,7 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
   router.post('/runs', controlRoute(async (req, res) => {
     const body = createSchema.parse(req.body);
     const result = await service.create({
+      identity: identityOf(res),
       idempotencyKey: idempotencyKey(req),
       network: body.network,
       live: body.mode === 'live',
@@ -247,7 +251,7 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
 
   router.post('/runs/:runKey/validate', controlRoute(async (req, res) => {
     emptySchema.parse(req.body ?? {});
-    sendData(res, await service.validate({ runKey: runKey(req), idempotencyKey: idempotencyKey(req) }));
+    sendData(res, await service.validate({ runKey: runKey(req), idempotencyKey: idempotencyKey(req), identity: identityOf(res) }));
   }));
 
   router.get('/runs/:runKey/dry-run', controlRoute(async (req, res) => {
@@ -259,18 +263,19 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
     sendData(res, await service.arm({
       runKey: runKey(req),
       idempotencyKey: idempotencyKey(req),
+      identity: identityOf(res),
       acknowledgedRiskClass: body.acknowledgedRiskClass,
     }));
   }));
 
   for (const [path, invoke] of [
-    ['start', (key: string, idem: string) => service.start({ runKey: key, idempotencyKey: idem })],
-    ['abort', (key: string, idem: string) => service.abort({ runKey: key, idempotencyKey: idem })],
-    ['recover', (key: string, idem: string) => service.recover({ runKey: key, idempotencyKey: idem })],
+    ['start', (key: string, idem: string, res: Response) => service.start({ runKey: key, idempotencyKey: idem, identity: identityOf(res) })],
+    ['abort', (key: string, idem: string, res: Response) => service.abort({ runKey: key, idempotencyKey: idem, identity: identityOf(res) })],
+    ['recover', (key: string, idem: string, res: Response) => service.recover({ runKey: key, idempotencyKey: idem, identity: identityOf(res) })],
   ] as const) {
     router.post(`/runs/:runKey/${path}`, controlRoute(async (req, res) => {
       emptySchema.parse(req.body ?? {});
-      sendData(res, await invoke(runKey(req), idempotencyKey(req)));
+      sendData(res, await invoke(runKey(req), idempotencyKey(req), res));
     }));
   }
 

@@ -30,7 +30,7 @@ const NODES = Number(at === -1 ? 11 : process.argv[at + 1]);
 
 let call = 0;
 async function api(method, path, body) {
-  const response = await fetch(`${API}/api/v1/simulations${path}`, {
+  const response = await fetch(`${API}/api/v1/admin/simulations${path}`, {
     method,
     headers: {
       'content-type': 'application/json',
