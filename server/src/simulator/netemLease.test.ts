@@ -13,8 +13,9 @@ import {
   sweepExpired,
   tcApplyArgs,
   tcClearArgs,
-  undoFor,
+  tcPartitionArgs,
   type NetemSpec,
+  undoFor,
 } from './netemLease.js';
 
 const RUN = 'run-abc';
@@ -219,5 +220,50 @@ describe('parseWrapperState', () => {
   it('refuses a state that is not a jobs array', () => {
     expect(() => parseWrapperState(null)).toThrow(/object/);
     expect(() => parseWrapperState({ jobs: 'nope' })).toThrow(/jobs array/);
+  });
+});
+
+describe('partition', () => {
+  const spec = (args: string[]) => ({ container: 'mn01', kind: 'partition' as const, args });
+
+  it('builds the root qdisc, the dropping band, then a filter per peer', () => {
+    // Verified by hand on a lab container before this existed: bytesrecv froze
+    // and pingwait began to climb. The order matters -- a filter cannot point at
+    // a band that is not there yet.
+    const argvs = tcPartitionArgs(spec(['172.28.0.3', '172.28.0.4']));
+    expect(argvs).toHaveLength(4);
+    expect(argvs[0]).toEqual(['qdisc', 'replace', 'dev', 'eth0', 'root', 'handle', '1:', 'prio', 'bands', '3']);
+    expect(argvs[1]!.slice(-3)).toEqual(['netem', 'loss', '100%']);
+    // Each peer on its own filter priority: at one shared priority the second
+    // would be ambiguous with the first.
+    expect(argvs[2]!).toContain('172.28.0.3/32');
+    expect(argvs[2]![argvs[2]!.indexOf('prio') + 1]).toBe('1');
+    expect(argvs[3]!).toContain('172.28.0.4/32');
+    expect(argvs[3]![argvs[3]!.indexOf('prio') + 1]).toBe('2');
+  });
+
+  it('refuses anything that is not a plain IPv4 peer', () => {
+    // These become part of a tc argument vector. Anything else is either
+    // rejected by tc -- leaving a live root qdisc with no filters, which cuts
+    // nothing while looking applied -- or accepted as something else entirely.
+    expect(() => tcPartitionArgs(spec([]))).toThrow(/at least one peer/);
+    expect(() => tcPartitionArgs(spec(['172.28.0.3', '172.28.0.3']))).toThrow(/unique/);
+    expect(() => tcPartitionArgs(spec(['not-an-ip']))).toThrow(/IPv4/);
+    expect(() => tcPartitionArgs(spec(['172.28.0.3/24']))).toThrow(/IPv4/);
+    expect(() => tcPartitionArgs(spec(['999.1.1.1']))).toThrow(/IPv4/);
+    expect(() => tcPartitionArgs(spec(['172.28.0.3; rm -rf /']))).toThrow(/IPv4/);
+  });
+
+  it('plans every invocation as its own action, in order', () => {
+    const plan = planApply({ jobs: [] }, spec(['172.28.0.3']), 'run-1', 1_000, 60_000);
+    expect(plan.actions.map((a) => a.op)).toEqual(['apply', 'apply', 'apply']);
+    expect(plan.state.jobs).toHaveLength(1);
+  });
+
+  it('is undone by the same clear a netem is, because it owns the same root qdisc', () => {
+    const plan = planApply({ jobs: [] }, spec(['172.28.0.3']), 'run-1', 1_000, 60_000);
+    expect(undoFor(plan.state.jobs[0]!)).toEqual({
+      op: 'clear', container: 'mn01', tcArgs: tcClearArgs(),
+    });
   });
 });

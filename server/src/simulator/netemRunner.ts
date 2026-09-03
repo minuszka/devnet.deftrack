@@ -17,7 +17,7 @@ import {
 
 // A record keyed by the union, so the union and the accepted list cannot drift:
 // adding a kind without adding it here is a type error.
-const NETEM_KIND_SET: Record<NetemKind, true> = { latency: true, loss: true, jitter: true, netem: true };
+const NETEM_KIND_SET: Record<NetemKind, true> = { latency: true, loss: true, jitter: true, netem: true, partition: true };
 const NETEM_KINDS = Object.keys(NETEM_KIND_SET) as NetemKind[];
 
 /**

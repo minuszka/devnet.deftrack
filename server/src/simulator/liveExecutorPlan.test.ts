@@ -26,7 +26,7 @@ function target(overrides: Partial<SimulationTargetSnapshot> = {}): SimulationTa
     p2pPort: 19799,
     role: 'masternode',
     network: 'regtest',
-    capabilities: ['netem-p2p', 'service-control'],
+    capabilities: ['netem-p2p', 'service-control', 'partition-p2p'],
     expectedBuild: null,
     capturedAtMs: 0,
     capturedAtHeight: 0,
@@ -133,12 +133,33 @@ describe('faultApplyCommandsForPlan', () => {
     expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 })).toEqual([]);
   });
 
-  it('fails closed on a fault kind it cannot apply', () => {
+  it('cuts a node off from the peers a partition names', () => {
+    // The peers reach tc as ADDRESSES, taken from the host the chain sees --
+    // hostRef itself on the devnet, the pinned container address in the lab.
     const plan = planWith([action('mn-1', partitionPayload)]);
-    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
-      .toThrow(UnsupportedLiveFaultError);
-    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 1_000, nowMs: 0 }))
-      .toThrow(/partition-apply/);
+    const commands = faultApplyCommandsForPlan({
+      plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0,
+    });
+    expect(commands).toEqual([
+      {
+        op: 'apply',
+        container: 'mn01',
+        kind: 'partition',
+        args: ['mn02'],
+        runTag: 'run-1',
+        expiresAtMs: 30_000,
+      },
+    ]);
+  });
+
+  it('fails closed on a partition naming a peer it cannot resolve', () => {
+    // A half-built partition is worse than none: a live root qdisc with a
+    // missing filter cuts nothing while looking applied.
+    const plan = planWith([
+      action('mn-1', { kind: 'partition-apply', p2pPortRef: 'devnet-p2p', peerTargetIds: ['mn-404'], faultLeaseSeconds: 60 }),
+    ]);
+    expect(() => faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 }))
+      .toThrow(InvalidNetemTargetError);
   });
 
   it('refuses a staged or repeated outage rather than collapsing a schedule into one stop', () => {
@@ -205,12 +226,24 @@ describe('faultRecoveryTargetsForPlan', () => {
     const plan = planWith([
       action('mn-1', netemPayload()),
       action('mn-1', netemPayload(), 1), // identical -> one clear
-      action('mn-2', partitionPayload, 2), // never applied -> counted, not thrown
+      action('mn-404', netemPayload(), 2), // unknown target -> counted, not thrown
     ]);
     const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
     expect(recovery).toHaveLength(1);
     expect(recovery[0]!.targetId).toBe('mn-1');
     expect(skipped).toBe(1);
+  });
+
+  it('clears a partition, which it previously could only count', () => {
+    // A partition owns the same root qdisc a netem does, so the same clear
+    // undoes it -- and until it could be applied at all, recovery had nothing to
+    // undo and said so.
+    const plan = planWith([action('mn-2', partitionPayload)]);
+    const { targets: recovery, skipped } = faultRecoveryTargetsForPlan({ plan, targetsById: targets, runTag: 'run-1' });
+    expect(recovery).toHaveLength(1);
+    expect(recovery[0]!.targetId).toBe('mn-2');
+    expect(recovery[0]!.faultClass).toBe('netem');
+    expect(skipped).toBe(0);
   });
 
   it('never throws where apply would, so recovery cannot strand a run mid-teardown', () => {
