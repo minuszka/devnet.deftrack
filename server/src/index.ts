@@ -36,6 +36,10 @@ import {
 } from './services/simulationMongo.repository.js';
 import { SimulationPersistenceService } from './services/simulationPersistence.service.js';
 import { SimulationReconcileService } from './services/simulationReconcile.service.js';
+import { SimulationObservationService } from './services/simulationObservation.service.js';
+import { SimulationMeasurementService } from './services/simulationMeasurement.service.js';
+import { MongoSimulationMeasurementRepository } from './services/simulationMeasurementMongo.repository.js';
+import { SIMULATION_CONTROL_POLICY } from './simulator/simulationPolicy.js';
 
 /**
  * Blocks the staker count looks back over. Stated in the response so a reader
@@ -176,6 +180,25 @@ async function main(): Promise<void> {
     { logger }
   );
   simulationReconcileService.start();
+
+  // Nothing entered `observing` and nothing finalized a measurement, so a run
+  // could go from arming to cooldown and produce no result at all. Both steps are
+  // height-driven, so they are swept rather than timed.
+  const simulationObservationService = new SimulationObservationService(
+    new SimulationPersistenceService(simulationReconcileRepository),
+    new SimulationMeasurementService(new MongoSimulationMeasurementRepository()),
+    {
+      findObservationCandidates: () => simulationReconcileRepository.findObservationCandidateRunKeys(),
+      findFinalizeCandidates: () => simulationReconcileRepository.findFinalizeCandidateRunKeys(),
+      chainTip: async () => {
+        const height = await rpc.getBlockCount();
+        return { height, hash: await rpc.getBlockHash(height) };
+      },
+      warmupBlocks: SIMULATION_CONTROL_POLICY.measurement.warmupBlocks,
+      logger,
+    }
+  );
+  simulationObservationService.start();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info(`devnet.deftrack server listening on http://${config.host}:${config.port}`);

@@ -1,4 +1,5 @@
 import type { SimulationTargetCapability, SimulationTargetSnapshot } from '../models/SimulationRun.js';
+import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import { netemJobId, serviceJobId, type FaultClass } from './netemLease.js';
 import { MAX_TTL_MS, type WrapperCommand } from './netemRunner.js';
 import type { DryRunPlan } from './scenarioTypes.js';
@@ -203,6 +204,69 @@ export function labFaultsForPlan(input: {
     refuse(new UnsupportedLiveFaultError(payload.kind));
   }
   return { faults, skipped };
+}
+
+/** One action a dispatcher must perform later, and what it does. */
+export interface ScheduledLabAction {
+  actionId: string;
+  targetId: string;
+  container: string;
+  faultClass: FaultClass;
+  /** From fault activation, which is when the run's clock starts. */
+  notBeforeOffsetMs: number;
+  command: WrapperCommand;
+}
+
+/**
+ * The actions a plan wants performed AFTER activation.
+ *
+ * `labFaultsForPlan` above deliberately handles only the immediate set, and
+ * refuses a scheduled `service-stop` outright, because collapsing a flapping
+ * cycle into one stop would report every action applied while measuring none of
+ * them. That refusal is right in the absence of a dispatcher; this is what a
+ * dispatcher runs instead, and it is built from the same target lookup so a
+ * scheduled fault cannot reach a host the immediate path would have rejected.
+ *
+ * Scoped to the service class on purpose. A stop is undone by clearing its own
+ * job, so both halves of a cycle are expressible with the job id alone. A
+ * scheduled netem clear is not: `fault-clear` carries no impairment, so its job
+ * id can only come from the matching apply, and pairing those across a schedule
+ * is a design rather than a lookup. Until that exists, a plan that wants one is
+ * refused by the caller exactly as before -- fail closed, not quietly partial.
+ */
+export function scheduledLabActionsForPlan(input: {
+  plan: DryRunPlan;
+  targetsById: ReadonlyMap<string, SimulationTargetSnapshot>;
+  runTag: string;
+  expiresAtMs: number;
+}): ScheduledLabAction[] {
+  const scheduled: ScheduledLabAction[] = [];
+  for (const action of input.plan.actions) {
+    if (action.notBeforeOffsetMs <= 0) continue;
+    const { payload } = action;
+    if (payload.kind !== 'service-stop' && payload.kind !== 'service-start') {
+      throw new UnsupportedLiveFaultError(`a scheduled "${payload.kind}"`);
+    }
+    const target = requireLabTarget(input.targetsById, action.targetId, 'service-control');
+    const jobId = serviceJobId(input.runTag, target.hostRef);
+    scheduled.push({
+      actionId: action.actionId,
+      targetId: target.targetId,
+      container: target.hostRef,
+      faultClass: 'service',
+      notBeforeOffsetMs: action.notBeforeOffsetMs,
+      command:
+        payload.kind === 'service-stop'
+          ? { op: 'service-stop', container: target.hostRef, runTag: input.runTag, expiresAtMs: input.expiresAtMs }
+          : // Starting the node again IS clearing its stop: the wrapper's undo for
+            // a service job is `docker start`, so a mid-cycle restart and the
+            // recovery teardown travel the same path and cannot diverge.
+            { op: 'clear', jobId },
+    });
+  }
+  return scheduled.sort(
+    (a, b) => a.notBeforeOffsetMs - b.notBeforeOffsetMs || compareByCodeUnit(a.actionId, b.actionId)
+  );
 }
 
 /**

@@ -206,6 +206,12 @@ export function replaySimulationRunAudit(events: readonly AuditLike[]): {
     let expectedState: SimulationRunState;
     let expectedRequestFingerprint: string;
     if (SIMULATION_RUN_EVENT_TYPES.includes(event.eventType as SimulationRunEventType)) {
+      // The audit stores no event payload; it recovers one from the state the
+      // event produced. So every field an event carries must have a mirror in
+      // the state AND be read back here -- a field with a mirror but no read-back
+      // replays as absent, the replayed state differs from the recorded one, and
+      // the run becomes unloadable with AUDIT_DIVERGENCE. That is how the chain
+      // anchors first landed: mirrored, and not reconstructed.
       const domainEvent: SimulationRunEvent =
         event.eventType === 'activate_fault'
           ? {
@@ -213,12 +219,23 @@ export function replaySimulationRunAudit(events: readonly AuditLike[]): {
               eventId: event.eventId,
               atMs: event.atMs,
               faultLeaseExpiresAtMs: event.stateAfter.faultLeaseExpiresAtMs ?? -1,
+              chainTip: event.stateAfter.faultActivatedTip,
             }
-          : {
-              type: event.eventType as Exclude<SimulationRunEventType, 'activate_fault'>,
-              eventId: event.eventId,
-              atMs: event.atMs,
-            };
+          : event.eventType === 'recovery_succeeded'
+            ? {
+                type: 'recovery_succeeded',
+                eventId: event.eventId,
+                atMs: event.atMs,
+                chainTip: event.stateAfter.recoveredTip,
+              }
+            : {
+                type: event.eventType as Exclude<
+                  SimulationRunEventType,
+                  'activate_fault' | 'recovery_succeeded'
+                >,
+                eventId: event.eventId,
+                atMs: event.atMs,
+              };
       expectedState = transitionSimulationRun(state, domainEvent);
       expectedRequestFingerprint = simulationRunEventFingerprint(domainEvent);
     } else if (

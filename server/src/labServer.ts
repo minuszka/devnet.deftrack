@@ -18,6 +18,10 @@ import {
 } from './services/simulationMongo.repository.js';
 import { SimulationPersistenceService } from './services/simulationPersistence.service.js';
 import { SimulationReconcileService } from './services/simulationReconcile.service.js';
+import { SimulationObservationService } from './services/simulationObservation.service.js';
+import { SimulationMeasurementService } from './services/simulationMeasurement.service.js';
+import { MongoSimulationMeasurementRepository } from './services/simulationMeasurementMongo.repository.js';
+import { SIMULATION_CONTROL_POLICY } from './simulator/simulationPolicy.js';
 import { sendError } from './utils/http.js';
 
 /**
@@ -71,6 +75,23 @@ async function main(): Promise<void> {
     { logger }
   );
   reconcileService.start();
+  // The lab needs this more than the devnet does: a scenario suite is only a
+  // suite if each run ends in a report that can be compared with the next.
+  const observationService = new SimulationObservationService(
+    new SimulationPersistenceService(reconcileRepository),
+    new SimulationMeasurementService(new MongoSimulationMeasurementRepository()),
+    {
+      findObservationCandidates: () => reconcileRepository.findObservationCandidateRunKeys(),
+      findFinalizeCandidates: () => reconcileRepository.findFinalizeCandidateRunKeys(),
+      chainTip: async () => {
+        const height = await rpc.getBlockCount();
+        return { height, hash: await rpc.getBlockHash(height) };
+      },
+      warmupBlocks: SIMULATION_CONTROL_POLICY.measurement.warmupBlocks,
+      logger,
+    }
+  );
+  observationService.start();
   // Indexes the LAB chain into the LAB database. The devnet record is out of
   // reach by construction: this process never opened that connection.
   syncService.start();

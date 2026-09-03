@@ -73,6 +73,44 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
     return rows.map((row) => row.runKey);
   }
 
+  /**
+   * Live runs whose fault is applied and whose observation window may have
+   * opened. The sweep decides that from the chain; this only narrows the set.
+   */
+  async findObservationCandidateRunKeys(limit = 50): Promise<string[]> {
+    const rows = await SimulationRun.find({ 'state.status': 'fault_active', 'state.live': true })
+      .select('runKey')
+      .sort({ 'state.updatedAtMs': 1 })
+      .limit(limit)
+      .lean<{ runKey: string }[]>();
+    return rows.map((row) => row.runKey);
+  }
+
+  /**
+   * Runs that carry both fault boundaries and have no report yet.
+   *
+   * Filtered on the report rather than left to finalize's idempotency: a report
+   * already written would otherwise be recomputed on every tick for ever, and
+   * `compute` re-reads the whole evidence set to do it.
+   */
+  async findFinalizeCandidateRunKeys(limit = 50): Promise<string[]> {
+    const rows = await SimulationRun.find({
+      'state.faultActivatedTip.height': { $exists: true },
+      'state.recoveredTip.height': { $exists: true },
+    })
+      .select('runKey')
+      .sort({ 'state.updatedAtMs': 1 })
+      .limit(limit)
+      .lean<{ runKey: string }[]>();
+    if (rows.length === 0) return [];
+    const runKeys = rows.map((row) => row.runKey);
+    const reported = await SimulationMeasurementReportModel.find({ runKey: { $in: runKeys } })
+      .select('runKey')
+      .lean<{ runKey: string }[]>();
+    const done = new Set(reported.map((row) => row.runKey));
+    return runKeys.filter((runKey) => !done.has(runKey));
+  }
+
   async insertRun(projection: SimulationRunProjection): Promise<'inserted' | 'existing'> {
     const result = await SimulationRun.updateOne(
       { runKey: projection.runKey },
