@@ -81,6 +81,12 @@ function snapshotPublicIdentity(value: PreparedSimulationDraft['targetInventory'
     operatorId: target.operatorId,
     proTxHash: target.proTxHash,
     hostRef: target.hostRef,
+    // Only when the target declares one, so a devnet run's identity hash is
+    // byte-identical to one taken before this field existed and no in-flight run
+    // reads as drifted across a deploy.
+    ...(target.chainHostRef === null || target.chainHostRef === undefined
+      ? {}
+      : { chainHostRef: target.chainHostRef }),
     unitRef: target.unitRef,
     p2pPort: target.p2pPort,
     role: target.role,
@@ -100,7 +106,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     const [genesisHash, registryDocs, mnDocs, hostDocs, quorum] = await Promise.all([
       this.rpcClient.getBlockHash(0),
       SimulationTarget.find({ network }).select(
-        'targetId displayLabel operatorId proTxHash hostRef unitRef p2pPort role network capabilities expectedBuild enabled maintenance'
+        'targetId displayLabel operatorId proTxHash hostRef chainHostRef unitRef p2pPort role network capabilities expectedBuild enabled maintenance'
       ).lean(),
       MasternodeState.find({ active: true }).select('proTxHash active hostIp').lean(),
       HostStatus.find().select('host height nodeBuild reportedAt').lean(),
@@ -115,6 +121,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       operatorId: target.operatorId,
       proTxHash: target.proTxHash,
       hostRef: target.hostRef,
+      chainHostRef: target.chainHostRef,
       unitRef: target.unitRef,
       p2pPort: target.p2pPort,
       role: target.role,

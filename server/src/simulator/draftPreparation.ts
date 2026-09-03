@@ -48,7 +48,23 @@ export function prepareSimulationDraft(input: {
     policy: input.targetPolicy,
   });
   if (!targetInventory.complete) {
-    const codes = [...new Set(targetInventory.issues.map((item) => item.code))].join(', ');
+    // Named per target, not as a bare list of codes.
+    //
+    // One unusable target blocks every run, including runs that never reference
+    // it -- which is right, since an inventory you cannot trust is not a
+    // half-trustworthy inventory. But a message of codes alone does not say WHICH
+    // target, so a single retired entry reads as a fault in the targets you did
+    // ask for. targetId is safe to name here; hostRef, the private reference, is
+    // not, and stays in the issue's privateDetail.
+    const byCode = new Map<string, string[]>();
+    for (const item of targetInventory.issues) {
+      const named = byCode.get(item.code) ?? [];
+      if (item.targetId !== null && item.targetId !== undefined) named.push(item.targetId);
+      byCode.set(item.code, named);
+    }
+    const codes = [...byCode.entries()]
+      .map(([code, targets]) => (targets.length === 0 ? code : `${code}(${[...new Set(targets)].join(' ')})`))
+      .join(', ');
     throw new Error(`target inventory is incomplete: ${codes || 'no eligible targets'}`);
   }
 

@@ -42,3 +42,4 @@ KICKOFF_PROMPT.md
 # Generated lab topology -- carries BLS operator secrets for the regtest lab.
 lab-compose.yml
 lab-masternode-keys.json
+.lab-state/

@@ -191,8 +191,7 @@ function readStoredKeys() {
 }
 
 function writeStoredKeys(keys) {
-  writeFileSync(KEY_FILE, `${JSON.stringify(keys, null, 2)}
-`, { mode: 0o600 });
+  writeFileSync(KEY_FILE, JSON.stringify(keys, null, 2), { mode: 0o600 });
 }
 
 function writeCompose(masternodeKeys) {
