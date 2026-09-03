@@ -22,7 +22,7 @@ import { labNodeName } from '../server/dist/simulator/labCompose.js';
 import { rpc } from './lab-rpc.mjs';
 
 const at = process.argv.indexOf('--interval');
-const INTERVAL_MS = Number(at === -1 ? (process.env.LAB_MINER_INTERVAL_MS ?? 10_000) : Number(process.argv[at + 1]) * 1000);
+const INTERVAL_MS = Number(at === -1 ? (process.env.LAB_MINER_INTERVAL_MS ?? 15_000) : Number(process.argv[at + 1]) * 1000);
 const WALLET_NODE = process.env.LAB_MINER_NODE ?? labNodeName(1);
 
 const address = await rpc(WALLET_NODE, 'getnewaddress');

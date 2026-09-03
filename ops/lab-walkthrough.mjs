@@ -32,6 +32,16 @@ const SCENARIO = arg('--scenario', 'mn-stop');
  * a leftover of your own.
  */
 const ABORT_ACTIVE = process.argv.includes('--abort-active');
+/**
+ * How many times to build a run before giving up.
+ *
+ * `explorer-synced` requires the indexer to hold EVERY block up to the tip, and
+ * a lab mines continuously -- so between a new block and the next indexer pass
+ * the check is legitimately false, and a preflight is a snapshot of a moving
+ * chain. Retrying is honest here; suppressing the check would not be. Each
+ * attempt prints why it failed, so a retry can never hide a different cause.
+ */
+const ATTEMPTS = Number(arg('--attempts', '4'));
 const TARGET = arg('--target', 'mn02');
 
 let step = 0;
@@ -59,42 +69,61 @@ function report(label, result) {
   return true;
 }
 
-if (ABORT_ACTIVE) {
-  const active = await api('GET', '/runs?live=true');
-  for (const run of active.data?.items ?? []) {
-    if (run.runKey === undefined) continue;
-    console.log(`aborting incumbent ${run.runKey}`);
-    await api('POST', `/runs/${run.runKey}/abort`, {});
+async function attemptRun() {
+  if (ABORT_ACTIVE) {
+    const active = await api('GET', '/runs?live=true');
+    for (const run of active.data?.items ?? []) {
+      if (run.runKey === undefined) continue;
+      console.log(`aborting incumbent ${run.runKey}`);
+      await api('POST', `/runs/${run.runKey}/abort`, {});
+    }
   }
+
+  const created = await api('POST', '/runs', {
+    network: 'regtest',
+    mode: 'live',
+    scenario: {
+      scenarioId: SCENARIO,
+      scenarioVersion: 1,
+      seed: `lab-${TARGET}-${step}`,
+      parameters: { count: 1, durationSeconds: 60, targetIds: [TARGET] },
+    },
+  });
+  if (!report('create', created)) return null;
+  const runKey = created.data.runKey ?? created.data.run?.runKey;
+  console.log(`  runKey ${runKey}`);
+
+  if (!report('validate', await api('POST', `/runs/${runKey}/validate`))) return null;
+
+  const dry = await api('GET', `/runs/${runKey}/dry-run`);
+  if (!report('dry-run', dry)) return null;
+  console.log(`  ${dry.data.plan?.actions?.length ?? 0} planned action(s)`);
+
+  const armed = await api('POST', `/runs/${runKey}/arm`, { acknowledgedRiskClass: 'medium' });
+  if (!armed.ok) {
+    console.log(`arm: ${armed.status} ${JSON.stringify(armed.error)}`);
+    const state = await api('GET', `/runs/${runKey}`);
+    // The status route returns the run itself, not { run }.
+    for (const item of (state.data?.preflight ?? state.data?.run?.preflight ?? [])) {
+      if (item.passed !== true) console.log(`  ${item.severity} ${item.checkId}: ${item.privateDetail ?? item.publicMessage}`);
+    }
+    return null;
+  }
+  console.log('arm: ok');
+
+  if (!report('start', await api('POST', `/runs/${runKey}/start`))) return null;
+  return runKey;
 }
 
-const created = await api('POST', '/runs', {
-  network: 'regtest',
-  mode: 'live',
-  scenario: {
-    scenarioId: SCENARIO,
-    scenarioVersion: 1,
-    seed: `lab-${TARGET}`,
-    parameters: { count: 1, durationSeconds: 60, targetIds: [TARGET] },
-  },
-});
-if (!report('create', created)) process.exit(1);
-const runKey = created.data.runKey ?? created.data.run?.runKey;
-console.log(`  runKey ${runKey}`);
-
-if (!report('validate', await api('POST', `/runs/${runKey}/validate`))) process.exit(1);
-
-const dry = await api('GET', `/runs/${runKey}/dry-run`);
-if (!report('dry-run', dry)) process.exit(1);
-console.log(`  ${dry.data.plan?.actions?.length ?? 0} planned action(s)`);
-
-const armed = await api('POST', `/runs/${runKey}/arm`, { acknowledgedRiskClass: 'medium' });
-if (!report('arm', armed)) process.exit(1);
-
-const started = await api('POST', `/runs/${runKey}/start`);
-if (!report('start', started)) process.exit(1);
+let runKey = null;
+for (let attempt = 1; attempt <= ATTEMPTS && runKey === null; attempt++) {
+  if (attempt > 1) console.log(`
+-- attempt ${attempt} of ${ATTEMPTS}`);
+  runKey = await attemptRun();
+}
+if (runKey === null) process.exit(1);
 
 const state = await api('GET', `/runs/${runKey}`);
-console.log(`status: ${state.data?.run?.status ?? JSON.stringify(state.data).slice(0, 200)}`);
-console.log(`\nrunKey ${runKey} -- recover with:`);
-console.log(`  node ops/lab-walkthrough-recover.mjs ${runKey}`);
+console.log(`status: ${state.data?.state?.status ?? state.data?.run?.state?.status ?? 'unknown'}`);
+console.log(`
+runKey ${runKey} is live -- recover it with the recover route when done.`);

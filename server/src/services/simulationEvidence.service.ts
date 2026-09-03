@@ -2,6 +2,7 @@ import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { config } from '../config.js';
 import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
+import { TERMINAL_SIMULATION_STATUSES } from '../domain/simulationRunState.js';
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
 import { ExperimentRun } from '../models/ExperimentRun.js';
@@ -27,7 +28,9 @@ import {
 import type { SimulationRunProjection } from './simulationPersistence.service.js';
 import { rpc, type RpcService } from './rpc.service.js';
 
-const TERMINAL_RUN_STATUSES = ['rejected', 'completed', 'aborted'] as const;
+// Defined once in the domain: the same list decides which runs hold the live
+// slot here and which the /runs?live=true listing reports.
+const TERMINAL_RUN_STATUSES = TERMINAL_SIMULATION_STATUSES;
 const ESTIMATED_BLOCK_INTERVAL_MS = 150_000;
 const OBSERVATION_MAX_AGE_MS = 2 * 60_000;
 

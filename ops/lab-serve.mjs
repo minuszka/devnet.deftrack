@@ -92,7 +92,7 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     // blocks. A lab mines every few seconds, so those defaults leave the indexer
     // permanently a block behind and explorer-synced fails at lag=1 on a lab that
     // is perfectly healthy. Matched to the lab's own clock, not the devnet's.
-    SYNC_INTERVAL_MS: process.env.SYNC_INTERVAL_MS ?? '3000',
+    SYNC_INTERVAL_MS: process.env.SYNC_INTERVAL_MS ?? '1500',
     MN_POLL_INTERVAL_MS: process.env.MN_POLL_INTERVAL_MS ?? '10000',
     QUORUM_POLL_INTERVAL_MS: process.env.QUORUM_POLL_INTERVAL_MS ?? '15000',
     TRACKED_LLMQ_NAMES: process.env.TRACKED_LLMQ_NAMES ?? 'llmq_test',

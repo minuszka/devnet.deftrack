@@ -25,6 +25,12 @@ const child = spawn(process.execPath, ['ops/lab-observer.mjs'], {
     LAB_API: process.env.LAB_API ?? 'http://127.0.0.1:4210',
     INGEST_TOKEN: process.env.INGEST_TOKEN ?? labSecret('ingest-token'),
     LAB_CONTAINERS: containers,
+    // The observer's default cadence is sized for devnet blocks 2.5 minutes
+    // apart. Against a lab mining every few seconds it leaves every host's
+    // reported height two blocks behind the tip, and the target resolver refuses
+    // them all as HOST_HEIGHT_STALE -- a healthy lab, reported stale by a clock
+    // that belongs to another chain.
+    LAB_OBSERVER_INTERVAL_MS: process.env.LAB_OBSERVER_INTERVAL_MS ?? '4000',
   },
 });
 child.on('exit', (code) => process.exit(code ?? 1));
