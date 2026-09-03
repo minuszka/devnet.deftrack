@@ -80,6 +80,10 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     // this, anything else sharing the Docker host could be named in a target
     // declaration and then stopped.
     SIMULATION_LAB_CONTAINER_PROJECT: project,
+    // Node 1 publishes block and ChainLock notifications; this is what turns them
+    // into arrival times. Without it a report can never judge anything, because
+    // `firstSeenAt` has no other source.
+    ZMQ_ENDPOINT: process.env.ZMQ_ENDPOINT ?? 'tcp://127.0.0.1:28332',
     SIMULATION_EXPECTED_CHAIN: chain,
     SIMULATION_EXPECTED_GENESIS_HASH: genesisHash,
     // Shared with ops/lab-wrapper.mjs, which is what actually applies them.

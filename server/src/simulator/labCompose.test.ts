@@ -177,3 +177,23 @@ describe('pinned addresses', () => {
     }
   });
 });
+
+describe('event-time observation', () => {
+  it('publishes ZMQ from node 1 only, the way the devnet runs it on its seed', () => {
+    const spec = generateLabCompose({ nodes: 3 });
+    // Block arrival times are derived from these notifications and nothing else,
+    // so without them every measurement reports 0% block-arrival coverage.
+    expect(spec.services.mn01?.command).toContain('-zmqpubhashblock=tcp://0.0.0.0:28332');
+    expect(spec.services.mn01?.command).toContain('-zmqpubhashchainlock=tcp://0.0.0.0:28332');
+    // The socket drops silently at its high-water mark; the sequence topic is
+    // what makes a lost message detectable rather than merely suspected.
+    expect(spec.services.mn01?.command).toContain('-zmqpubsequence=tcp://0.0.0.0:28332');
+    expect(spec.services.mn02?.command.some((arg) => arg.startsWith('-zmqpub'))).toBe(false);
+  });
+
+  it('publishes the ZMQ port on loopback, and only for node 1', () => {
+    const spec = generateLabCompose({ nodes: 3 });
+    expect(spec.services.mn01?.ports).toContain('127.0.0.1:28332:28332');
+    expect(spec.services.mn02?.ports).toHaveLength(1);
+  });
+});
