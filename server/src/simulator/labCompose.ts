@@ -56,6 +56,9 @@ export interface LabTopology {
   sporkKey: string;
   /** First loopback port for the published RPCs; node i takes base + i - 1. */
   hostRpcBasePort: number;
+  /** Internal ZMQ publish port on node 1, and the loopback port it is published on. */
+  zmqPort: number;
+  hostZmqPort: number;
   /**
    * BLS operator keys, by node name. A node listed here starts AS A MASTERNODE.
    *
@@ -121,6 +124,8 @@ export const DEFAULT_LAB_TOPOLOGY: Omit<LabTopology, 'nodes'> = {
   subnet: '172.28.0.0/24',
   sporkKey: 'cP4EKFyJsHT39LDqgdcB43Y3YXjNyjb5Fuas1GQSeAtjnZWmZEQK',
   hostRpcBasePort: 19800,
+  zmqPort: 28332,
+  hostZmqPort: 28332,
   masternodeKeys: {},
 };
 
@@ -202,6 +207,26 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
       // Only node 1 signs sporks -- it is the one node guaranteed to keep a
       // wallet, and a second signer would add nothing on a single-key chain.
       ...(index === 1 ? [`-sporkkey=${topology.sporkKey}`] : []),
+      /*
+       * Event-time observation, on node 1 only, exactly as the devnet runs it on
+       * its seed.
+       *
+       * Without it a block has no arrival time at all: `firstSeenAt` is derived
+       * from these notifications and nothing else, so every measurement reports
+       * 0% block-arrival coverage and no ChainLock latency -- a structurally
+       * valid report that can say nothing about the network. `sequence` is not
+       * optional: the socket drops silently at its high-water mark, and the
+       * per-topic sequence numbers are what make a lost message detectable
+       * rather than merely suspected.
+       */
+      ...(index === 1
+        ? [
+            `-zmqpubhashblock=tcp://0.0.0.0:${topology.zmqPort}`,
+            `-zmqpubhashchainlock=tcp://0.0.0.0:${topology.zmqPort}`,
+            `-zmqpubhashtx=tcp://0.0.0.0:${topology.zmqPort}`,
+            `-zmqpubsequence=tcp://0.0.0.0:${topology.zmqPort}`,
+          ]
+        : []),
       ...(topology.masternodeKeys[name] === undefined
         ? []
         : [`-masternodeblsprivkey=${topology.masternodeKeys[name]}`]),
@@ -209,7 +234,10 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
     services[name] = {
       image: topology.image,
       container_name: name,
-      ports: [`127.0.0.1:${topology.hostRpcBasePort + index - 1}:${topology.rpcPort}`],
+      ports: [
+        `127.0.0.1:${topology.hostRpcBasePort + index - 1}:${topology.rpcPort}`,
+        ...(index === 1 ? [`127.0.0.1:${topology.hostZmqPort}:${topology.zmqPort}`] : []),
+      ],
       cap_add: ['NET_ADMIN'],
       command,
       networks: { [topology.network]: { ipv4_address: labNodeAddress(index, topology.subnet) } },

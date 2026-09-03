@@ -8,6 +8,8 @@ import { syncService } from './services/sync.service.js';
 import { masternodePollerService } from './services/masternodePoller.service.js';
 import { mnListDiffService } from './services/mnListDiff.service.js';
 import { quorumRoundService } from './services/quorumRound.service.js';
+import { chainLockService } from './services/chainLock.service.js';
+import { zmqService } from './services/zmq.service.js';
 import { assertLabChain, assertLabDatabaseIsolated } from './domain/labIsolation.js';
 import { EXECUTOR_LAB_NETWORK } from './services/simulationControl.service.js';
 import simulationAdminRoutes from './routes/v1/simulationAdmin.v1.routes.js';
@@ -100,6 +102,20 @@ async function main(): Promise<void> {
   masternodePollerService.start();
   mnListDiffService.start();
   quorumRoundService.start();
+  /*
+   * Event-time observation, and the derivation that reads it.
+   *
+   * A measurement's verdict is built on when each block was SEEN, not only on
+   * what the chain says: `firstSeenAt` and every ChainLock latency come from
+   * these notifications and nothing else. Without them the lab still produced
+   * reports -- it produced reports that said 0% block-arrival coverage and
+   * refused to judge anything, which is honest and useless.
+   *
+   * chainLockService also falls back to polling when no endpoint is set, so a
+   * lab without ZMQ keeps the coarser measurement rather than none.
+   */
+  chainLockService.start();
+  zmqService.start();
 
   const app = express();
   app.disable('x-powered-by');

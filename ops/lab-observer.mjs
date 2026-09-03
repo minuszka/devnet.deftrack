@@ -38,6 +38,15 @@ const CHAIN_DIR = process.env.LAB_CHAIN ?? 'regtest';
 // The registry pins expectedBuild as 64 hex, so the fingerprint is sha256 -- the
 // ops habit of comparing md5 is a different, shorter digest.
 const BINARY = process.env.LAB_NODE_BINARY ?? '/usr/local/bin/defcond';
+/**
+ * How many blocks one pass may report per container.
+ *
+ * Bounded because a restarted observer, or a node that was unreachable for a
+ * while, would otherwise try to report every block it missed in one request --
+ * and the gap is exactly when the lab is under fault, which is the worst moment
+ * to send an unbounded payload.
+ */
+const MAX_SIGHTINGS = Number(process.env.LAB_OBSERVER_MAX_SIGHTINGS ?? 25);
 
 function docker(args) {
   return spawnSync(DOCKER, args, { encoding: 'utf8' });
@@ -82,6 +91,44 @@ function nodeBuild(container) {
   return (r.stdout.trim().split(/\s+/)[0] ?? '').toLowerCase();
 }
 
+/**
+ * The blocks this container has seen since we last asked it, newest first.
+ *
+ * This is what a per-host agent contributes and what the seed's ZMQ feed cannot:
+ * the measurement's host coverage is `expectedHosts x blocks`, and the expected
+ * hosts are the TARGETS -- so without a sighting from each of them, every report
+ * reads 0% peer observation coverage and counts all of them stale, however
+ * healthy they are.
+ *
+ * The timestamp is when this observer asked, not when the node saw the block, so
+ * its resolution is the poll interval and it says so in `resolutionMs`. That is
+ * the honest claim: a poll cannot know arrival time, and the ZMQ feed on node 1
+ * is what measures it properly.
+ */
+const lastSeenHeight = new Map();
+
+async function recentSightings(container, endpoint, auth, tipHeight, receivedAt) {
+  const previous = lastSeenHeight.get(container);
+  lastSeenHeight.set(container, tipHeight);
+  if (typeof tipHeight !== 'number') return [];
+  // First sight of this container: report the tip alone rather than walking back
+  // through a chain it was not observed over.
+  const from = previous === undefined ? tipHeight : Math.min(previous + 1, tipHeight);
+  const sightings = [];
+  for (let height = tipHeight; height >= from && sightings.length < MAX_SIGHTINGS; height--) {
+    const hash = await rpc(endpoint, auth, 'getblockhash', [height]).catch(() => null);
+    if (hash === null) continue;
+    sightings.push({ topic: 'block', hash, height, receivedAt });
+    // A block this node holds a ChainLock for is a second, separate sighting:
+    // the measurement counts blocks and locks apart.
+    const block = await rpc(endpoint, auth, 'getblock', [hash]).catch(() => null);
+    if (block?.chainlock === true) {
+      sightings.push({ topic: 'chainlock', hash, height, receivedAt });
+    }
+  }
+  return sightings;
+}
+
 /** Ask ONE container about itself. Throws if it cannot be reached; the caller skips it. */
 async function observeContainer(container) {
   const endpoint = rpcEndpoint(container);
@@ -110,7 +157,10 @@ async function observeContainer(container) {
       stakeScripts: [],
       nodeBuild: nodeBuild(container),
     },
-    observations: [],
+    // The poll interval IS the resolution here, and the ingest records it, so a
+    // sighting from this observer is never mistaken for an event-time one.
+    resolutionMs: INTERVAL_MS,
+    observations: await recentSightings(container, endpoint, auth, info.blocks, new Date().toISOString()),
   };
 }
 
