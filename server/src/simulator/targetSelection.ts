@@ -1,3 +1,4 @@
+import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import { createHash } from 'node:crypto';
 import type { SimulationTargetSnapshot } from '../models/SimulationRun.js';
 
@@ -51,7 +52,7 @@ export function selectSimulationTargets(input: SelectTargetsInput): SimulationTa
 
   return [...byId.values()]
     .map((target) => ({ target, score: rank(input.seed, input.namespace, target.targetId) }))
-    .sort((a, b) => a.score.localeCompare(b.score) || a.target.targetId.localeCompare(b.target.targetId))
+    .sort((a, b) => compareByCodeUnit(a.score, b.score) || compareByCodeUnit(a.target.targetId, b.target.targetId))
     .slice(0, input.count)
     .map(({ target }) => target);
 }

@@ -1,3 +1,4 @@
+import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { chainlockProfileNameAtHeight } from '../config/llmq.js';
 import { Block } from '../models/Block.js';
@@ -248,7 +249,7 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
         return byHost;
       }, new Map<string, number>())]
         .map(([hostId, reportedAtMs]) => ({ hostId, reportedAtMs }))
-        .sort((a, b) => a.hostId.localeCompare(b.hostId)),
+        .sort((a, b) => compareByCodeUnit(a.hostId, b.hostId)),
       expectedHostIds: [...input.expectedHostIds],
       // Fall back to the window end when the tip cannot be read: that places
       // every in-window round inside the re-read band, so the settledness gate

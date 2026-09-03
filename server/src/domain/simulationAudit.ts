@@ -1,3 +1,4 @@
+import { compareByCodeUnit } from './codeUnitOrder.js';
 import { createHash } from 'node:crypto';
 import {
   SIMULATION_RUN_EVENT_TYPES,
@@ -62,7 +63,7 @@ function canonicalJson(value: unknown): string {
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, item]) => item !== undefined)
-      .sort(([a], [b]) => a.localeCompare(b));
+      .sort(([a], [b]) => compareByCodeUnit(a, b));
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
   }
   throw new SimulationAuditError('AUDIT_DIVERGENCE', `unsupported audit value: ${typeof value}`);

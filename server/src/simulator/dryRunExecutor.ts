@@ -1,3 +1,4 @@
+import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import { z } from 'zod';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { simulationActionIdFor } from '../domain/simulationIdentity.js';
@@ -150,7 +151,7 @@ function resolveTargets(
       if (anchor === undefined) throw new Error('host outage anchor is not registered');
       const selected = context.targets
         .filter((target) => target.hostRef === anchor.hostRef && target.capabilities.includes('service-control'))
-        .sort((a, b) => a.targetId.localeCompare(b.targetId));
+        .sort((a, b) => compareByCodeUnit(a.targetId, b.targetId));
       if (selected.length === 0) throw new Error('host has no service-control targets');
       if (selected.length > 20) throw new Error('host outage exceeds the maximum target count');
       const masternodes = selected.filter((target) => target.role === 'masternode').length;
@@ -299,8 +300,8 @@ function materializeActions(runKey: string, rawActions: readonly RawAction[]): P
     .sort(
       (a, b) =>
         a.notBeforeOffsetMs - b.notBeforeOffsetMs ||
-        a.targetId.localeCompare(b.targetId) ||
-        a.payload.kind.localeCompare(b.payload.kind)
+        compareByCodeUnit(a.targetId, b.targetId) ||
+        compareByCodeUnit(a.payload.kind, b.payload.kind)
     )
     .map((action, sequence) => {
       const kind = action.payload.kind;
