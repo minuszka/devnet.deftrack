@@ -880,6 +880,45 @@ Because that site is public, the disclosure rule that governs PR text governs
 this field too: bug class, fix rationale and test coverage -- never
 reproduction steps or exact trigger inputs.
 
+### Every test starts with a summary a non-engineer can read
+
+Every Experiments run -- a rollout, an outage simulation, a parameter
+change, any test -- opens with a plain-language paragraph written **at
+declaration**, before the result is known, and it goes first in the run's
+`hypothesis` so the frozen record carries it. The technical hypothesis follows
+it. The reader to write for is someone who follows the project but does not
+read code: no function names, no RPC names, no heights without saying what
+they mean. It says what is being done, what should happen, why it matters,
+and what the test is meant to prove. The example that set the standard
+(2026-09-03, the Sentinel Layer outage run):
+
+> This is a live devnet test where 5 masternodes are intentionally stopped
+> for 6 epochs to compare how the Sentinel Layer and the existing DKG-PoSe
+> system react.
+>
+> The Sentinel Layer should detect all 5 offline masternodes from the first
+> missed epoch and keep reporting exactly those 5 in every following epoch.
+> Because it is still running in shadow mode, it does not ban them or suspend
+> rewards -- it only records what would happen.
+>
+> DKG-PoSe works differently: it only penalizes an offline masternode if that
+> node happens to be selected into a quorum, so its reaction is expected to be
+> slower and less predictable.
+>
+> The 5 offline masternodes are only 3.3% of the network, well below the 15%
+> mass-outage protection threshold, so the network should continue normally.
+>
+> After 6 epochs, the 5 masternodes are restarted. The Sentinel counters should
+> then return to zero within one epoch.
+>
+> Goal of the test: prove that the Sentinel Layer can detect offline
+> masternodes quickly and accurately without causing false alarms or
+> disrupting the network.
+
+The same rule applies to the closing notes: the first paragraph of the
+result says in the same language whether the test proved what it set out to
+prove, and what was found that was not expected.
+
 ## Gotchas
 
 - `.env` with CRLF breaks `set -a; . ./.env` on Linux (`$'\r': command not
