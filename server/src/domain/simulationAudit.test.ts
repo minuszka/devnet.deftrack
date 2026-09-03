@@ -169,3 +169,63 @@ describe('canonical key order', () => {
     expect(byCode).toEqual(byLocale);
   });
 });
+
+describe('replaying events that carry a payload', () => {
+  it('reproduces a run whose fault recorded where it began and ended', () => {
+    // The audit stores no event payload -- it rebuilds the event from the state
+    // the event produced. A field mirrored onto the state but not read back here
+    // replays as absent, the replayed state differs from the recorded one, and
+    // the run becomes unloadable. The sequence above passes without chain
+    // anchors, which is exactly why it did not catch that.
+    const initial = createSimulationRunState({
+      runKey: 'sim-anchored',
+      live: true,
+      createdAtMs: 1,
+      runExpiresAtMs: 1_000,
+    });
+    const events: SimulationRunAuditRecord[] = [
+      creationAuditRecord({ state: initial, metadata, actor }),
+    ];
+    const domainEvents: SimulationRunEvent[] = [
+      { type: 'begin_preflight', eventId: 'a1', atMs: 2 },
+      { type: 'preflight_passed', eventId: 'a2', atMs: 3 },
+      { type: 'begin_baseline', eventId: 'a3', atMs: 4 },
+      { type: 'baseline_completed', eventId: 'a4', atMs: 5 },
+      {
+        type: 'activate_fault',
+        eventId: 'a5',
+        atMs: 6,
+        faultLeaseExpiresAtMs: 900,
+        chainTip: { height: 1_000, hash: 'a'.repeat(64) },
+      },
+      { type: 'begin_observation', eventId: 'a6', atMs: 7 },
+      { type: 'begin_recovery', eventId: 'a7', atMs: 8 },
+      {
+        type: 'recovery_succeeded',
+        eventId: 'a8',
+        atMs: 9,
+        chainTip: { height: 1_012, hash: 'b'.repeat(64) },
+      },
+      { type: 'cooldown_completed', eventId: 'a9', atMs: 10 },
+    ];
+
+    let state = initial;
+    for (const event of domainEvents) {
+      const next = transitionSimulationRun(state, event);
+      events.push(
+        transitionAuditRecord({
+          before: state,
+          after: next,
+          actor,
+          requestFingerprint: simulationRunEventFingerprint(event),
+        })
+      );
+      state = next;
+    }
+
+    const replayed = replaySimulationRunAudit(events);
+    expect(replayed.state).toEqual(state);
+    expect(replayed.state.faultActivatedTip).toEqual({ height: 1_000, hash: 'a'.repeat(64) });
+    expect(replayed.state.recoveredTip).toEqual({ height: 1_012, hash: 'b'.repeat(64) });
+  });
+});
