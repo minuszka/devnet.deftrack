@@ -1,3 +1,4 @@
+import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import type {
   SimulationNetwork,
   SimulationTargetCapability,
@@ -299,14 +300,14 @@ export function resolveSimulationTargetInventory(input: {
       capturedAtMs: input.nowMs,
       capturedAtHeight: input.currentHeight,
     }))
-    .sort((a, b) => a.targetId.localeCompare(b.targetId));
+    .sort((a, b) => compareByCodeUnit(a.targetId, b.targetId));
 
   return {
     network: input.network,
     capturedAtMs: input.nowMs,
     capturedAtHeight: input.currentHeight,
     snapshots,
-    issues: issues.sort((a, b) => (a.targetId ?? '').localeCompare(b.targetId ?? '') || a.code.localeCompare(b.code)),
+    issues: issues.sort((a, b) => compareByCodeUnit(a.targetId ?? '', b.targetId ?? '') || compareByCodeUnit(a.code, b.code)),
     complete: issues.length === 0 && snapshots.length > 0,
   };
 }

@@ -1,3 +1,4 @@
+import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { roundStats, type RoundStatus } from '../domain/roundStats.js';
 import { stakingHealth } from '../domain/stakingHealth.js';
@@ -287,13 +288,13 @@ function normalizeEvidence(evidence: SimulationMeasurementEvidence): SimulationM
     primaryLlmqName: evidence.primaryLlmqName,
     blocks: [...evidence.blocks]
       .map((row) => ({ ...row }))
-      .sort((a, b) => a.height - b.height || a.hash.localeCompare(b.hash)),
+      .sort((a, b) => a.height - b.height || compareByCodeUnit(a.hash, b.hash)),
     rounds: [...evidence.rounds]
       .map((row) => ({ ...row, invalidMembers: [...row.invalidMembers].sort() }))
-      .sort((a, b) => a.expectedHeight - b.expectedHeight || a.llmqName.localeCompare(b.llmqName)),
+      .sort((a, b) => a.expectedHeight - b.expectedHeight || compareByCodeUnit(a.llmqName, b.llmqName)),
     poseEvents: [...evidence.poseEvents]
       .map((row) => ({ ...row }))
-      .sort((a, b) => a.height - b.height || a.type.localeCompare(b.type) || a.subjectId.localeCompare(b.subjectId)),
+      .sort((a, b) => a.height - b.height || compareByCodeUnit(a.type, b.type) || compareByCodeUnit(a.subjectId, b.subjectId)),
     dslEpochs: [...evidence.dslEpochs]
       .map((row) => ({ ...row }))
       .sort((a, b) => a.boundaryHeight - b.boundaryHeight || a.epoch - b.epoch),
@@ -301,14 +302,14 @@ function normalizeEvidence(evidence: SimulationMeasurementEvidence): SimulationM
       .map((row) => ({ ...row }))
       .sort((a, b) =>
         (a.height ?? -1) - (b.height ?? -1) ||
-        a.topic.localeCompare(b.topic) ||
-        a.hostId.localeCompare(b.hostId) ||
-        a.hash.localeCompare(b.hash) ||
+        compareByCodeUnit(a.topic, b.topic) ||
+        compareByCodeUnit(a.hostId, b.hostId) ||
+        compareByCodeUnit(a.hash, b.hash) ||
         a.receivedAtMs - b.receivedAtMs
       ),
     observationGaps: [...evidence.observationGaps]
       .map((row) => ({ ...row }))
-      .sort((a, b) => a.detectedAtMs - b.detectedAtMs || a.topic.localeCompare(b.topic)),
+      .sort((a, b) => a.detectedAtMs - b.detectedAtMs || compareByCodeUnit(a.topic, b.topic)),
     // Carried only when false. This function rebuilds the evidence from a fixed
     // field list -- that is what makes the report order-independent -- so a flag
     // not named here is dropped, and the report goes back to reading "no gaps"
@@ -316,7 +317,7 @@ function normalizeEvidence(evidence: SimulationMeasurementEvidence): SimulationM
     ...(evidence.observationGapWindowKnown === false ? { observationGapWindowKnown: false } : {}),
     hosts: [...evidence.hosts]
       .map((row) => ({ ...row }))
-      .sort((a, b) => a.hostId.localeCompare(b.hostId) || a.reportedAtMs - b.reportedAtMs),
+      .sort((a, b) => compareByCodeUnit(a.hostId, b.hostId) || a.reportedAtMs - b.reportedAtMs),
     expectedHostIds: [...new Set(evidence.expectedHostIds)].sort(),
   };
 }
@@ -383,7 +384,7 @@ function dkgSnapshot(
       dkgInterval: list[0]?.dkgInterval ?? 0,
       ...roundStats(list),
     }))
-    .sort((a, b) => a.dkgInterval - b.dkgInterval || a.llmqName.localeCompare(b.llmqName));
+    .sort((a, b) => a.dkgInterval - b.dkgInterval || compareByCodeUnit(a.llmqName, b.llmqName));
   const primary = byProfile.find((row) => row.llmqName === primaryLlmqName) ?? null;
   const aggregate = roundStats(rounds);
   const punished = new Set(rounds.flatMap((row) => row.invalidMembers));
