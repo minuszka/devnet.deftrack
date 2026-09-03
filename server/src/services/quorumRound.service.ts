@@ -301,8 +301,15 @@ export class QuorumRoundService {
     let detailsComplete = status === 'failed';
 
     if (entry) {
+      // The node lists a quorum from the block its commitment is mined in, and
+      // can describe it a moment later, once its quorum cache has built it. In
+      // that gap `quorum info` answers "quorum not found" for a hash the node
+      // itself just listed. That is the transient the null below stands for, so
+      // it is declared here instead of being filed as a failure at every round.
       const info = await rpc
-        .call<QuorumInfoResult>('quorum', ['info', p.llmqType, entry.quorumHash])
+        .call<QuorumInfoResult>('quorum', ['info', p.llmqType, entry.quorumHash], undefined, {
+          tolerated: /quorum not found/i,
+        })
         .catch(() => null);
 
       members = (info?.members ?? []).map((m) => ({

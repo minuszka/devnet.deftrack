@@ -25,6 +25,19 @@ const CACHE_TTL_MS: Record<string, number> = {
 
 type CacheEntry = { value: unknown; atMs: number };
 
+/**
+ * What a caller is prepared to hear back.
+ *
+ * `tolerated` names a refusal the caller handles itself -- a condition it
+ * expects now and then, and retries or does without. The call still fails
+ * exactly as before; only the log line changes, from an error to information.
+ * Every other refusal is still an error, because a caller that catches an
+ * exception it did not name is not handling it.
+ */
+export interface CallOptions {
+  tolerated?: RegExp;
+}
+
 export class RpcService {
   private readonly client: AxiosInstance;
   private requestId = 0;
@@ -60,7 +73,12 @@ export class RpcService {
     });
   }
 
-  async call<T>(method: string, params: unknown[] = [], cacheKeySuffix?: string): Promise<T> {
+  async call<T>(
+    method: string,
+    params: unknown[] = [],
+    cacheKeySuffix?: string,
+    options: CallOptions = {}
+  ): Promise<T> {
     const ttlKey = cacheKeySuffix ? `${method}:${cacheKeySuffix}` : method;
     const ttl = CACHE_TTL_MS[ttlKey];
     const cacheKey = ttl ? `${ttlKey}|${JSON.stringify(params)}` : null;
@@ -73,7 +91,7 @@ export class RpcService {
       if (pending) return pending as Promise<T>;
     }
 
-    const promise = this.doCallWithRetry<T>(method, params);
+    const promise = this.doCallWithRetry<T>(method, params, options);
 
     if (cacheKey) {
       this.inFlight.set(cacheKey, promise as Promise<unknown>);
@@ -96,20 +114,20 @@ export class RpcService {
    * error the node actually answered with -- an RPC error object or any HTTP
    * status -- is a real answer and is never retried.
    */
-  private async doCallWithRetry<T>(method: string, params: unknown[]): Promise<T> {
+  private async doCallWithRetry<T>(method: string, params: unknown[], options: CallOptions): Promise<T> {
     try {
-      return await this.doCall<T>(method, params);
+      return await this.doCall<T>(method, params, options);
     } catch (error: unknown) {
       const transient =
         error instanceof Error && /socket hang up|ECONNRESET|ETIMEDOUT|EPIPE/i.test(error.message);
       if (!transient) throw error;
       await new Promise((resolve) => setTimeout(resolve, 250));
       logger.warn(`RPC ${method}: transport error, retrying once`);
-      return this.doCall<T>(method, params);
+      return this.doCall<T>(method, params, options);
     }
   }
 
-  private async doCall<T>(method: string, params: unknown[]): Promise<T> {
+  private async doCall<T>(method: string, params: unknown[], options: CallOptions): Promise<T> {
     const id = ++this.requestId;
     const startedAt = performance.now();
     let failed = true;
@@ -141,7 +159,11 @@ export class RpcService {
         .replace(/\/\/[^@/]+:[^@/]+@/g, '//***:***@')
         .replace(/Basic\s+[A-Za-z0-9+/=]+/gi, 'Basic ***');
 
-      logger.error(`RPC ${method} failed: ${sanitised}`);
+      if (options.tolerated?.test(sanitised)) {
+        logger.info(`RPC ${method}: ${sanitised} (expected by the caller, which retries or does without)`);
+      } else {
+        logger.error(`RPC ${method} failed: ${sanitised}`);
+      }
       throw new Error(`RPC ${method}: ${sanitised}`);
     } finally {
       metricsService.observeRpc(method, performance.now() - startedAt, failed);
