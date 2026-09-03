@@ -59,16 +59,15 @@ export class DdShell extends LitElement {
       }
       .devnet {
         /*
-         * Its own full-width, centred row inside the topbar rather than a badge
-         * beside the telemetry. The warning is long by design -- it has to name
-         * both "not mainnet" and "may reset" to be worth reading -- and set
-         * against the telemetry chips it would either overlap them or be
-         * squeezed until it wrapped mid-phrase. A row of its own is the only
-         * placement that stays centred and legible at every width.
+         * Left, with the counters on the right: one strip of status, read the
+         * way the rest of the page is read. The warning is long by design -- it
+         * has to name both "not mainnet" and "may reset" to be worth reading --
+         * so it may shrink and wrap inside its own box, but it neither pushes
+         * the counters off the strip nor takes a centred row of its own, which
+         * read as a headline rather than as a standing warning.
          */
-        flex: 1 0 100%;
-        justify-content: center;
-        text-align: center;
+        flex: 0 1 auto;
+        min-width: 0;
         display: inline-flex;
         align-items: center;
         gap: var(--sp-2);
@@ -87,8 +86,9 @@ export class DdShell extends LitElement {
         display: flex;
         gap: var(--sp-2);
         flex-wrap: wrap;
-        /* The warning takes the whole first row, so the telemetry is alone on
-           the second one, where space-between would pull it to the left. */
+        /* Hard right, on the same row as the warning, and still right when the
+           row is too narrow to hold both and the counters wrap below it. */
+        flex: 0 0 auto;
         margin-left: auto;
       }
       .monitor > span {
