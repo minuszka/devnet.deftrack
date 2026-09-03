@@ -119,12 +119,44 @@ async function abortDuring(scenario) {
     },
   });
   if (!created.ok) return { scenario: scenario.id, outcome: `create ${created.status}`, detail: created.error };
-  const runKey = created.data.runKey ?? created.data.run?.runKey;
+  let runKey = created.data.runKey ?? created.data.run?.runKey;
 
   const validated = await api('POST', `/runs/${runKey}/validate`);
   if (!validated.ok) return { scenario: scenario.id, outcome: `validate ${validated.status}`, detail: validated.error };
-  const armed = await api('POST', `/runs/${runKey}/arm`, { acknowledgedRiskClass: scenario.risk });
-  if (!armed.ok) return { scenario: scenario.id, outcome: `arm ${armed.status}`, detail: armed.error };
+  /*
+   * Arming is retried, spaced.
+   *
+   * `explorer-synced` requires the indexer to hold EVERY block up to the tip, so
+   * between a new block and the next indexer pass it is legitimately false. Four
+   * scenarios armed back to back all landed in the same gap and all four
+   * reported a failure that was about the clock, not about them. Retrying an
+   * instant is not retrying the condition.
+   */
+  let armed = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (attempt > 0) await wait(6_000);
+    armed = await api('POST', `/runs/${runKey}/arm`, { acknowledgedRiskClass: scenario.risk });
+    if (armed.ok) break;
+    // A rejected run cannot be armed again; build a fresh one and try that.
+    if (armed.status === 409) {
+      const again = await api('POST', '/runs', {
+        network: 'regtest',
+        mode: 'live',
+        scenario: {
+          scenarioId: scenario.id,
+          scenarioVersion: 1,
+          seed: `abort-${scenario.id}-${attempt}`,
+          parameters: scenario.parameters,
+        },
+      });
+      if (!again.ok) continue;
+      runKey = again.data.runKey ?? again.data.run?.runKey;
+      await api('POST', `/runs/${runKey}/validate`);
+    }
+  }
+  if (armed === null || !armed.ok) {
+    return { scenario: scenario.id, outcome: `arm ${armed?.status}`, detail: armed?.error };
+  }
   const started = await api('POST', `/runs/${runKey}/start`);
   if (!started.ok) return { scenario: scenario.id, outcome: `start ${started.status}`, detail: started.error };
 

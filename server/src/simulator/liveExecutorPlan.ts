@@ -319,6 +319,12 @@ export function scheduledLabActionsForPlan(input: {
   for (const action of input.plan.actions) {
     if (action.notBeforeOffsetMs <= 0) continue;
     const { payload } = action;
+    // A scheduled `fault-clear` is recovery's, not a dispatcher's -- the same
+    // rule the immediate translation states above. Refusing it here counted the
+    // undo of a netem fault as something recovery could not speak for, so a run
+    // that had not even armed recovered every target cleanly and still reported
+    // allClear: false, and then held the live slot in `failed` for ever.
+    if (payload.kind === 'fault-clear') continue;
     if (payload.kind !== 'service-stop' && payload.kind !== 'service-start') {
       if (!strict) {
         skipped++;

@@ -4,6 +4,15 @@ import { medianOf } from '../domain/roundStats.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { BLOCK_INTERVAL_MS } from '../domain/dkgWindows.js';
 import { TERMINAL_SIMULATION_STATUSES } from '../domain/simulationRunState.js';
+
+/**
+ * How far behind the chain the indexer may be and still be trusted.
+ *
+ * Named once because two places must agree on it: the check that compares
+ * heights, and the one that decides whether an unindexed block is a hole or
+ * merely the newest one.
+ */
+const MAX_EXPLORER_LAG_BLOCKS = 2;
 import type { SimulationNetwork } from '../models/SimulationRun.js';
 import { Block } from '../models/Block.js';
 import { ExperimentRun } from '../models/ExperimentRun.js';
@@ -296,9 +305,24 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         ExperimentRun.find({ status: 'running' }).select('runKey').lean(),
       ]);
     const indexedSet = new Set(indexedHeights.map((block) => block.height));
+    /*
+     * A hole is reported; a block the indexer has simply not reached yet is not.
+     *
+     * The baseline window ends at the tip, so ANY indexer lag put the newest
+     * block in this list -- and the check that reads it fails on a non-empty
+     * list regardless of `maxExplorerLagBlocks`. The two conditions contradicted
+     * each other: the policy allowed two blocks of lag and the code made one
+     * fatal, so the tolerance was dead and every run was a race against the
+     * indexer. On a lab mining every fifteen seconds that race is lost often.
+     *
+     * "Not yet" and "never" are different findings, and only the second is a
+     * defect in the record. A gap anywhere below the tolerated lag is still
+     * reported, because that is a hole the indexer has passed over.
+     */
+    const notYetIndexedFrom = evidence.chain.blocks - MAX_EXPLORER_LAG_BLOCKS;
     const missingHeights: number[] = [];
     for (let height = measurementPlan.baseline.fromHeight; height <= measurementPlan.baseline.toHeight; height += 1) {
-      if (!indexedSet.has(height)) missingHeights.push(height);
+      if (!indexedSet.has(height) && height < notYetIndexedFrom) missingHeights.push(height);
     }
     const targetIdsByProTx = new Map(
       inventory.snapshots
@@ -329,7 +353,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         // targets for a server-side misconfiguration. Unset is now a clear,
         // actionable hard error from evaluateSimulationPreflight instead.
         expectedWrapperVersion: config.simulator.expectedWrapperVersion,
-        maxExplorerLagBlocks: 2,
+        maxExplorerLagBlocks: MAX_EXPLORER_LAG_BLOCKS,
         maxExplorerAgeMs: 2 * 60_000,
         maxObserverAgeMs: OBSERVATION_MAX_AGE_MS,
         maxTargetSnapshotAgeMs: 5 * 60_000,
