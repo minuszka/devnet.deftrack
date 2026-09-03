@@ -1,6 +1,6 @@
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { simulationRunKeyFor } from '../domain/simulationIdentity.js';
-import type { SimulationRunEvent, SimulationRunStatus } from '../domain/simulationRunState.js';
+import type { ChainAnchor, SimulationRunEvent, SimulationRunStatus } from '../domain/simulationRunState.js';
 import type {
   SimulationAuditActor,
   SimulationNetwork,
@@ -71,14 +71,30 @@ function eventFor(
 }
 
 /** activate_fault carries the fault lease, so eventFor (which excludes it) cannot build it. */
-function activateFaultEventFor(request: SimulationControlRequestRecord, faultLeaseExpiresAtMs: number): SimulationRunEvent {
-  return { type: 'activate_fault', eventId: `${request.requestKey}:activate`, atMs: request.acceptedAtMs, faultLeaseExpiresAtMs };
+function activateFaultEventFor(
+  request: SimulationControlRequestRecord,
+  faultLeaseExpiresAtMs: number,
+  anchor: { chainTip?: ChainAnchor }
+): SimulationRunEvent {
+  return {
+    type: 'activate_fault',
+    eventId: `${request.requestKey}:activate`,
+    atMs: request.acceptedAtMs,
+    faultLeaseExpiresAtMs,
+    ...anchor,
+  };
 }
 
 /** The recovery outcome, chosen by whether the lab came back clean. */
-function recoveryOutcomeEventFor(request: SimulationControlRequestRecord, allClear: boolean): SimulationRunEvent {
+function recoveryOutcomeEventFor(
+  request: SimulationControlRequestRecord,
+  allClear: boolean,
+  // Only a proven recovery gets an anchor. A failed one leaves the fault where
+  // it is, so there is no height at which it stopped.
+  anchor: { chainTip?: ChainAnchor } = {}
+): SimulationRunEvent {
   return allClear
-    ? { type: 'recovery_succeeded', eventId: `${request.requestKey}:recovered`, atMs: request.acceptedAtMs }
+    ? { type: 'recovery_succeeded', eventId: `${request.requestKey}:recovered`, atMs: request.acceptedAtMs, ...anchor }
     : { type: 'recovery_failed', eventId: `${request.requestKey}:recovery-failed`, atMs: request.acceptedAtMs };
 }
 
@@ -194,8 +210,30 @@ export class SimulationControlService {
      * Undefined leaves the behaviour as it was: a deployment without the
      * collection wired must not silently lose the check it already had.
      */
-    private readonly liveRunLock: SimulationLiveRunLockService | undefined = undefined
+    private readonly liveRunLock: SimulationLiveRunLockService | undefined = undefined,
+    /**
+     * Where the chain stands right now, recorded at activation and at recovery.
+     *
+     * Injected rather than reached for so a run can be driven without a node,
+     * and optional so a deployment that has not wired it keeps working: a run
+     * then simply records no anchor, which the measurement window already treats
+     * as "fall back to the live tip", exactly as before.
+     */
+    private readonly chainTip: (() => Promise<ChainAnchor>) | undefined = undefined
   ) {}
+
+  /** The anchor to stamp on a transition, or none if this deployment has no tip source. */
+  private async anchor(): Promise<{ chainTip: ChainAnchor } | Record<string, never>> {
+    if (this.chainTip === undefined) return {};
+    try {
+      return { chainTip: await this.chainTip() };
+    } catch {
+      // A tip that cannot be read must not stop a fault from being recorded, and
+      // must not be invented either. No anchor is the honest outcome, and the
+      // measurement falls back to the behaviour it had before anchors existed.
+      return {};
+    }
+  }
 
   scenarios() {
     return scenarioDescriptors();
@@ -481,9 +519,12 @@ export class SimulationControlService {
       // the run's own envelope, so an abandoned run stops blocking on its own.
       await this.acquireLiveRunLock(run, request);
       await this.executor.activateFault({ run, plan, faultLeaseExpiresAtMs });
+      // Read AFTER the fault is applied, so the anchor is a height the fault was
+      // already in force at rather than one it had not reached yet.
+      const activatedAt = await this.anchor();
       run = await this.runs.transitionRun({
         runKey: run.runKey,
-        event: activateFaultEventFor(request, faultLeaseExpiresAtMs),
+        event: activateFaultEventFor(request, faultLeaseExpiresAtMs, activatedAt),
         actor: request.actor,
       });
       return { run, idempotentReplay: false };
@@ -523,9 +564,10 @@ export class SimulationControlService {
       // fault and proves the lab is clean, and the outcome is recorded atomically.
       const plan = await this.loadPlan(run);
       const recovery = await this.executor.proveRecovery({ run, plan });
+      const recoveredAt = recovery.allClear ? await this.anchor() : {};
       run = await this.runs.recordRecoveryResult({
         runKey: run.runKey,
-        event: recoveryOutcomeEventFor(request, recovery.allClear),
+        event: recoveryOutcomeEventFor(request, recovery.allClear, recoveredAt),
         recovery,
         actor: request.actor,
       });
@@ -594,9 +636,10 @@ export class SimulationControlService {
       // cooldown (or failed) -- its cooldown is a real budget, not auto-completed.
       const plan = await this.loadPlan(run);
       const recovery = await this.executor.proveRecovery({ run, plan });
+      const recoveredAt = recovery.allClear ? await this.anchor() : {};
       run = await this.runs.recordRecoveryResult({
         runKey: run.runKey,
-        event: recoveryOutcomeEventFor(request, recovery.allClear),
+        event: recoveryOutcomeEventFor(request, recovery.allClear, recoveredAt),
         recovery,
         actor: request.actor,
       });

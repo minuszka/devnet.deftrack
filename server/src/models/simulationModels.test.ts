@@ -258,6 +258,8 @@ describe('run state persistence surface', () => {
         runExpiresAtMs: 100_000,
       }),
       cooldownExpiresAtMs: 90_000,
+      faultActivatedTip: { height: 1_000, hash: 'a'.repeat(64) },
+      recoveredTip: { height: 1_012, hash: 'b'.repeat(64) },
     };
     const event = new SimulationAuditEvent(
       creationAuditRecord({ state, metadata: metadata(), actor })

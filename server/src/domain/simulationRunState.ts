@@ -41,15 +41,42 @@ interface BaseRunEvent {
   type: SimulationRunEventType;
 }
 
+/**
+ * Where the chain stood when something happened to a run.
+ *
+ * The hash is not decoration. A height alone is not an identity: after a reorg
+ * the block at height H is a different block, and a window anchored on the
+ * number would quietly measure a chain the fault never touched. With the hash a
+ * later reader can ask whether the chain still contains the block the run acted
+ * on, and say so when it does not.
+ */
+export interface ChainAnchor {
+  height: number;
+  hash: string;
+}
+
 export interface ActivateFaultEvent extends BaseRunEvent {
   type: 'activate_fault';
   faultLeaseExpiresAtMs: number;
+  /**
+   * The tip when the fault was applied. Optional: runs recorded before this
+   * field existed have none, and canonicalJson drops undefined, so their stored
+   * fingerprints and audit replays are unchanged.
+   */
+  chainTip?: ChainAnchor;
+}
+
+export interface RecoverySucceededEvent extends BaseRunEvent {
+  type: 'recovery_succeeded';
+  /** The tip when recovery was proven. Optional for the same reason. */
+  chainTip?: ChainAnchor;
 }
 
 export type SimulationRunEvent =
   | ActivateFaultEvent
+  | RecoverySucceededEvent
   | (BaseRunEvent & {
-      type: Exclude<SimulationRunEventType, 'activate_fault'>;
+      type: Exclude<SimulationRunEventType, 'activate_fault' | 'recovery_succeeded'>;
     });
 
 export interface SimulationTransitionRecord {
@@ -82,6 +109,16 @@ export interface SimulationRunState {
    */
   cooldownExpiresAtMs?: number;
   runExpiresAtMs: number;
+  /**
+   * The tip when the fault was applied, and when recovery was proven.
+   *
+   * Recorded rather than derived. Without them the measurement window's start is
+   * recomputed from whatever the tip happens to be when the evidence is loaded,
+   * so the same run measured twice describes two different spans of chain -- and
+   * neither is necessarily the one the fault ran over.
+   */
+  faultActivatedTip?: ChainAnchor;
+  recoveredTip?: ChainAnchor;
   faultLeaseExpiresAtMs: number | null;
   /** True until a successful recovery proves the remote mutation is gone. */
   faultMayBeActive: boolean;
@@ -281,10 +318,17 @@ function applyTransition(
     abortRequested?: boolean;
     faultLeaseExpiresAtMs?: number | null;
     faultMayBeActive?: boolean;
+    faultActivatedTip?: ChainAnchor;
+    recoveredTip?: ChainAnchor;
   }
 ): SimulationRunState {
   return {
     ...state,
+    // Written once, by the transition that establishes them, and never
+    // recomputed: where a fault began is a fact about the run, not a function of
+    // the current tip.
+    ...(input.faultActivatedTip === undefined ? {} : { faultActivatedTip: input.faultActivatedTip }),
+    ...(input.recoveredTip === undefined ? {} : { recoveredTip: input.recoveredTip }),
     status: input.to,
     revision: state.revision + 1,
     updatedAtMs: input.atMs,
@@ -383,6 +427,7 @@ export function transitionSimulationRun(
       to,
       faultLeaseExpiresAtMs: event.faultLeaseExpiresAtMs,
       faultMayBeActive: true,
+      ...(event.chainTip === undefined ? {} : { faultActivatedTip: event.chainTip }),
     });
   }
 
@@ -402,6 +447,7 @@ export function transitionSimulationRun(
       to: finalStatus,
       faultLeaseExpiresAtMs: null,
       faultMayBeActive: false,
+      ...(event.chainTip === undefined ? {} : { recoveredTip: event.chainTip }),
     });
   }
 

@@ -176,6 +176,16 @@ const transitionSchema = new Schema<SimulationTransitionRecord>(
   { _id: false, strict: 'throw' }
 );
 
+const chainAnchorSchema = new Schema<{ height: number; hash: string }>(
+  {
+    height: { type: Number, required: true, min: 0 },
+    // A height is not an identity: after a reorg the block at that height is a
+    // different block, so the hash is what lets a later reader tell.
+    hash: { type: String, required: true },
+  },
+  { _id: false, strict: 'throw' }
+);
+
 export const simulationRunStateSchema = new Schema<SimulationRunState>(
   {
     runKey: { type: String, required: true },
@@ -198,6 +208,11 @@ export const simulationRunStateSchema = new Schema<SimulationRunState>(
      * live run at its first preflight.
      */
     cooldownExpiresAtMs: { type: Number, default: undefined, min: 0 },
+    // Same rule as above: a field on the state that is not named here makes the
+    // first transition carrying it unwritable, because this sub-schema throws on
+    // an unknown path and is also the audit event's stateAfter.
+    faultActivatedTip: { type: chainAnchorSchema, default: undefined },
+    recoveredTip: { type: chainAnchorSchema, default: undefined },
     faultMayBeActive: { type: Boolean, required: true },
     abortRequested: { type: Boolean, required: true },
     lastTransition: { type: transitionSchema, default: null },

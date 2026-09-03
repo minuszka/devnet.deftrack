@@ -36,6 +36,7 @@ import {
 } from '../../simulator/liveExecutorPlan.js';
 import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
 import { SimulationRun } from '../../models/SimulationRun.js';
+import { rpc } from '../../services/rpc.service.js';
 import { SimulationTarget } from '../../models/SimulationTarget.js';
 import {
   registryUpdateFrom,
@@ -347,7 +348,15 @@ const defaultService = new SimulationControlService(
   // One live run at a time, decided atomically. The preflight's conflict check is
   // an ordinary query, so two validations could both pass before either
   // transitioned, and an abandoned draft had no expiry to stop blocking on.
-  new SimulationLiveRunLockService(new MongoSimulationLiveRunLockRepository())
+  new SimulationLiveRunLockService(new MongoSimulationLiveRunLockRepository()),
+  // Where the chain stands, recorded when the fault is applied and when recovery
+  // is proven. Read as height-then-hash-of-that-height rather than
+  // getbestblockhash, so the two always describe the same block even if the tip
+  // advances between the calls.
+  async () => {
+    const height = await rpc.getBlockCount();
+    return { height, hash: await rpc.getBlockHash(height) };
+  }
 );
 
 export default createSimulationAdminRouter(defaultService);
