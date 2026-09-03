@@ -62,7 +62,12 @@ for (let index = 2; index <= NODES; index++) {
   // just the ones that would have used it. It is not a target until it is
   // revived; ops/lab-revive.mjs does that, and re-running this adds it back.
   if ((entry.state?.PoSeBanHeight ?? -1) !== -1) {
-    console.log(`${name} SKIPPED: PoSe-banned at height ${entry.state.PoSeBanHeight}; revive it first`);
+    // Disabled, not merely skipped. Skipping only declines to ADD it; an entry
+    // declared before the ban would stay enabled and keep poisoning the whole
+    // inventory. Disabling needs no privilege -- taking a target out of reach is
+    // always safe -- and re-running after a revive enables it again.
+    await api('POST', `/targets/${name}/disable`, {}).catch(() => undefined);
+    console.log(`${name} DISABLED: PoSe-banned at height ${entry.state.PoSeBanHeight}; revive it first`);
     skipped++;
     continue;
   }
