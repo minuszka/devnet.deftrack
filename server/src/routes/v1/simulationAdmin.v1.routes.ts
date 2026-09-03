@@ -65,6 +65,9 @@ function statusFor(error: unknown): number {
       case 'EXECUTOR_NOT_AVAILABLE': return 503;
       case 'EXECUTOR_NETWORK_FORBIDDEN': return 403;
       case 'LIVE_RUN_LOCKED': return 409;
+      // The chain is not where the run needs it to be yet. A conflict, not a bad
+      // request: the same call succeeds a few blocks later.
+      case 'ANCHOR_NOT_READY': return 409;
       case 'CORRUPT_ARTIFACT': return 500;
     }
   }

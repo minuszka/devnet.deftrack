@@ -1,3 +1,4 @@
+import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { simulationRunKeyFor } from '../domain/simulationIdentity.js';
 import type { ChainAnchor, SimulationRunEvent, SimulationRunStatus } from '../domain/simulationRunState.js';
@@ -8,6 +9,7 @@ import type {
   SimulationRunMetadata,
 } from '../models/SimulationRun.js';
 import type { SimulationControlRole } from '../models/SimulationControlRequest.js';
+import { dkgAnchorRefusal } from '../simulator/dkgAnchorGate.js';
 import { authorizeSimulationApproval } from '../simulator/simulationApproval.js';
 import { parseScenarioRequest, scenarioDescriptors } from '../simulator/scenarioRegistry.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
@@ -36,7 +38,8 @@ export class SimulationControlError extends Error {
       | 'EXECUTOR_NOT_AVAILABLE'
       | 'EXECUTOR_NETWORK_FORBIDDEN'
       | 'CORRUPT_ARTIFACT'
-      | 'LIVE_RUN_LOCKED',
+      | 'LIVE_RUN_LOCKED'
+      | 'ANCHOR_NOT_READY',
     message: string,
     public readonly details: unknown = null
   ) {
@@ -221,6 +224,28 @@ export class SimulationControlService {
      */
     private readonly chainTip: (() => Promise<ChainAnchor>) | undefined = undefined
   ) {}
+
+  /**
+   * Refuses a DKG-phase outage that would land between contribution windows.
+   *
+   * Only that one question is gated; a degradation or staker run measures
+   * something else and is never blocked on DKG alignment. With no tip source the
+   * check does not run at all -- it protects the value of a measurement, not the
+   * network, so it must not become a new way for a run to be unstartable.
+   */
+  private async assertDkgAnchor(run: SimulationRunProjection, faultDurationMs: number): Promise<void> {
+    let tipHeight: number | null = null;
+    const anchor = await this.anchor();
+    if ('chainTip' in anchor && anchor.chainTip !== undefined) tipHeight = anchor.chainTip.height;
+    const refusal = dkgAnchorRefusal({
+      scenarioId: run.metadata.scenarioId,
+      parameters: run.metadata.parameters,
+      tipHeight,
+      faultDurationMs,
+      profile: chainlockProfileAtHeight(tipHeight ?? 0),
+    });
+    if (refusal !== null) throw new SimulationControlError('ANCHOR_NOT_READY', refusal);
+  }
 
   /** The anchor to stamp on a transition, or none if this deployment has no tip source. */
   private async anchor(): Promise<{ chainTip: ChainAnchor } | Record<string, never>> {
@@ -515,6 +540,11 @@ export class SimulationControlService {
       // never wall-clock plus a Docker TTL. The frozen accept time is the fault start.
       const timing = deriveSimulationRunTiming(plan, run.state.createdAtMs);
       const faultLeaseExpiresAtMs = faultLeaseExpiresAtForStart(timing, request.acceptedAtMs);
+      // Checked BEFORE the fault is applied. A quorum-member outage that covers
+      // no contribution window stops real masternodes, carries real PoSe risk and
+      // observes nothing -- and that is worse than a refusal, because the run
+      // completes and looks like a result.
+      await this.assertDkgAnchor(run, timing.maxHostFaultEndOffsetMs);
       // Taken before the fault, released when recovery is recorded. The lease is
       // the run's own envelope, so an abandoned run stops blocking on its own.
       await this.acquireLiveRunLock(run, request);
