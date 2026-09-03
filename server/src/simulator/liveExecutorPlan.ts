@@ -82,10 +82,19 @@ export function composeNetemArgs(input: {
   return args;
 }
 
+/**
+ * `capability` is null when the target is being NAMED rather than faulted.
+ *
+ * A partition's peers are addresses, not subjects: nothing is applied to them,
+ * so requiring them to declare `partition-p2p` would mean a node could not be
+ * cut off from a staker or a seed simply because that node is not itself
+ * partitionable. They still have to exist and be on the lab network, which is
+ * what the rest of this check is for.
+ */
 function requireLabTarget(
   targetsById: ReadonlyMap<string, SimulationTargetSnapshot>,
   targetId: string,
-  capability: SimulationTargetCapability
+  capability: SimulationTargetCapability | null
 ): SimulationTargetSnapshot {
   const target = targetsById.get(targetId);
   if (target === undefined) throw new InvalidNetemTargetError(`plan references unknown target ${targetId}`);
@@ -94,7 +103,7 @@ function requireLabTarget(
     // container is a lab host, never a real fleet address.
     throw new InvalidNetemTargetError(`target ${targetId} is on ${target.network}, not the lab`);
   }
-  if (!target.capabilities.includes(capability)) {
+  if (capability !== null && !target.capabilities.includes(capability)) {
     throw new InvalidNetemTargetError(`target ${targetId} does not declare the ${capability} capability`);
   }
   return target;
@@ -185,6 +194,43 @@ export function labFaultsForPlan(input: {
       continue;
     }
 
+    if (payload.kind === 'partition-apply') {
+      try {
+        const target = requireLabTarget(input.targetsById, action.targetId, 'partition-p2p');
+        // Target ids on the wire, addresses in the filter. `chainHostRef` is the
+        // host the CHAIN sees, which on the devnet is hostRef itself and in the
+        // lab is the container's pinned address -- the same fallback rule the
+        // masternode mapping uses.
+        const peers = payload.peerTargetIds.map((peerId) => {
+          const peer = requireLabTarget(input.targetsById, peerId, null);
+          const address = peer.chainHostRef ?? peer.hostRef;
+          return address;
+        });
+        const jobId = netemJobId(input.runTag, { container: target.hostRef, kind: 'partition', args: peers });
+        if (seen.has(jobId)) continue;
+        seen.add(jobId);
+        faults.push({
+          targetId: target.targetId,
+          container: target.hostRef,
+          // The same class as netem, and deliberately: both own the interface's
+          // root qdisc, so one really does replace the other on a container.
+          faultClass: 'netem',
+          jobId,
+          apply: {
+            op: 'apply',
+            container: target.hostRef,
+            kind: 'partition',
+            args: peers,
+            runTag: input.runTag,
+            expiresAtMs: input.expiresAtMs,
+          },
+        });
+      } catch (error) {
+        refuse(error as Error);
+      }
+      continue;
+    }
+
     if (payload.kind === 'service-stop') {
       try {
         // One immediate outage per target. A staged or repeated stop belongs to a
@@ -217,7 +263,11 @@ export function labFaultsForPlan(input: {
       continue;
     }
 
-    refuse(new UnsupportedLiveFaultError(payload.kind));
+    // Every payload kind is handled above, so this is unreachable -- and the
+    // annotation is the point: adding a fault kind without translating it here
+    // becomes a compile error rather than a fault silently ignored at runtime.
+    const unhandled: never = payload;
+    refuse(new UnsupportedLiveFaultError((unhandled as { kind: string }).kind));
   }
   return { faults, skipped };
 }
@@ -316,7 +366,10 @@ export function scheduledLabActionsForPlan(input: {
 export function assertSingleFaultClass(plan: DryRunPlan): void {
   const classes = new Set<string>();
   for (const action of plan.actions) {
-    if (action.payload.kind === 'netem-apply') classes.add('netem');
+    // A partition is the netem class: it owns the same root qdisc.
+    if (action.payload.kind === 'netem-apply' || action.payload.kind === 'partition-apply') {
+      classes.add('netem');
+    }
     if (action.payload.kind === 'service-stop') classes.add('service');
   }
   if (classes.size > 1) {

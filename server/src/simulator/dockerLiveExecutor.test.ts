@@ -5,7 +5,7 @@ import {
   type LabExecutorClock,
   type LabProbes,
 } from './dockerLiveExecutor.js';
-import { UnsupportedLiveFaultError } from './liveExecutorPlan.js';
+import { InvalidNetemTargetError, UnsupportedLiveFaultError } from './liveExecutorPlan.js';
 import { serviceJobId } from './netemLease.js';
 import type { CommandQueue } from './netemWrapperHost.js';
 import type { PlannedActionPayload, PlannedSimulationAction, DryRunPlan } from './scenarioTypes.js';
@@ -114,11 +114,14 @@ describe('DockerLiveExecutor.activateFault', () => {
   });
 
   it('fails closed on a fault it cannot apply, enqueuing nothing', async () => {
+    // Partitions are applied now, so the refusal here is the target's -- it does
+    // not declare partition-p2p. What is pinned is that a refusal enqueues
+    // NOTHING, whatever the reason for it.
     const queue = new FakeQueue();
     const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await expect(executor.activateFault({
       run: run([target()]), plan: planWith([action('mn-1', partitionPayload)]), faultLeaseExpiresAtMs: 31_000,
-    })).rejects.toBeInstanceOf(UnsupportedLiveFaultError);
+    })).rejects.toBeInstanceOf(InvalidNetemTargetError);
     expect(queue.enqueued).toEqual([]);
   });
 

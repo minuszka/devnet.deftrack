@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto';
 // 'latency' | 'loss' | 'jitter' are the single-dimension primitives; 'netem' is a
 // composed spec (delay and/or loss in one qdisc), which is what a real scenario
 // applies -- one qdisc per interface means the dimensions cannot be separate jobs.
-export type NetemKind = 'latency' | 'loss' | 'jitter' | 'netem';
+export type NetemKind = 'latency' | 'loss' | 'jitter' | 'netem' | 'partition';
 
 const NETEM_IFACE = 'eth0';
 const DURATION = /^\d+(us|ms|s)$/;
@@ -210,6 +210,55 @@ export function tcApplyArgs(spec: NetemSpec): string[] {
   return [...base, 'delay', ...spec.args];
 }
 
+/**
+ * The tc invocations that cut a node off from named peers, in order.
+ *
+ * Not iptables and not nft: the lab image carries neither, only `tc` and `ip`.
+ * So the partition is built from what a qdisc can do -- a `prio` root, a child
+ * band whose netem drops everything, and one `u32` filter per peer steering that
+ * peer's traffic into it. Verified by hand on a lab container before this
+ * existed: `bytesrecv` froze and `pingwait` began to climb.
+ *
+ * Egress-only by construction, and that is enough. The node cannot ACK, so the
+ * peer's window fills and its traffic stops too -- the link goes quiet in both
+ * directions without needing a rule on the other side, which is also what makes
+ * this undoable from one container alone.
+ *
+ * Each peer gets its own filter priority. At one shared priority the second
+ * would be ambiguous with the first, and `add` after the root `replace` is safe
+ * because replacing the root qdisc destroys the filter list with it.
+ */
+export function tcPartitionArgs(spec: NetemSpec): string[][] {
+  assertPartitionPeers(spec.args);
+  return [
+    ['qdisc', 'replace', 'dev', NETEM_IFACE, 'root', 'handle', '1:', 'prio', 'bands', '3'],
+    ['qdisc', 'replace', 'dev', NETEM_IFACE, 'parent', '1:3', 'handle', '30:', 'netem', 'loss', '100%'],
+    ...spec.args.map((peer, index) => [
+      'filter', 'add', 'dev', NETEM_IFACE, 'protocol', 'ip', 'parent', '1:',
+      'prio', String(index + 1), 'u32', 'match', 'ip', 'dst', `${peer}/32`, 'flowid', '1:3',
+    ]),
+  ];
+}
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+
+/**
+ * Peers are plain IPv4 addresses and nothing else.
+ *
+ * They become part of a tc argument vector, so anything else is either rejected
+ * by tc -- leaving a half-built partition with a live root qdisc and no filters,
+ * which cuts nothing while looking applied -- or, worse, accepted as something
+ * other than an address.
+ */
+function assertPartitionPeers(peers: readonly string[]): void {
+  if (peers.length === 0) throw new Error('a partition must name at least one peer');
+  if (peers.length > 32) throw new Error('a partition may name at most 32 peers');
+  if (new Set(peers).size !== peers.length) throw new Error('partition peers must be unique');
+  for (const peer of peers) {
+    if (!IPV4.test(peer)) throw new Error(`partition peer must be an IPv4 address, got "${peer}"`);
+  }
+}
+
 /** The tc arguments that clear all netem on a container. Pure. */
 export function tcClearArgs(): string[] {
   return ['qdisc', 'del', 'dev', NETEM_IFACE, 'root'];
@@ -241,7 +290,10 @@ export function planApply(
   if (existing !== undefined && existing.jobId === jobId && existing.expiresAtMs > nowMs) {
     return { state, actions: [] };
   }
-  const tcArgs = tcApplyArgs(spec); // validates before any state change
+  // Validated before any state change. A partition is several invocations where
+  // a netem is one -- the root qdisc, the band that drops, and a filter per
+  // peer -- so the plan carries a list either way.
+  const tcArgvs = spec.kind === 'partition' ? tcPartitionArgs(spec) : [tcApplyArgs(spec)];
   const job: FaultJob = {
     jobId,
     runTag,
@@ -255,7 +307,9 @@ export function planApply(
   const others = state.jobs.filter((candidate) => !isSameSlot(candidate));
   return {
     state: { jobs: [...others, job] },
-    actions: [{ op: 'apply', container: spec.container, tcArgs }],
+    // One action per invocation, run in order. A partition needs its root qdisc
+    // and its dropping band in place before any filter can point at them.
+    actions: tcArgvs.map((tcArgs) => ({ op: 'apply' as const, container: spec.container, tcArgs })),
   };
 }
 
