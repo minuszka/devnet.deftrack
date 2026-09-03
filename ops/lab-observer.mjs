@@ -167,6 +167,7 @@ async function observeContainer(container) {
 async function observeOnce() {
   let reported = 0;
   let unreachable = 0;
+  let failed = 0;
   for (const container of CONTAINERS) {
     let payload;
     try {
@@ -178,17 +179,34 @@ async function observeOnce() {
       console.error(`skipped ${container}: ${error.message}`);
       continue;
     }
-    const res = await fetch(`${API}/api/v1/peers/observations`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-ingest-token': TOKEN },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    // A failed post is reported and dropped, never fatal.
+    //
+    // It used to throw, which ended the observer. The moments the ingest is
+    // unavailable -- a lab server restarting, a fault run in progress -- are
+    // exactly the moments its telemetry matters most, and an observer that dies
+    // then leaves a silent gap that reads afterwards as a healthy quiet period.
+    // This sighting is lost; the next pass reports the same blocks again,
+    // because the ingest keys them by (height, host) and re-posting is a no-op.
+    try {
+      const res = await fetch(`${API}/api/v1/peers/observations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ingest-token': TOKEN },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    } catch (error) {
+      failed++;
+      console.error(`could not report ${container}: ${error.message}`);
+      // Re-report this container's blocks next pass rather than skipping them.
+      lastSeenHeight.delete(container);
+      continue;
+    }
     reported++;
     console.log(`observed ${container}: height=${payload.status.height} peers=${payload.status.peers} build=${payload.status.nodeBuild.slice(0, 8) || '(unknown)'}`);
   }
   if (unreachable > 0) console.error(`${unreachable}/${CONTAINERS.length} container(s) unreachable and deliberately unreported`);
-  return { reported, unreachable };
+  if (failed > 0) console.error(`${failed}/${CONTAINERS.length} report(s) could not be delivered; they will be resent`);
+  return { reported, unreachable, failed };
 }
 
 if (CONTAINERS.length === 0) {
