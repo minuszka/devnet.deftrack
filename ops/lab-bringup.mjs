@@ -305,7 +305,37 @@ async function main() {
     await rpc(WALLET_NODE, 'generatetoaddress', [4, miningAddress]);
   }
 
-  const list = await rpc(WALLET_NODE, 'protx', ['list', 'registered', true]);
+  /*
+   * Waits for the registrations to be MINED, not merely sent.
+   *
+   * They sit in the mempool for ten minutes and there is nothing wrong with
+   * them: BlockAssembler drops any package that is not InstantSend-locked until
+   * the transaction is 600 s old, and a lab with no InstantSend quorum can never
+   * produce that lock. Mining more blocks changes nothing.
+   *
+   * An earlier version printed the list immediately and reported 3 where 10 were
+   * on their way, which reads as a failed bring-up. The revive script had the
+   * same flaw and was fixed the same way: wait on the outcome.
+   */
+  const expected = MASTERNODES.length;
+  const deadlineMs = Date.now() + 20 * 60_000;
+  let list = await rpc(WALLET_NODE, 'protx', ['list', 'registered', true]);
+  if (list.length < expected) {
+    process.stdout.write(
+      `waiting for ${expected - list.length} registration(s) to be mined; ` +
+        'the InstantSend timeout is ten minutes and cannot be hurried'
+    );
+    while (list.length < expected) {
+      if (Date.now() > deadlineMs) {
+        throw new Error(`only ${list.length} of ${expected} registrations were mined within 20 minutes`);
+      }
+      process.stdout.write('.');
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+      list = await rpc(WALLET_NODE, 'protx', ['list', 'registered', true]);
+    }
+    console.log('');
+  }
+
   console.log(`\nregistered masternodes: ${list.length}`);
   for (const entry of list) {
     console.log(`  ${entry.proTxHash?.slice(0, 16)}... ${entry.state?.service} PoSePenalty=${entry.state?.PoSePenalty ?? '?'}`);

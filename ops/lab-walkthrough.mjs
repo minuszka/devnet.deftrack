@@ -51,6 +51,17 @@ const ATTEMPTS = Number(arg('--attempts', '4'));
  */
 const RECOVER_AFTER_S = Number(arg('--recover-after', '0'));
 const TARGET = arg('--target', 'mn02');
+/**
+ * How many targets to fault at once.
+ *
+ * Above one the registry picks them, because naming five by hand would be
+ * choosing the sample -- and a storm is meant to hit whoever it hits. With ten
+ * masternodes and a three-member quorum, five stopped nodes miss the quorum
+ * entirely only about 8% of the time, and land on two of its three members about
+ * as often as on one: the run produces both "formed but punished" and "did not
+ * form", which is the distinction the whole tool exists to make.
+ */
+const COUNT = Number(arg('--count', '1'));
 
 let step = 0;
 async function api(method, path, body) {
@@ -64,8 +75,28 @@ async function api(method, path, body) {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const payload = await response.json();
+  // The control API is rate limited (30 requests a minute) and answers a refusal
+  // in plain text, not JSON. Parsing blindly turned that into a crash, which
+  // ended a retry loop that was working exactly as intended.
+  const text = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return { status: response.status, ok: false, data: undefined, error: text.slice(0, 200) };
+  }
   return { status: response.status, ok: payload.success === true, data: payload.data, error: payload.error };
+}
+
+/** Waits out a rate-limit refusal rather than treating it as a failed attempt. */
+async function apiPatient(method, path, body) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const result = await api(method, path, body);
+    if (result.status !== 429) return result;
+    console.log('rate limited; waiting for the window to reopen');
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
+  }
+  return api(method, path, body);
 }
 
 function report(label, result) {
@@ -79,7 +110,7 @@ function report(label, result) {
 
 async function attemptRun() {
   if (ABORT_ACTIVE) {
-    const active = await api('GET', '/runs?live=true');
+    const active = await apiPatient('GET', '/runs?live=true');
     for (const run of active.data?.items ?? []) {
       if (run.runKey === undefined) continue;
       console.log(`aborting incumbent ${run.runKey}`);
@@ -87,14 +118,18 @@ async function attemptRun() {
     }
   }
 
-  const created = await api('POST', '/runs', {
+  const created = await apiPatient('POST', '/runs', {
     network: 'regtest',
     mode: 'live',
     scenario: {
       scenarioId: SCENARIO,
       scenarioVersion: 1,
-      seed: `lab-${TARGET}-${step}`,
-      parameters: { count: 1, durationSeconds: 60, targetIds: [TARGET] },
+      seed: `lab-${COUNT > 1 ? `storm${COUNT}` : TARGET}-${step}`,
+      parameters: {
+        count: COUNT,
+        durationSeconds: 60,
+        ...(COUNT > 1 ? {} : { targetIds: [TARGET] }),
+      },
     },
   });
   if (!report('create', created)) return null;
