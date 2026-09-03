@@ -88,6 +88,13 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     SIMULATION_EXPECTED_WRAPPER_VERSION: LAB_WRAPPER_VERSION,
     // The lab chain forms llmq_test and nothing else. Left at the devnet default
     // the collector reconstructs schedules for profiles this chain never runs.
+    // The collectors poll on devnet cadences -- 20 s of sync against 2.5-minute
+    // blocks. A lab mines every few seconds, so those defaults leave the indexer
+    // permanently a block behind and explorer-synced fails at lag=1 on a lab that
+    // is perfectly healthy. Matched to the lab's own clock, not the devnet's.
+    SYNC_INTERVAL_MS: process.env.SYNC_INTERVAL_MS ?? '3000',
+    MN_POLL_INTERVAL_MS: process.env.MN_POLL_INTERVAL_MS ?? '10000',
+    QUORUM_POLL_INTERVAL_MS: process.env.QUORUM_POLL_INTERVAL_MS ?? '15000',
     TRACKED_LLMQ_NAMES: process.env.TRACKED_LLMQ_NAMES ?? 'llmq_test',
     CHAINLOCK_LLMQ_NAME: process.env.CHAINLOCK_LLMQ_NAME ?? 'llmq_test',
     CHAINLOCK_V2_LLMQ_NAME: process.env.CHAINLOCK_V2_LLMQ_NAME ?? 'llmq_test',

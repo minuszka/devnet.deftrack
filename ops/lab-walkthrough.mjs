@@ -23,6 +23,15 @@ const arg = (name, fallback) => {
   return at === -1 ? fallback : process.argv[at + 1];
 };
 const SCENARIO = arg('--scenario', 'mn-stop');
+/**
+ * Abort whatever live run currently holds the slot before creating a new one.
+ *
+ * Off by default and deliberately so: only one live run may exist at a time, and
+ * a walkthrough that silently aborted the incumbent would be a script that ends
+ * other people's experiments to make its own room. Opt in when the incumbent is
+ * a leftover of your own.
+ */
+const ABORT_ACTIVE = process.argv.includes('--abort-active');
 const TARGET = arg('--target', 'mn02');
 
 let step = 0;
@@ -48,6 +57,15 @@ function report(label, result) {
   }
   console.log(`${label}: ok`);
   return true;
+}
+
+if (ABORT_ACTIVE) {
+  const active = await api('GET', '/runs?live=true');
+  for (const run of active.data?.items ?? []) {
+    if (run.runKey === undefined) continue;
+    console.log(`aborting incumbent ${run.runKey}`);
+    await api('POST', `/runs/${run.runKey}/abort`, {});
+  }
 }
 
 const created = await api('POST', '/runs', {
