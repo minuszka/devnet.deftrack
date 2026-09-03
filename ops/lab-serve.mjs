@@ -32,7 +32,22 @@ import { readFileSync as readLabFile } from 'node:fs';
  */
 function labSpec() {
   const file = process.env.LAB_COMPOSE_FILE ?? 'lab-compose.yml';
-  const parsed = JSON.parse(readLabFile(file, 'utf8'));
+  let parsed;
+  try {
+    parsed = JSON.parse(readLabFile(file, 'utf8'));
+  } catch (error) {
+    // Refused rather than defaulted. Assuming "no override" here would record
+    // the built-in profile numbers on every round of a lab that may be running
+    // something else entirely -- the exact silent wrongness the declaration
+    // exists to prevent.
+    console.error(
+      `cannot read ${file}, so the LLMQ profile this lab runs is unknown: ` +
+        `${error instanceof Error ? error.message : String(error)}
+` +
+        'Generate it with ops/lab-bringup.mjs, or set LLMQ_PROFILE_OVERRIDES explicitly.'
+    );
+    process.exit(1);
+  }
   const command = Object.values(parsed.services ?? {})[0]?.command ?? [];
   const arg = command.find((entry) => String(entry).startsWith('-llmqtestparams='));
   if (arg === undefined) return { llmqTestParams: null };
