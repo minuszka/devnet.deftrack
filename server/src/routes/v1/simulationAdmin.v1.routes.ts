@@ -387,6 +387,9 @@ export const defaultActionDispatcher = new SimulationActionDispatcher(
       await executor.dispatchScheduledAction(input);
     },
     workerId: `dispatcher:${process.pid}`,
+    // Given a logger deliberately: a background sweep that says nothing cannot
+    // be told apart from one that was never started.
+    logger,
   }
 );
 
