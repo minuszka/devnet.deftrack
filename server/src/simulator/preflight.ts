@@ -81,6 +81,8 @@ export interface SimulationPreflightInput {
     stable: boolean;
     capturedAtHeight: number | null;
     memberTargetIds: string[];
+    /** New runs bind this to the immutable, identified quorum snapshot. */
+    snapshotMatches?: boolean;
   };
   baseline: {
     required: boolean;
@@ -183,6 +185,9 @@ function assertInput(input: SimulationPreflightInput): void {
     throw new Error('selectedTargetIds must be unique');
   }
   if (input.selectedTargetIds.length > 20) throw new Error('selected target count exceeds the safety limit');
+  if (input.quorum.snapshotMatches !== undefined && typeof input.quorum.snapshotMatches !== 'boolean') {
+    throw new Error('quorum snapshot match evidence is invalid');
+  }
 }
 
 /** Pure, fail-closed evaluation. It performs no reads, writes or transitions. */
@@ -322,6 +327,7 @@ export function evaluateSimulationPreflight(
     input.chain.blocks - input.quorum.capturedAtHeight <= 1;
   const quorumPassed =
     input.quorum.stable &&
+    (input.quorum.snapshotMatches ?? true) &&
     quorumUnique &&
     quorumMapped &&
     quorumFresh &&
@@ -331,7 +337,7 @@ export function evaluateSimulationPreflight(
     'quorum-stable', input.quorum.required ? 'required' : 'warning', quorumPassed, atMs,
     'Current quorum membership is stable and mapped.',
     'Current quorum membership is unavailable, stale or unstable.',
-    `required=${input.quorum.required}; stable=${input.quorum.stable}; height=${input.quorum.capturedAtHeight}; members=${input.quorum.memberTargetIds.length}`
+    `required=${input.quorum.required}; stable=${input.quorum.stable}; snapshotMatches=${input.quorum.snapshotMatches ?? 'legacy'}; height=${input.quorum.capturedAtHeight}; members=${input.quorum.memberTargetIds.length}`
   ));
 
   const baselineEvaluation = input.baseline.evidence === null

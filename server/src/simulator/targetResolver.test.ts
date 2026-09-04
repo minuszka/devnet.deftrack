@@ -174,4 +174,26 @@ describe('private simulation target resolution', () => {
       mode: 'random', role: 'masternode', capability: 'service-control', count: 1, seed: 'x',
     })).toThrow(/incomplete/);
   });
+
+  it('fails closed when the declared fleet or one host exceeds its approved target cap', () => {
+    const fleet = resolveSimulationTargetInventory({
+      network: 'devnet', currentHeight: HEIGHT, nowMs: NOW,
+      registry: [registryTarget(0), registryTarget(1), registryTarget(2)],
+      ...evidence([registryTarget(0), registryTarget(1), registryTarget(2)]),
+      policy: { maxEnabledTargetsTotal: 2 },
+    });
+    expect(fleet.complete).toBe(false);
+    expect(fleet.issues.map((item) => item.code)).toContain('FLEET_TARGET_LIMIT_EXCEEDED');
+
+    const onOneHost = [registryTarget(0), registryTarget(1, { hostRef: 'host-0' })];
+    const perHost = resolveSimulationTargetInventory({
+      network: 'devnet', currentHeight: HEIGHT, nowMs: NOW,
+      registry: onOneHost, ...evidence(onOneHost), policy: { maxEnabledTargetsPerHost: 1 },
+    });
+    expect(perHost.complete).toBe(false);
+    expect(perHost.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'HOST_TARGET_LIMIT_EXCEEDED', targetId: 'mn-0' }),
+      expect.objectContaining({ code: 'HOST_TARGET_LIMIT_EXCEEDED', targetId: 'mn-1' }),
+    ]));
+  });
 });

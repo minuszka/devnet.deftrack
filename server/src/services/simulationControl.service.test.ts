@@ -130,6 +130,7 @@ class FakeEvidence implements SimulationEvidenceProvider {
       parameters: plan.parameters,
       seed: plan.seed,
       targetSnapshot: [networkTarget],
+      quorumTargetSnapshot: null,
       experimentRunKey: null,
       baselineRunKey: null,
       requestedBy: input.requestedBy,
@@ -260,6 +261,13 @@ describe('simulation control service', () => {
       acknowledgedRiskClass: 'medium',
     });
     expect(armed.run.state.status).toBe('armed');
+    const armedSnapshot = [...controlRepository.artifacts.values()].find(
+      (artifact) => artifact.kind === 'armed-target-snapshot'
+    );
+    expect(armedSnapshot?.payload).toMatchObject({
+      selectedTargetIds: ['mn-1'],
+      targetSnapshot: [expect.objectContaining({ targetId: 'mn-1' })],
+    });
     const completed = await service.start({
       runKey: created.run.runKey, idempotencyKey: 'lifecycle-start',
     });

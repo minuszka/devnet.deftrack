@@ -10,6 +10,10 @@ import {
   type TargetMasternodeEvidence,
   type TargetResolutionPolicy,
 } from './targetResolver.js';
+import {
+  freezeQuorumTargetSnapshot,
+  type QuorumMembershipObservation,
+} from './quorumTargetSnapshot.js';
 
 export interface PreparedSimulationDraft {
   runKey: string;
@@ -33,6 +37,11 @@ export function prepareSimulationDraft(input: {
   masternodes: readonly TargetMasternodeEvidence[];
   hosts: readonly TargetHostEvidence[];
   targetPolicy?: Partial<TargetResolutionPolicy>;
+  /** Identified, authoritative quorum evidence; never a predicted member list. */
+  currentQuorum?: QuorumMembershipObservation | null;
+  nextQuorum?: QuorumMembershipObservation | null;
+  nextQuorumUnavailableReason?: string | null;
+  /** Compatibility input for callers that predate identified quorum evidence. */
   currentQuorumMemberProTxHashes: readonly string[];
   experimentRunKey?: string | null;
   baselineRunKey?: string | null;
@@ -73,8 +82,18 @@ export function prepareSimulationDraft(input: {
       .filter((target) => target.proTxHash !== null)
       .map((target) => [target.proTxHash!.toLowerCase(), target.targetId])
   );
+  const quorumTargetSnapshot = input.currentQuorum === undefined && input.nextQuorum === undefined &&
+    input.nextQuorumUnavailableReason === undefined
+    ? null
+    : freezeQuorumTargetSnapshot({
+        targets: targetInventory.snapshots,
+        current: input.currentQuorum ?? null,
+        next: input.nextQuorum ?? null,
+        nextUnavailableReason: input.nextQuorumUnavailableReason ?? null,
+      });
+  const currentQuorumMemberProTxHashes = input.currentQuorum?.memberProTxHashes ?? input.currentQuorumMemberProTxHashes;
   const seenQuorumHashes = new Set<string>();
-  const quorumMemberTargetIds = input.currentQuorumMemberProTxHashes.map((proTxHash) => {
+  const quorumMemberTargetIds = currentQuorumMemberProTxHashes.map((proTxHash) => {
     const key = proTxHash.toLowerCase();
     if (seenQuorumHashes.has(key)) throw new Error('current quorum member list contains duplicates');
     seenQuorumHashes.add(key);
@@ -104,6 +123,7 @@ export function prepareSimulationDraft(input: {
     // Full candidate snapshot, not only selected targets: this preserves the
     // deterministic sampling population and partition peer mappings.
     targetSnapshot: targetInventory.snapshots,
+    quorumTargetSnapshot,
     experimentRunKey: input.experimentRunKey ?? null,
     baselineRunKey: input.baselineRunKey ?? null,
     requestedBy: input.requestedBy,

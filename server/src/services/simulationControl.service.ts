@@ -75,6 +75,14 @@ function eventFor(
   return { eventId: `${request.requestKey}:${suffix}`, type, atMs: request.acceptedAtMs };
 }
 
+function armedTargetSnapshotPayload(run: SimulationRunProjection, plan: DryRunPlan): Record<string, unknown> {
+  return {
+    targetSnapshot: run.metadata.targetSnapshot,
+    quorumTargetSnapshot: run.metadata.quorumTargetSnapshot,
+    selectedTargetIds: [...plan.selectedTargetIds].sort(),
+  };
+}
+
 /** The activation events carry the fault lease, so eventFor cannot build them. */
 function beginActivationEventFor(
   request: SimulationControlRequestRecord,
@@ -340,6 +348,27 @@ export class SimulationControlService {
     return planFromArtifact(run, matches[0]!);
   }
 
+  /**
+   * An immutable run creation snapshot is checked again at arm time, then
+   * written as a distinct append-only artifact. Start uses this exact evidence;
+   * a registry edit after arm cannot silently redirect a planned action.
+   */
+  private async assertArmedTargetSnapshot(run: SimulationRunProjection, plan: DryRunPlan): Promise<void> {
+    const artifacts = await this.control.listArtifacts(run.runKey);
+    const snapshots = artifacts.filter((artifact) => artifact.kind === 'armed-target-snapshot');
+    const expected = armedTargetSnapshotPayload(run, plan);
+    if (
+      snapshots.length !== 1 ||
+      simulationFingerprint(snapshots[0]!.payload) !== snapshots[0]!.payloadFingerprint ||
+      simulationFingerprint(snapshots[0]!.payload) !== simulationFingerprint(expected)
+    ) {
+      throw new SimulationControlError(
+        'CORRUPT_ARTIFACT',
+        'run has no valid immutable target snapshot from arm time'
+      );
+    }
+  }
+
   async create(input: {
     idempotencyKey: string;
     identity?: SimulationControlIdentity;
@@ -533,6 +562,12 @@ export class SimulationControlService {
     await this.control.appendArtifact({
       request,
       runKey: run.runKey,
+      kind: 'armed-target-snapshot',
+      payload: armedTargetSnapshotPayload(run, plan),
+    });
+    await this.control.appendArtifact({
+      request,
+      runKey: run.runKey,
       kind: 'approval',
       payload: { ...approval, acknowledgedRiskClass: input.acknowledgedRiskClass },
     });
@@ -587,9 +622,10 @@ export class SimulationControlService {
       return { run, idempotentReplay: true };
     }
     ensureStatus(run, ['armed', 'activation_pending']);
+    const plan = await this.loadPlan(run);
+    await this.assertArmedTargetSnapshot(run, plan);
     if (run.state.live) {
       this.assertExecutorNetwork(run);
-      const plan = await this.loadPlan(run);
       let faultLeaseExpiresAtMs: number;
       let activationAtMs: number;
       if (run.state.status === 'armed') {

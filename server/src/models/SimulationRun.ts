@@ -46,6 +46,34 @@ export interface SimulationTargetSnapshot {
   capturedAtHeight: number;
 }
 
+/**
+ * A resolved member list for one identified quorum.  It contains no private
+ * host or unit reference: those stay in targetSnapshot.  The fingerprint binds
+ * the quorum identity and the canonical proTxHash -> targetId resolution that
+ * was checked at draft/arm time.
+ */
+export interface SimulationQuorumTargetReference {
+  llmqType: number;
+  llmqName: string;
+  quorumHash: string;
+  expectedHeight: number;
+  quorumIndex: number;
+  capturedAtHeight: number;
+  memberProTxHashes: string[];
+  memberTargetIds: string[];
+  resolutionFingerprint: string;
+}
+
+/**
+ * Current and (only when authoritatively observed) next quorum resolution.
+ * A missing next member list is explicit rather than a predicted fault target.
+ */
+export interface SimulationQuorumTargetSnapshot {
+  current: SimulationQuorumTargetReference | null;
+  next: SimulationQuorumTargetReference | null;
+  nextUnavailableReason: string | null;
+}
+
 export interface SimulationRunMetadata {
   network: SimulationNetwork;
   scenarioId: string;
@@ -54,6 +82,7 @@ export interface SimulationRunMetadata {
   parameters: Record<string, unknown>;
   seed: string;
   targetSnapshot: SimulationTargetSnapshot[];
+  quorumTargetSnapshot: SimulationQuorumTargetSnapshot | null;
   experimentRunKey: string | null;
   baselineRunKey: string | null;
   requestedBy: SimulationAuditActor;
@@ -145,6 +174,30 @@ const targetSnapshotSchema = new Schema<SimulationTargetSnapshot>(
   { _id: false, strict: 'throw' }
 );
 
+const quorumTargetReferenceSchema = new Schema<SimulationQuorumTargetReference>(
+  {
+    llmqType: { type: Number, required: true },
+    llmqName: { type: String, required: true },
+    quorumHash: { type: String, required: true, match: /^[0-9a-f]{64}$/i },
+    expectedHeight: { type: Number, required: true, min: 0 },
+    quorumIndex: { type: Number, required: true, min: 0 },
+    capturedAtHeight: { type: Number, required: true, min: 0 },
+    memberProTxHashes: [{ type: String, required: true, match: /^[0-9a-f]{64}$/i }],
+    memberTargetIds: [{ type: String, required: true }],
+    resolutionFingerprint: { type: String, required: true, match: /^[0-9a-f]{64}$/i },
+  },
+  { _id: false, strict: 'throw' }
+);
+
+const quorumTargetSnapshotSchema = new Schema<SimulationQuorumTargetSnapshot>(
+  {
+    current: { type: quorumTargetReferenceSchema, default: null },
+    next: { type: quorumTargetReferenceSchema, default: null },
+    nextUnavailableReason: { type: String, default: null },
+  },
+  { _id: false, strict: 'throw' }
+);
+
 export const simulationRunMetadataSchema = new Schema<SimulationRunMetadata>(
   {
     network: { type: String, enum: ['regtest', 'devnet'], required: true },
@@ -153,6 +206,7 @@ export const simulationRunMetadataSchema = new Schema<SimulationRunMetadata>(
     parameters: { type: Schema.Types.Mixed, required: true },
     seed: { type: String, required: true },
     targetSnapshot: { type: [targetSnapshotSchema], default: [] },
+    quorumTargetSnapshot: { type: quorumTargetSnapshotSchema, default: null },
     experimentRunKey: { type: String, default: null },
     baselineRunKey: { type: String, default: null },
     requestedBy: { type: simulationAuditActorSchema, required: true },
