@@ -1,0 +1,11 @@
+[Unit]
+Description=Run DeFCoN chaos recovery watchdog
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+Persistent=true
+Unit=defcon-chaos-recover.service
+
+[Install]
+WantedBy=timers.target

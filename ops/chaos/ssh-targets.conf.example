@@ -1,0 +1,4 @@
+# Private orchestrator inventory; never commit real addresses.
+# target <logical-id> <ssh-destination>
+# The executor rejects any request whose logical id is absent here.
+target mn01 deploy@pilot-host.example

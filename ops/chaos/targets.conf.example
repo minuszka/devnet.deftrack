@@ -1,0 +1,11 @@
+# defcon-chaos target configuration. This file is parsed as data; it is never
+# sourced. Keep the installed copy root-owned and mode 0640 or stricter.
+#
+# policy <maximum-fault-seconds>
+# target <logical-id> <allowlisted-systemd-unit> <p2p-interface> <p2p-port> <baseline-qdisc>
+#
+# baseline-qdisc is intentionally a closed set: fq_codel, pfifo_fast, noqueue.
+# A network fault refuses an interface whose observed root qdisc differs from
+# this declaration, rather than overwriting an unknown traffic policy.
+policy 600
+target mn01 defcon-devnet-mn@1.service ens3 19799 fq_codel
