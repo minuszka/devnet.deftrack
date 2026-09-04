@@ -89,6 +89,29 @@ else
   bash "$HERE/defcon-chaos" verify >/dev/null
 fi
 
+# Enabling the persistent 15-second timer can race the first production
+# verification below. The watchdog holds the same non-blocking wrapper lock,
+# so retry only that known, harmless contention; any actual verification error
+# still aborts the installation immediately.
+verify_installed_wrapper() {
+  local output=''
+  local retries=0
+  while [ "$retries" -lt 5 ]; do
+    retries=$((retries + 1))
+    if output=$(/usr/local/sbin/defcon-chaos verify 2>&1); then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    if [ "$output" != 'defcon-chaos: another defcon-chaos operation is running' ]; then
+      printf '%s\n' "$output" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  printf '%s\n' "$output" >&2
+  return 1
+}
+
 [ ! -e "$config" ] || die "refusing to overwrite existing configuration: $config"
 if [ -z "$DEST_ROOT" ]; then
   install -D -o root -g root -m 0750 "$HERE/defcon-chaos" "$wrapper"
@@ -113,7 +136,7 @@ if [ -z "$DEST_ROOT" ]; then
   visudo -cf /etc/sudoers.d/defcon-chaos
   systemctl daemon-reload
   systemctl enable --now defcon-chaos-recover.timer
-  /usr/local/sbin/defcon-chaos verify
+  verify_installed_wrapper || die 'installed wrapper verification failed'
 else
   printf 'staged defcon-chaos package below %s\n' "$DEST_ROOT"
 fi
