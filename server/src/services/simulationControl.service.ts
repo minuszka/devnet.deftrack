@@ -70,21 +70,35 @@ export interface SimulationControlIdentity {
 function eventFor(
   request: SimulationControlRequestRecord,
   suffix: string,
-  type: Exclude<SimulationRunEvent['type'], 'activate_fault'>
+  type: Exclude<SimulationRunEvent['type'], 'begin_activation' | 'activate_fault'>
 ): SimulationRunEvent {
   return { eventId: `${request.requestKey}:${suffix}`, type, atMs: request.acceptedAtMs };
 }
 
-/** activate_fault carries the fault lease, so eventFor (which excludes it) cannot build it. */
+/** The activation events carry the fault lease, so eventFor cannot build them. */
+function beginActivationEventFor(
+  request: SimulationControlRequestRecord,
+  atMs: number,
+  faultLeaseExpiresAtMs: number
+): SimulationRunEvent {
+  return {
+    type: 'begin_activation',
+    eventId: `${request.requestKey}:begin-activation`,
+    atMs,
+    faultLeaseExpiresAtMs,
+  };
+}
+
 function activateFaultEventFor(
   request: SimulationControlRequestRecord,
+  atMs: number,
   faultLeaseExpiresAtMs: number,
   anchor: { chainTip?: ChainAnchor }
 ): SimulationRunEvent {
   return {
     type: 'activate_fault',
     eventId: `${request.requestKey}:activate`,
-    atMs: request.acceptedAtMs,
+    atMs,
     faultLeaseExpiresAtMs,
     ...anchor,
   };
@@ -559,8 +573,10 @@ export class SimulationControlService {
     });
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.status === 'completed' && !run.state.live) return { run, idempotentReplay: true };
+    const activationIntentId = `${request.requestKey}:begin-activation`;
     if (
       run.state.status !== 'armed' &&
+      run.state.status !== 'activation_pending' &&
       (await this.alreadyApplied(run.runKey, [
         `${request.requestKey}:activate`,
         `${request.requestKey}:complete`,
@@ -570,22 +586,54 @@ export class SimulationControlService {
       // asking whether it landed, not asking to start it twice.
       return { run, idempotentReplay: true };
     }
-    ensureStatus(run, ['armed']);
+    ensureStatus(run, ['armed', 'activation_pending']);
     if (run.state.live) {
       this.assertExecutorNetwork(run);
       const plan = await this.loadPlan(run);
-      // The lease is the run's own recovery envelope, from its immutable timing --
-      // never wall-clock plus a Docker TTL. The frozen accept time is the fault start.
-      const timing = deriveSimulationRunTiming(plan, run.state.createdAtMs);
-      const faultLeaseExpiresAtMs = faultLeaseExpiresAtForStart(timing, request.acceptedAtMs);
-      // Checked BEFORE the fault is applied. A quorum-member outage that covers
-      // no contribution window stops real masternodes, carries real PoSe risk and
-      // observes nothing -- and that is worse than a refusal, because the run
-      // completes and looks like a result.
-      await this.assertDkgAnchor(run, timing.maxHostFaultEndOffsetMs);
-      // Taken before the fault, released when recovery is recorded. The lease is
-      // the run's own envelope, so an abandoned run stops blocking on its own.
-      await this.acquireLiveRunLock(run, request);
+      let faultLeaseExpiresAtMs: number;
+      let activationAtMs: number;
+      if (run.state.status === 'armed') {
+        // A request's accept time identifies its idempotency record; it is not
+        // the instant a host mutation begins. A retry after a transient failure
+        // must never revive a lease that has already elapsed.
+        activationAtMs = this.clock();
+        const timing = deriveSimulationRunTiming(plan, run.state.createdAtMs);
+        faultLeaseExpiresAtMs = faultLeaseExpiresAtForStart(timing, activationAtMs);
+        // Checked BEFORE a durable intent or host command. A quorum-member
+        // outage that covers no contribution window carries real PoSe risk but
+        // observes nothing.
+        await this.assertDkgAnchor(run, timing.maxHostFaultEndOffsetMs);
+        // Taken before the fault, then recorded as an activation intent. If the
+        // process dies after this point, the run says recovery is required rather
+        // than leaving an unaccounted-for command in the wrapper queue.
+        await this.acquireLiveRunLock(run, request);
+        try {
+          run = await this.runs.transitionRun({
+            runKey: run.runKey,
+            event: beginActivationEventFor(request, activationAtMs, faultLeaseExpiresAtMs),
+            actor: request.actor,
+          });
+        } catch (error) {
+          await this.releaseLiveRunLock(run.runKey);
+          throw error;
+        }
+      } else {
+        if (!(await this.alreadyApplied(run.runKey, [activationIntentId]))) {
+          throw new SimulationControlError('INVALID_STATE', 'activation is pending for another start request');
+        }
+        faultLeaseExpiresAtMs = run.state.faultLeaseExpiresAtMs ?? 0;
+        activationAtMs = run.state.lastTransition?.atMs ?? 0;
+        if (!Number.isSafeInteger(activationAtMs)) {
+          throw new SimulationControlError('INVALID_STATE', 'activation intent has no valid timestamp');
+        }
+        if (faultLeaseExpiresAtMs <= this.clock()) {
+          throw new SimulationControlError('INVALID_STATE', 'activation lease has expired; recover the run instead');
+        }
+        // A restart can happen between recording the intent and writing the
+        // wrapper command. Re-acquiring the same lock is idempotent and lets the
+        // original request resume only while its recorded lease is still live.
+        await this.acquireLiveRunLock(run, request);
+      }
       await this.executor.activateFault({ run, plan, faultLeaseExpiresAtMs });
       // Written AFTER the immediate faults land, so a failure to apply them
       // leaves no schedule behind for a dispatcher to act on.
@@ -594,17 +642,20 @@ export class SimulationControlService {
           scheduledActionRowsFor({
             runKey: run.runKey,
             actions: plan.actions,
-            activatedAtMs: request.acceptedAtMs,
+            // The action plan and its lease share the durable activation intent,
+            // never the possibly much older request acceptance timestamp.
+            activatedAtMs: activationAtMs,
             faultLeaseExpiresAtMs,
           })
         );
       }
       // Read AFTER the fault is applied, so the anchor is a height the fault was
       // already in force at rather than one it had not reached yet.
+      const activatedAtMs = this.clock();
       const activatedAt = await this.anchor();
       run = await this.runs.transitionRun({
         runKey: run.runKey,
-        event: activateFaultEventFor(request, faultLeaseExpiresAtMs, activatedAt),
+        event: activateFaultEventFor(request, activatedAtMs, faultLeaseExpiresAtMs, activatedAt),
         actor: request.actor,
       });
       return { run, idempotentReplay: false };
@@ -623,7 +674,7 @@ export class SimulationControlService {
     });
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.status === 'aborted') return { run, idempotentReplay: true };
-    ensureStatus(run, ['draft', 'preflight', 'scheduled', 'baseline', 'armed', 'fault_active', 'observing', 'aborting', 'cooldown', 'recovery']);
+    ensureStatus(run, ['draft', 'preflight', 'scheduled', 'baseline', 'armed', 'activation_pending', 'fault_active', 'observing', 'aborting', 'cooldown', 'recovery']);
     if (!run.state.abortRequested) {
       run = await this.runs.transitionRun({
         runKey: run.runKey,
@@ -689,7 +740,7 @@ export class SimulationControlService {
         // having succeeded.
         return { run };
       }
-      ensureStatus(run, ['armed', 'fault_active', 'observing', 'aborting', 'failed']);
+      ensureStatus(run, ['armed', 'activation_pending', 'fault_active', 'observing', 'aborting', 'failed']);
 
       // Recovering a run that never executed is an abort, not a completion.
       //
@@ -702,7 +753,7 @@ export class SimulationControlService {
       //
       // abort() sets the same intent for the same reason, and this mirrors it:
       // armed -> aborting -> recovery -> aborted.
-      if (run.state.status === 'armed' && !run.state.abortRequested) {
+      if ((run.state.status === 'armed' || run.state.status === 'activation_pending') && !run.state.abortRequested) {
         run = await this.runs.transitionRun({
           runKey: run.runKey,
           event: eventFor(request, 'abort', 'abort_requested'),
@@ -781,7 +832,7 @@ export class SimulationControlService {
   private async releaseLiveRunLock(runKey: string): Promise<void> {
     if (this.liveRunLock === undefined) return;
     try {
-      await this.liveRunLock.release({ runKey, ownerId: this.identity.actor.actorId, nowMs: this.clock() });
+      await this.liveRunLock.releaseForRun({ runKey, nowMs: this.clock() });
     } catch {
       // The lease bounds the damage; failing the recovery over it would be worse.
     }

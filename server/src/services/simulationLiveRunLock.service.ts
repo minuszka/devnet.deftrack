@@ -1,6 +1,7 @@
 import {
   acquireLiveRunLock,
   releaseLiveRunLock,
+  releaseLiveRunLockForRun,
   renewLiveRunLock,
   type HeldLiveRunLock,
   type LiveRunLock,
@@ -72,6 +73,26 @@ export class SimulationLiveRunLockService {
       }
     }
     throw new SimulationLiveRunLockPersistenceError('live-run lock changed repeatedly during release');
+  }
+
+  /**
+   * The control service calls this only after it has recorded a recovery result.
+   * Recovery can be completed by a different authorised admin, so matching the
+   * run prevents a stale recovery from freeing a newer lock without making the
+   * original human identity a cleanup prerequisite.
+   */
+  async releaseForRun(input: { runKey: string; nowMs: number }): Promise<ReleasedLiveRunLock | null> {
+    for (let attempt = 0; attempt < MAX_LOCK_CAS_ATTEMPTS; attempt++) {
+      const current = await this.repository.find();
+      const next = releaseLiveRunLockForRun(current, input);
+      if (next === null) return null;
+      if (next.status === 'released' && next === current) return next;
+      if (current === null) return null;
+      if (await this.repository.compareAndSwap(current.revision, next)) {
+        return next as ReleasedLiveRunLock;
+      }
+    }
+    throw new SimulationLiveRunLockPersistenceError('live-run lock changed repeatedly during recovery release');
   }
 
   async current(): Promise<LiveRunLock | null> {

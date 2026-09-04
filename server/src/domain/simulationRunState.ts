@@ -5,6 +5,7 @@ export const SIMULATION_RUN_STATUSES = [
   'scheduled',
   'baseline',
   'armed',
+  'activation_pending',
   'fault_active',
   'observing',
   'aborting',
@@ -24,6 +25,7 @@ export const SIMULATION_RUN_EVENT_TYPES = [
   'begin_baseline',
   'baseline_completed',
   'dry_run_completed',
+  'begin_activation',
   'activate_fault',
   'begin_observation',
   'begin_recovery',
@@ -66,6 +68,17 @@ export interface ActivateFaultEvent extends BaseRunEvent {
   chainTip?: ChainAnchor;
 }
 
+/**
+ * Durable intent immediately before a live fault reaches the wrapper.
+ *
+ * Persisting it first means a process death or queue failure cannot leave a
+ * possibly applied host mutation behind an `armed` run that needs no recovery.
+ */
+export interface BeginActivationEvent extends BaseRunEvent {
+  type: 'begin_activation';
+  faultLeaseExpiresAtMs: number;
+}
+
 export interface RecoverySucceededEvent extends BaseRunEvent {
   type: 'recovery_succeeded';
   /** The tip when recovery was proven. Optional for the same reason. */
@@ -74,9 +87,10 @@ export interface RecoverySucceededEvent extends BaseRunEvent {
 
 export type SimulationRunEvent =
   | ActivateFaultEvent
+  | BeginActivationEvent
   | RecoverySucceededEvent
   | (BaseRunEvent & {
-      type: Exclude<SimulationRunEventType, 'activate_fault' | 'recovery_succeeded'>;
+      type: Exclude<SimulationRunEventType, 'begin_activation' | 'activate_fault' | 'recovery_succeeded'>;
     });
 
 export interface SimulationTransitionRecord {
@@ -188,8 +202,16 @@ const ORDINARY_TRANSITIONS: Readonly<
   scheduled: { begin_baseline: 'baseline' },
   baseline: { baseline_completed: 'armed' },
   armed: {
+    begin_activation: 'activation_pending',
+    // Audit streams written before activation intent existed transition directly
+    // to fault_active. Keep that historical path replayable; new control-plane
+    // code always writes begin_activation before invoking the wrapper.
     activate_fault: 'fault_active',
     dry_run_completed: 'completed',
+    begin_recovery: 'recovery',
+  },
+  activation_pending: {
+    activate_fault: 'fault_active',
     begin_recovery: 'recovery',
   },
   fault_active: { begin_observation: 'observing', begin_recovery: 'recovery' },
@@ -209,6 +231,7 @@ const ABORTABLE_STATUSES = new Set<SimulationRunStatus>([
   'scheduled',
   'baseline',
   'armed',
+  'activation_pending',
   'fault_active',
   'observing',
   'cooldown',
@@ -236,6 +259,7 @@ const TIMEOUT_RECOVERY_STATUSES = new Set<SimulationRunStatus>([
   'scheduled',
   'baseline',
   'armed',
+  'activation_pending',
   'fault_active',
   'observing',
 ]);
@@ -403,7 +427,7 @@ export function transitionSimulationRun(
     );
   }
 
-  if (event.type === 'activate_fault') {
+  if (event.type === 'begin_activation' || event.type === 'activate_fault') {
     if (!state.live) {
       throw new SimulationStateError(
         'INVALID_TRANSITION',
@@ -427,7 +451,9 @@ export function transitionSimulationRun(
       to,
       faultLeaseExpiresAtMs: event.faultLeaseExpiresAtMs,
       faultMayBeActive: true,
-      ...(event.chainTip === undefined ? {} : { faultActivatedTip: event.chainTip }),
+      ...(event.type === 'activate_fault' && event.chainTip !== undefined
+        ? { faultActivatedTip: event.chainTip }
+        : {}),
     });
   }
 
@@ -505,6 +531,8 @@ function resumeDirective(status: SimulationRunStatus): SimulationResumeDirective
       return 'resume-baseline';
     case 'armed':
       return 'resume-armed';
+    case 'activation_pending':
+      return 'resume-recovery';
     case 'fault_active':
     case 'observing':
       return 'resume-observation';

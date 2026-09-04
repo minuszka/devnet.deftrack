@@ -299,7 +299,8 @@ describe('simulation persistence service', () => {
       { type: 'preflight_passed' as const, eventId: 'e2', atMs: 3 },
       { type: 'begin_baseline' as const, eventId: 'e3', atMs: 4 },
       { type: 'baseline_completed' as const, eventId: 'e4', atMs: 5 },
-      { type: 'activate_fault' as const, eventId: 'e5', atMs: 6, faultLeaseExpiresAtMs: 900 },
+      { type: 'begin_activation' as const, eventId: 'e4a', atMs: 6, faultLeaseExpiresAtMs: 900 },
+      { type: 'activate_fault' as const, eventId: 'e5', atMs: 7, faultLeaseExpiresAtMs: 900 },
     ];
     for (const event of events) {
       await service.transitionRun({ runKey: created.runKey, event, actor });
@@ -309,7 +310,7 @@ describe('simulation persistence service', () => {
     const active = await service.reconcileRun({ runKey: created.runKey, nowMs: 100, actor: systemActor });
     expect(active.state.status).toBe('fault_active');
     const expired = await service.reconcileRun({ runKey: created.runKey, nowMs: 900, actor: systemActor });
-    expect(expired.state).toMatchObject({ status: 'recovery', abortRequested: true, revision: 6 });
+    expect(expired.state).toMatchObject({ status: 'recovery', abortRequested: true, revision: 7 });
   });
 
   it('elects only one of two concurrent transitions for the same revision', async () => {

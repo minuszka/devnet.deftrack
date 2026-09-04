@@ -15,6 +15,7 @@ import {
 } from './simulationControlPersistence.service.js';
 import { SimulationControlService, type SimulationLiveExecutor } from './simulationControl.service.js';
 import { SimulationLiveRunLockService } from './simulationLiveRunLock.service.js';
+import type { ScheduledActionRow, SimulationActionRepository } from './simulationAction.repository.js';
 import type { LiveRunLock } from '../domain/liveRunLock.js';
 import {
   SimulationPersistenceService,
@@ -160,7 +161,14 @@ class FakeExecutor implements SimulationLiveExecutor {
   activated = 0;
   recovered = 0;
   allClear = true;
-  async activateFault(): Promise<void> { this.activated++; }
+  failNextActivation = false;
+  async activateFault(): Promise<void> {
+    this.activated++;
+    if (this.failNextActivation) {
+      this.failNextActivation = false;
+      throw new Error('wrapper queue transient failure');
+    }
+  }
   async proveRecovery(): Promise<SimulationRecoveryResult> {
     this.recovered++;
     return { required: true, startedAtMs: 1_000, finishedAtMs: 1_100, allClear: this.allClear, targets: [] };
@@ -182,7 +190,9 @@ function harness(
   role: 'operator' | 'safety-admin' = 'operator',
   executor?: SimulationLiveExecutor,
   clock: () => number = () => 1_000,
-  lockRepository?: MemoryLockRepository
+  lockRepository?: MemoryLockRepository,
+  chainTip?: () => Promise<{ height: number; hash: string }>,
+  scheduledActions?: Pick<SimulationActionRepository, 'enqueue' | 'cancelPending'>
 ) {
   const runRepository = new MemoryRunRepository();
   const controlRepository = new MemoryControlRepository();
@@ -194,7 +204,9 @@ function harness(
     { actor, role },
     clock,
     executor,
-    lockRepository === undefined ? undefined : new SimulationLiveRunLockService(lockRepository)
+    lockRepository === undefined ? undefined : new SimulationLiveRunLockService(lockRepository),
+    chainTip,
+    scheduledActions
   );
   return { service, runRepository, controlRepository, evidence, lockRepository };
 }
@@ -204,14 +216,16 @@ async function driveToLiveArmed(
   network: 'regtest' | 'devnet',
   // Distinct runs need distinct idempotency keys: the run key is derived from
   // this, so two callers sharing it would be driving the SAME run.
-  tag = 'live'
+  tag = 'live',
+  scenario: Record<string, unknown> = mnStop,
+  acknowledgedRiskClass = 'medium'
 ) {
   const created = await service.create({
-    idempotencyKey: `${network}-${tag}-create`, network, live: true, scenario: mnStop,
+    idempotencyKey: `${network}-${tag}-create`, network, live: true, scenario,
   });
   await service.validate({ runKey: created.run.runKey, idempotencyKey: `${network}-${tag}-validate` });
   await service.arm({
-    runKey: created.run.runKey, idempotencyKey: `${network}-${tag}-arm`, acknowledgedRiskClass: 'medium',
+    runKey: created.run.runKey, idempotencyKey: `${network}-${tag}-arm`, acknowledgedRiskClass,
   });
   return created.run.runKey;
 }
@@ -467,6 +481,21 @@ describe('one live run at a time', () => {
     expect(started.run.state.status).toBe('fault_active');
   });
 
+  it('releases the live slot after a browser-started run is recovered by another admin', async () => {
+    const shared = new MemoryLockRepository();
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor, () => 1_000, shared);
+    const runKey = await driveToLiveArmed(service, 'regtest', 'browser-lock');
+    const alice = { actor: { actorId: 'alice@example.org', actorType: 'admin-session' as const, displayName: 'Alice' }, role: 'operator' as const };
+    const bob = { actor: { actorId: 'bob@example.org', actorType: 'admin-session' as const, displayName: 'Bob' }, role: 'operator' as const };
+
+    await service.start({ runKey, idempotencyKey: 'browser-lock-start', identity: alice });
+    expect(shared.lock).toMatchObject({ status: 'held', ownerId: 'alice@example.org' });
+    await service.recover({ runKey, idempotencyKey: 'browser-lock-recover', identity: bob });
+
+    expect(shared.lock).toMatchObject({ status: 'released' });
+  });
+
   it('does not let an abandoned run hold the lab for ever', async () => {
     // The lease is the run's own envelope. A run that dies holding the lock stops
     // blocking when that envelope ends -- which is what the query-based check,
@@ -494,6 +523,68 @@ describe('one live run at a time', () => {
 });
 
 describe('a retried start or recover is answered, not refused', () => {
+  it('schedules later faults from the durable activation intent, not request acceptance', async () => {
+    // The request is accepted at 1s, then pre-activation work advances the live
+    // clock to 5s. The second service-stop is ten seconds after the actual
+    // activation intent; anchoring it at acceptance used to fire it at 11s.
+    let activationPhase = false;
+    let activationClockReads = 0;
+    const queued: ScheduledActionRow[] = [];
+    const scheduledActions: Pick<SimulationActionRepository, 'enqueue' | 'cancelPending'> = {
+      async enqueue(rows) {
+        queued.push(...rows);
+        return rows.length;
+      },
+      async cancelPending() {
+        return 0;
+      },
+    };
+    const flapping = {
+      scenarioId: 'restart-flapping', scenarioVersion: 1, seed: 'schedule-intent',
+      parameters: { role: 'masternode', count: 1, cycles: 2, downSeconds: 5, upSeconds: 5, targetIds: ['mn-1'] },
+    };
+    const { service } = harness(
+      flapping,
+      'safety-admin',
+      new FakeExecutor(),
+      () => {
+        if (!activationPhase) return 1_000;
+        activationClockReads += 1;
+        // The claim happens first; the activation intent is written after
+        // pre-activation work has advanced the clock.
+        return activationClockReads === 1 ? 1_000 : 5_000;
+      },
+      undefined,
+      undefined,
+      scheduledActions
+    );
+    const runKey = await driveToLiveArmed(service, 'regtest', 'schedule-intent', flapping, 'high');
+
+    activationPhase = true;
+    await service.start({ runKey, idempotencyKey: 'schedule-intent-start' });
+
+    expect(queued).toContainEqual(expect.objectContaining({ kind: 'service-stop', notBeforeMs: 15_000 }));
+    expect(queued).not.toContainEqual(expect.objectContaining({ kind: 'service-stop', notBeforeMs: 11_000 }));
+  });
+
+  it('does not revive an expired activation intent after a failed start', async () => {
+    let now = 1_000;
+    const executor = new FakeExecutor();
+    executor.failNextActivation = true;
+    const { service } = harness(mnStop, 'operator', executor, () => now);
+    const runKey = await driveToLiveArmed(service, 'regtest', 'expired-intent');
+
+    await expect(service.start({ runKey, idempotencyKey: 'expired-intent-start' })).rejects.toThrow(/transient/);
+    const pending = await service.status(runKey);
+    expect(pending.state.status).toBe('activation_pending');
+    now = pending.state.faultLeaseExpiresAtMs!;
+
+    await expect(service.start({ runKey, idempotencyKey: 'expired-intent-start' }))
+      .rejects.toMatchObject({ code: 'INVALID_STATE' });
+    expect((await service.status(runKey)).state.status).toBe('activation_pending');
+    expect(executor.activated).toBe(1);
+  });
+
   it('returns the run when the same start request already landed', async () => {
     // After a network timeout the operator repeats the call. The run is
     // fault_active where only armed is allowed, so this used to answer 409 --
