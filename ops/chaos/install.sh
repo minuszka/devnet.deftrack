@@ -49,20 +49,45 @@ state_dir=$(root_path /var/lib/defcon-chaos/jobs)
 # design, so a package test cannot change the host while validating syntax.
 test_root=$(mktemp -d)
 cleanup_test_root() {
-  rm -f -- "$test_root/bin/systemctl" "$test_root/bin/tc" "$test_root/run/defcon-chaos.lock"
-  rmdir -- "$test_root/bin" "$test_root/state" "$test_root/run" "$test_root" 2>/dev/null || true
+  rm -f -- "$test_root/bin/systemctl" "$test_root/bin/tc" "$test_root/config/targets.conf" \
+    "$test_root/defcon-chaos" "$test_root/run/defcon-chaos.lock"
+  rmdir -- "$test_root/bin" "$test_root/config" "$test_root/state" "$test_root/run" "$test_root" 2>/dev/null || true
 }
 trap cleanup_test_root EXIT
-mkdir -p "$test_root/bin" "$test_root/state" "$test_root/run"
+mkdir -p "$test_root/bin" "$test_root/config" "$test_root/state" "$test_root/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$test_root/bin/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$test_root/bin/tc"
-chmod 700 "$test_root/bin/systemctl" "$test_root/bin/tc"
-DEFCON_CHAOS_TEST_MODE=1 \
-DEFCON_CHAOS_TEST_CONFIG="$TARGETS" \
-DEFCON_CHAOS_TEST_STATE="$test_root/state" \
-DEFCON_CHAOS_TEST_RUN="$test_root/run" \
-DEFCON_CHAOS_TEST_PATH="$test_root/bin" \
-bash "$HERE/defcon-chaos" verify >/dev/null
+chmod 755 "$test_root/bin/systemctl" "$test_root/bin/tc"
+
+# The wrapper deliberately refuses its environment-controlled test mode when it
+# is root. A real install is root-only, so validate a private copy as nobody
+# before anything is written below /etc. Staging tests remain usable without
+# sudo, while the production path cannot accidentally validate /etc before the
+# supplied config exists.
+if [ "$(id -u)" -eq 0 ]; then
+  command -v runuser >/dev/null 2>&1 || die 'runuser is required for root preflight validation'
+  test_user=nobody
+  test_uid=$(id -u "$test_user") || die 'the nobody account is required for root preflight validation'
+  test_gid=$(id -g "$test_user") || die 'the nobody account is required for root preflight validation'
+  install -m 0644 "$TARGETS" "$test_root/config/targets.conf"
+  install -m 0755 "$HERE/defcon-chaos" "$test_root/defcon-chaos"
+  chmod 755 "$test_root" "$test_root/bin" "$test_root/config"
+  chown "$test_uid:$test_gid" "$test_root/state" "$test_root/run"
+  runuser -u "$test_user" -- env \
+    DEFCON_CHAOS_TEST_MODE=1 \
+    DEFCON_CHAOS_TEST_CONFIG="$test_root/config/targets.conf" \
+    DEFCON_CHAOS_TEST_STATE="$test_root/state" \
+    DEFCON_CHAOS_TEST_RUN="$test_root/run" \
+    DEFCON_CHAOS_TEST_PATH="$test_root/bin" \
+    bash "$test_root/defcon-chaos" verify >/dev/null
+else
+  DEFCON_CHAOS_TEST_MODE=1 \
+  DEFCON_CHAOS_TEST_CONFIG="$TARGETS" \
+  DEFCON_CHAOS_TEST_STATE="$test_root/state" \
+  DEFCON_CHAOS_TEST_RUN="$test_root/run" \
+  DEFCON_CHAOS_TEST_PATH="$test_root/bin" \
+  bash "$HERE/defcon-chaos" verify >/dev/null
+fi
 
 [ ! -e "$config" ] || die "refusing to overwrite existing configuration: $config"
 if [ -z "$DEST_ROOT" ]; then
