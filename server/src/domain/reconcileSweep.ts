@@ -19,6 +19,9 @@ export function reconcilableRunFilter(nowMs: number): Record<string, unknown> {
       { 'state.runExpiresAtMs': { $lte: nowMs } },
       // A fault may still be applied and its lease has lapsed.
       { 'state.faultMayBeActive': true, 'state.faultLeaseExpiresAtMs': { $lte: nowMs } },
+      // A clean live run completes after its own cooldown budget, not after the
+      // much longer envelope that also reserves preparation time.
+      { 'state.status': 'cooldown', 'state.cooldownExpiresAtMs': { $lte: nowMs } },
     ],
   };
 }

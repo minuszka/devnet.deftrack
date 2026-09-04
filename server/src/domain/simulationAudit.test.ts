@@ -51,11 +51,12 @@ describe('simulation audit stream', () => {
       { type: 'preflight_passed', eventId: 'e2', atMs: 3 },
       { type: 'begin_baseline', eventId: 'e3', atMs: 4 },
       { type: 'baseline_completed', eventId: 'e4', atMs: 5 },
-      { type: 'activate_fault', eventId: 'e5', atMs: 6, faultLeaseExpiresAtMs: 900 },
-      { type: 'begin_observation', eventId: 'e6', atMs: 7 },
-      { type: 'begin_recovery', eventId: 'e7', atMs: 8 },
-      { type: 'recovery_succeeded', eventId: 'e8', atMs: 9 },
-      { type: 'cooldown_completed', eventId: 'e9', atMs: 10 },
+      { type: 'begin_activation', eventId: 'e4a', atMs: 6, faultLeaseExpiresAtMs: 900 },
+      { type: 'activate_fault', eventId: 'e5', atMs: 7, faultLeaseExpiresAtMs: 900 },
+      { type: 'begin_observation', eventId: 'e6', atMs: 8 },
+      { type: 'begin_recovery', eventId: 'e7', atMs: 9 },
+      { type: 'recovery_succeeded', eventId: 'e8', atMs: 10 },
+      { type: 'cooldown_completed', eventId: 'e9', atMs: 11 },
     ];
 
     let state = initial;
@@ -80,6 +81,43 @@ describe('simulation audit stream', () => {
     expect(events[0]!.requestFingerprint).toBe(
       simulationRunCreationFingerprint(initial, metadata)
     );
+  });
+
+  it('replays a live run recorded before activation intent was introduced', () => {
+    const initial = createSimulationRunState({
+      runKey: 'legacy-direct-activation',
+      live: true,
+      createdAtMs: 1,
+      runExpiresAtMs: 1_000,
+    });
+    const events: SimulationRunAuditRecord[] = [
+      creationAuditRecord({ state: initial, metadata, actor }),
+    ];
+    const domainEvents: SimulationRunEvent[] = [
+      { type: 'begin_preflight', eventId: 'legacy-1', atMs: 2 },
+      { type: 'preflight_passed', eventId: 'legacy-2', atMs: 3 },
+      { type: 'begin_baseline', eventId: 'legacy-3', atMs: 4 },
+      { type: 'baseline_completed', eventId: 'legacy-4', atMs: 5 },
+      // This is the pre-intent audit shape; persisted runs must remain loadable.
+      { type: 'activate_fault', eventId: 'legacy-5', atMs: 6, faultLeaseExpiresAtMs: 900 },
+    ];
+
+    let state = initial;
+    for (const event of domainEvents) {
+      const next = transitionSimulationRun(state, event);
+      events.push(
+        transitionAuditRecord({
+          before: state,
+          after: next,
+          actor,
+          requestFingerprint: simulationRunEventFingerprint(event),
+        })
+      );
+      state = next;
+    }
+
+    expect(replaySimulationRunAudit(events).state).toEqual(state);
+    expect(state.status).toBe('fault_active');
   });
 
   it('detects a missing audit revision', () => {
@@ -191,22 +229,23 @@ describe('replaying events that carry a payload', () => {
       { type: 'preflight_passed', eventId: 'a2', atMs: 3 },
       { type: 'begin_baseline', eventId: 'a3', atMs: 4 },
       { type: 'baseline_completed', eventId: 'a4', atMs: 5 },
+      { type: 'begin_activation', eventId: 'a4a', atMs: 6, faultLeaseExpiresAtMs: 900 },
       {
         type: 'activate_fault',
         eventId: 'a5',
-        atMs: 6,
+        atMs: 7,
         faultLeaseExpiresAtMs: 900,
         chainTip: { height: 1_000, hash: 'a'.repeat(64) },
       },
-      { type: 'begin_observation', eventId: 'a6', atMs: 7 },
-      { type: 'begin_recovery', eventId: 'a7', atMs: 8 },
+      { type: 'begin_observation', eventId: 'a6', atMs: 8 },
+      { type: 'begin_recovery', eventId: 'a7', atMs: 9 },
       {
         type: 'recovery_succeeded',
         eventId: 'a8',
-        atMs: 9,
+        atMs: 10,
         chainTip: { height: 1_012, hash: 'b'.repeat(64) },
       },
-      { type: 'cooldown_completed', eventId: 'a9', atMs: 10 },
+      { type: 'cooldown_completed', eventId: 'a9', atMs: 11 },
     ];
 
     let state = initial;

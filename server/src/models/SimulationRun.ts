@@ -164,6 +164,7 @@ const allTransitionEventTypes = [
   ...SIMULATION_RUN_EVENT_TYPES,
   'system_timeout',
   'system_resume_recovery',
+  'system_cooldown_complete',
 ] as const;
 
 const transitionSchema = new Schema<SimulationTransitionRecord>(

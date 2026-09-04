@@ -77,6 +77,17 @@ describe('persisted live-run lock service', () => {
     expect(repeated).toEqual(released);
   });
 
+  it('releases a recovered run even when another authorised admin performs cleanup', async () => {
+    const repository = new MemoryLockRepository();
+    const service = new SimulationLiveRunLockService(repository);
+    await service.acquire({ runKey: 'sim-a', ownerId: 'alice@example.org', nowMs: 100, leaseUntilMs: 200 });
+
+    const released = await service.releaseForRun({ runKey: 'sim-a', nowMs: 150 });
+
+    expect(released).toMatchObject({ status: 'released', revision: 1 });
+    expect(await service.releaseForRun({ runKey: 'sim-b', nowMs: 160 })).toEqual(released);
+  });
+
   it('refuses a second run while the first lock is live', async () => {
     const service = new SimulationLiveRunLockService(new MemoryLockRepository());
     await service.acquire({

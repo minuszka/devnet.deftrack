@@ -75,7 +75,7 @@ export function simulationFingerprint(value: unknown): string {
 
 export function simulationRunEventFingerprint(event: SimulationRunEvent): string {
   return simulationFingerprint(
-    event.type === 'activate_fault'
+    event.type === 'begin_activation' || event.type === 'activate_fault'
       ? {
           type: event.type,
           atMs: event.atMs,
@@ -213,7 +213,14 @@ export function replaySimulationRunAudit(events: readonly AuditLike[]): {
       // the run becomes unloadable with AUDIT_DIVERGENCE. That is how the chain
       // anchors first landed: mirrored, and not reconstructed.
       const domainEvent: SimulationRunEvent =
-        event.eventType === 'activate_fault'
+        event.eventType === 'begin_activation'
+          ? {
+              type: 'begin_activation',
+              eventId: event.eventId,
+              atMs: event.atMs,
+              faultLeaseExpiresAtMs: event.stateAfter.faultLeaseExpiresAtMs ?? -1,
+            }
+          : event.eventType === 'activate_fault'
           ? {
               type: 'activate_fault',
               eventId: event.eventId,
@@ -231,7 +238,7 @@ export function replaySimulationRunAudit(events: readonly AuditLike[]): {
             : {
                 type: event.eventType as Exclude<
                   SimulationRunEventType,
-                  'activate_fault' | 'recovery_succeeded'
+                  'begin_activation' | 'activate_fault' | 'recovery_succeeded'
                 >,
                 eventId: event.eventId,
                 atMs: event.atMs,

@@ -14,13 +14,20 @@ import {
 } from './simulationRunState.js';
 
 const ordinaryEvent = (
-  type: Exclude<SimulationRunEventType, 'activate_fault'>,
+  type: Exclude<SimulationRunEventType, 'begin_activation' | 'activate_fault'>,
   eventId: string,
   atMs: number
 ): SimulationRunEvent => ({ type, eventId, atMs });
 
 const activateEvent = (eventId: string, atMs: number, faultLeaseExpiresAtMs = 900): SimulationRunEvent => ({
   type: 'activate_fault',
+  eventId,
+  atMs,
+  faultLeaseExpiresAtMs,
+});
+
+const beginActivationEvent = (eventId: string, atMs: number, faultLeaseExpiresAtMs = 900): SimulationRunEvent => ({
+  type: 'begin_activation',
   eventId,
   atMs,
   faultLeaseExpiresAtMs,
@@ -37,7 +44,7 @@ function freshRun(): SimulationRunState {
 
 function transition(
   state: SimulationRunState,
-  type: Exclude<SimulationRunEventType, 'activate_fault'>,
+  type: Exclude<SimulationRunEventType, 'begin_activation' | 'activate_fault'>,
   atMs: number
 ): SimulationRunState {
   return transitionSimulationRun(state, ordinaryEvent(type, `${type}:${atMs}`, atMs));
@@ -55,6 +62,8 @@ function stateAt(target: SimulationRunStatus): SimulationRunState {
   if (target === 'baseline') return state;
   state = transition(state, 'baseline_completed', 4);
   if (target === 'armed') return state;
+  state = transitionSimulationRun(state, beginActivationEvent('begin-activation:5', 5));
+  if (target === 'activation_pending') return state;
   state = transitionSimulationRun(state, activateEvent('activate:5', 5));
   if (target === 'fault_active') return state;
   state = transition(state, 'begin_observation', 6);
@@ -75,6 +84,7 @@ describe('simulation run state machine', () => {
     states.push(transition(states.at(-1)!, 'preflight_passed', 2));
     states.push(transition(states.at(-1)!, 'begin_baseline', 3));
     states.push(transition(states.at(-1)!, 'baseline_completed', 4));
+    states.push(transitionSimulationRun(states.at(-1)!, beginActivationEvent('begin-activation:5', 5)));
     states.push(transitionSimulationRun(states.at(-1)!, activateEvent('activate:5', 5)));
     states.push(transition(states.at(-1)!, 'begin_observation', 6));
     states.push(transition(states.at(-1)!, 'begin_recovery', 7));
@@ -87,15 +97,16 @@ describe('simulation run state machine', () => {
       'scheduled',
       'baseline',
       'armed',
+      'activation_pending',
       'fault_active',
       'observing',
       'recovery',
       'cooldown',
       'completed',
     ]);
-    expect(states.map((s) => s.revision)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(states.map((s) => s.revision)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(states[5]).toMatchObject({ faultMayBeActive: true, faultLeaseExpiresAtMs: 900 });
-    expect(states[8]).toMatchObject({ faultMayBeActive: false, faultLeaseExpiresAtMs: null });
+    expect(states[9]).toMatchObject({ faultMayBeActive: false, faultLeaseExpiresAtMs: null });
     expect(isTerminalSimulationStatus(states.at(-1)!.status)).toBe(true);
   });
 
@@ -113,7 +124,8 @@ describe('simulation run state machine', () => {
       rejected: [],
       scheduled: ['begin_baseline', 'abort_requested'],
       baseline: ['baseline_completed', 'abort_requested'],
-      armed: ['activate_fault', 'dry_run_completed', 'begin_recovery', 'abort_requested'],
+      armed: ['begin_activation', 'activate_fault', 'dry_run_completed', 'begin_recovery', 'abort_requested'],
+      activation_pending: ['activate_fault', 'begin_recovery', 'abort_requested'],
       fault_active: ['begin_observation', 'begin_recovery', 'abort_requested'],
       observing: ['begin_recovery', 'abort_requested'],
       aborting: ['begin_recovery'],
@@ -267,8 +279,9 @@ describe('simulation run state machine', () => {
   it('requires a bounded fault lease inside the run deadline', () => {
     const armed = stateAt('armed');
     for (const lease of [4, 1_001]) {
+      const pending = transitionSimulationRun(armed, beginActivationEvent(`begin:${lease}`, 5, 900));
       expect(() =>
-        transitionSimulationRun(armed, activateEvent(`activate:${lease}`, 5, lease))
+        transitionSimulationRun(pending, activateEvent(`activate:${lease}`, 6, lease))
       ).toThrowError(
         expect.objectContaining<Partial<SimulationStateError>>({ code: 'INVALID_FAULT_LEASE' })
       );
@@ -395,7 +408,13 @@ describe('chain anchors', () => {
 
   it('records where the fault began and where recovery was proven', () => {
     const armed = stateAt('armed');
-    const active = transitionSimulationRun(armed, {
+    const pending = transitionSimulationRun(armed, {
+      type: 'begin_activation',
+      eventId: 'begin-act',
+      atMs: 499,
+      faultLeaseExpiresAtMs: 900,
+    });
+    const active = transitionSimulationRun(pending, {
       type: 'activate_fault',
       eventId: 'act',
       atMs: 500,
@@ -421,7 +440,8 @@ describe('chain anchors', () => {
     // Absent, not null or zero: a deployment with no tip source records nothing
     // rather than a height it did not read, and canonicalJson drops undefined so
     // runs made before anchors existed keep their fingerprints.
-    const active = transitionSimulationRun(stateAt('armed'), activateEvent('act', 500));
+    const pending = transitionSimulationRun(stateAt('armed'), beginActivationEvent('begin-act', 499));
+    const active = transitionSimulationRun(pending, activateEvent('act', 500));
     expect('faultActivatedTip' in active).toBe(false);
     expect(Object.keys(active)).not.toContain('recoveredTip');
   });

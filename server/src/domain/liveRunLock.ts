@@ -136,3 +136,37 @@ export function releaseLiveRunLock(
     revision: current.revision + 1,
   };
 }
+
+/**
+ * Release only if this exact run still owns the slot.
+ *
+ * A recovery is an authorised control-plane operation and may be performed by a
+ * different safety admin than the person who began the run.  Requiring that
+ * second person to equal the lock owner would strand a clean run; accepting a
+ * different run key would be worse, because an old recovery could release a
+ * newer experiment after the original lease elapsed.  This run-key-scoped form
+ * preserves the latter fence without tying recovery to one human identity.
+ */
+export function releaseLiveRunLockForRun(
+  current: LiveRunLock | null,
+  input: { runKey: string; nowMs: number }
+): LiveRunLock | null {
+  if (current === null || current.status === 'released') return current;
+  if (input.runKey.trim().length === 0) {
+    throw new LiveRunLockError('INVALID_IDENTITY', 'runKey must not be empty');
+  }
+  if (!Number.isSafeInteger(input.nowMs) || input.nowMs < current.acquiredAtMs) {
+    throw new LiveRunLockError('INVALID_LEASE', 'release time predates lock acquisition');
+  }
+  if (current.runKey !== input.runKey) return null;
+  return {
+    scope: 'devnet-live',
+    status: 'released',
+    runKey: null,
+    ownerId: null,
+    acquiredAtMs: null,
+    leaseUntilMs: null,
+    releasedAtMs: input.nowMs,
+    revision: current.revision + 1,
+  };
+}
