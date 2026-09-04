@@ -23,6 +23,7 @@ usage() {
 Usage:
   defcon-chaos verify
   defcon-chaos status <target>
+  defcon-chaos marker <target> <job-id> <expires-at-epoch>
   defcon-chaos service <start|stop|restart> <target> <job-id> <expires-at-epoch>
   defcon-chaos netem <target> <job-id> <expires-at-epoch> <latency-ms> <jitter-ms> <loss-percent>
   defcon-chaos clear <target> <job-id>
@@ -213,6 +214,8 @@ load_job() {
   valid_target "${JOB[target]}" || die "invalid job target: $job"
   decimal "${JOB[expires]}" || die "invalid job expiry: $job"
   case "${JOB[kind]}" in
+    marker)
+      ;;
     service)
       valid_unit "${JOB[unit]:-}" || die "invalid service unit in job: $job"
       case "${JOB[prior_active]:-}" in yes|no) ;; *) die "invalid service state in job: $job" ;; esac
@@ -255,6 +258,8 @@ clear_loaded_job() {
   local job=$1 file
   file=$(job_file "$job")
   case "${JOB[kind]}" in
+    marker)
+      ;;
     service)
       if [ "${JOB[prior_active]}" = 'yes' ]; then
         systemctl start "${JOB[unit]}"
@@ -287,6 +292,18 @@ apply_service() {
     clear_loaded_job "$job" || true
     die "systemctl $action failed for $target"
   fi
+}
+
+apply_marker() {
+  local target=$1 job=$2 expiry=$3 content
+  require_target "$target"
+  require_job "$job"
+  require_expiry "$expiry"
+  target_has_active_job "$target" && die "target already has an active job: $target"
+  # A marker proves the timer can discover and retire its own durable job
+  # record, without calling systemd, tc, or otherwise perturbing the node.
+  content=$(printf 'kind=marker\ntarget=%s\nexpires=%s\n' "$target" "$expiry")
+  write_job "$job" "$content"
 }
 
 apply_netem() {
@@ -369,6 +386,11 @@ main() {
       [ "$#" -eq 2 ] || usage
       load_config
       status_target "$2"
+      ;;
+    marker)
+      [ "$#" -eq 4 ] || usage
+      load_config
+      apply_marker "$2" "$3" "$4"
       ;;
     service)
       [ "$#" -eq 5 ] || usage

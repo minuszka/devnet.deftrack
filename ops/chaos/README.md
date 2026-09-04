@@ -10,6 +10,10 @@ It reads the matching systemd unit, interface and P2P port from a root-owned
 record and then calls `systemctl` or `tc`. The 15-second systemd timer clears
 expired records even if the caller disappears.
 
+`marker <target> <job-id> <expiry>` only writes such a record; it never calls
+`systemctl` or `tc`. It exists for the day-13 pilot to prove the installed
+recovery timer retires a real record without interrupting a node.
+
 `tc` is deliberately conservative: a network fault runs only when the observed
 root qdisc matches the target's closed baseline declaration (`fq_codel`,
 `pfifo_fast`, or `noqueue`), and clear restores that baseline. It refuses an

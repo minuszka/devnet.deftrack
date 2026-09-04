@@ -9,7 +9,7 @@ TMP=$(mktemp -d)
 cleanup() {
   rm -f -- "$TMP/bin/systemctl" "$TMP/bin/tc" "$TMP/bin/ssh" \
     "$TMP/config/targets.conf" "$TMP/config/ssh-targets.conf" "$TMP/tc.log" "$TMP/ssh.log" \
-    "$TMP/run/defcon-chaos.lock" "$TMP/jobs/job-service.env" "$TMP/jobs/job-netem.env" "$TMP/jobs/job-expired.env" \
+    "$TMP/run/defcon-chaos.lock" "$TMP/jobs/job-marker.env" "$TMP/jobs/job-service.env" "$TMP/jobs/job-netem.env" "$TMP/jobs/job-expired.env" \
     "$TMP/systemd/defcon-devnet-mn@1.service" \
     "$TMP/stage/usr/local/sbin/defcon-chaos" "$TMP/stage/usr/local/bin/defcon-chaos-ssh" \
     "$TMP/stage/etc/defcon-chaos/targets.conf" "$TMP/stage/etc/sudoers.d/defcon-chaos" \
@@ -76,6 +76,11 @@ bash "$HERE/defcon-chaos" verify | grep -Fq 'targets=1' || fail 'verify did not 
 status_output=$(bash "$HERE/defcon-chaos" status mn01)
 printf '%s\n' "$status_output" | grep -Fq 'unit_active=yes' || fail "status did not use the allowlisted unit: $status_output"
 
+bash "$HERE/defcon-chaos" marker mn01 marker "$expiry"
+[ -f "$TMP/jobs/job-marker.env" ] || fail 'marker did not persist a recovery record'
+bash "$HERE/defcon-chaos" clear mn01 marker
+[ ! -e "$TMP/jobs/job-marker.env" ] || fail 'marker clear left its record behind'
+
 bash "$HERE/defcon-chaos" service stop mn01 service "$expiry"
 [ ! -f "$TMP/systemd/defcon-devnet-mn@1.service" ] || fail 'service stop did not reach fake systemd'
 [ -f "$TMP/jobs/job-service.env" ] || fail 'service stop did not persist recovery state first'
@@ -105,6 +110,8 @@ bash "$HERE/defcon-chaos" recover-expired
 
 DEFCON_CHAOS_TEST_SSH_BIN="$TMP/bin/ssh" bash "$HERE/defcon-chaos-ssh" "$TMP/config/ssh-targets.conf" status mn01
 grep -Fqx -- '-o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=15 -o StrictHostKeyChecking=yes deploy@pilot-host.example sudo -n /usr/local/sbin/defcon-chaos status mn01' "$TMP/ssh.log" || fail 'SSH executor lost its non-interactive boundary'
+DEFCON_CHAOS_TEST_SSH_BIN="$TMP/bin/ssh" bash "$HERE/defcon-chaos-ssh" "$TMP/config/ssh-targets.conf" marker mn01 marker "$expiry"
+grep -Fqx -- "-o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=15 -o StrictHostKeyChecking=yes deploy@pilot-host.example sudo -n /usr/local/sbin/defcon-chaos marker mn01 marker $expiry" "$TMP/ssh.log" || fail 'SSH executor did not preserve a marker command'
 expect_failure bash "$HERE/defcon-chaos-ssh" "$TMP/config/ssh-targets.conf" status 'mn01;anything'
 
 bash "$HERE/install.sh" --targets "$TMP/config/targets.conf" --operator chaosops --root "$TMP/stage" >/dev/null
