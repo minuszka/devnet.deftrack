@@ -11,6 +11,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage:
   defcon-chaos-ssh <inventory.conf> status <target>
+  defcon-chaos-ssh <inventory.conf> marker <target> <job-id> <expires-at-epoch>
   defcon-chaos-ssh <inventory.conf> service <start|stop|restart> <target> <job-id> <expires-at-epoch>
   defcon-chaos-ssh <inventory.conf> netem <target> <job-id> <expires-at-epoch> <latency-ms> <jitter-ms> <loss-percent>
   defcon-chaos-ssh <inventory.conf> clear <target> <job-id>
@@ -32,6 +33,9 @@ target=''
 case "$command" in
   status)
     [ "$#" -eq 2 ] || usage; target=$2; valid_target "$target" || die 'invalid target' ;;
+  marker)
+    [ "$#" -eq 4 ] || usage
+    target=$2; valid_target "$target" || die 'invalid target'; valid_job "$3" || die 'invalid job'; decimal "$4" || die 'invalid expiry' ;;
   service)
     [ "$#" -eq 5 ] || usage
     case "$2" in start|stop|restart) ;; *) die 'invalid service action' ;; esac
