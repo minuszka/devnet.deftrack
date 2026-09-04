@@ -1,0 +1,400 @@
+#!/usr/bin/env bash
+#
+# Root-owned, deliberately narrow fault wrapper for one allowlisted devnet host.
+#
+# It accepts logical target and job identifiers only. Unit names, interfaces and
+# P2P ports are read from a root-owned configuration file; neither shell code
+# nor caller-supplied paths are ever evaluated. Every mutation is recorded
+# before it reaches systemd or tc, so the recovery timer can undo an interrupted
+# operation.
+set -euo pipefail
+IFS=$'\n\t'
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+readonly VERSION='1'
+
+die() {
+  printf 'defcon-chaos: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  defcon-chaos verify
+  defcon-chaos status <target>
+  defcon-chaos service <start|stop|restart> <target> <job-id> <expires-at-epoch>
+  defcon-chaos netem <target> <job-id> <expires-at-epoch> <latency-ms> <jitter-ms> <loss-percent>
+  defcon-chaos clear <target> <job-id>
+  defcon-chaos recover-expired
+  defcon-chaos recover-all
+
+The target must be declared in /etc/defcon-chaos/targets.conf. Expiry is a
+Unix epoch second and must be inside that file's policy maximum.
+USAGE
+  exit 2
+}
+
+# Test mode is intentionally usable only by an unprivileged test process. sudo
+# runs the production path after changing uid to root, and the installed sudoers
+# rule is NOSETENV, so it cannot redirect the real wrapper to caller-controlled
+# state or configuration.
+TEST_MODE=0
+if [ "${DEFCON_CHAOS_TEST_MODE:-}" = '1' ] && [ "$(id -u)" -ne 0 ]; then
+  TEST_MODE=1
+  CONFIG_FILE=${DEFCON_CHAOS_TEST_CONFIG:?DEFCON_CHAOS_TEST_CONFIG is required in test mode}
+  STATE_DIR=${DEFCON_CHAOS_TEST_STATE:?DEFCON_CHAOS_TEST_STATE is required in test mode}
+  RUN_DIR=${DEFCON_CHAOS_TEST_RUN:?DEFCON_CHAOS_TEST_RUN is required in test mode}
+  PATH=${DEFCON_CHAOS_TEST_PATH:?DEFCON_CHAOS_TEST_PATH is required in test mode}:$PATH
+else
+  CONFIG_FILE=/etc/defcon-chaos/targets.conf
+  STATE_DIR=/var/lib/defcon-chaos/jobs
+  RUN_DIR=/run/defcon-chaos
+fi
+
+require_root() {
+  if [ "$TEST_MODE" != '1' ] && [ "$(id -u)" -ne 0 ]; then
+    die 'must run as root (use the restricted sudo rule)'
+  fi
+}
+
+valid_target() {
+  [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}$ ]]
+}
+
+valid_unit() {
+  # Unit names come from root-owned config, but validate again before passing
+  # them to systemctl. The wrapper intentionally supports services only.
+  [[ "$1" =~ ^[A-Za-z0-9@_.-]+\.service$ ]]
+}
+
+valid_interface() {
+  [[ "$1" =~ ^[A-Za-z0-9_.:-]{1,32}$ ]]
+}
+
+valid_job() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]
+}
+
+valid_baseline_qdisc() {
+  case "$1" in fq_codel|pfifo_fast|noqueue) return 0 ;; *) return 1 ;; esac
+}
+
+decimal() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+decimal_value() {
+  decimal "$1" || return 1
+  # The values below are bounded before any arithmetic that matters. 10# avoids
+  # Bash interpreting a leading zero as octal.
+  printf '%s\n' "$((10#$1))"
+}
+
+assert_secure_config() {
+  [ -f "$CONFIG_FILE" ] || die "missing configuration: $CONFIG_FILE"
+  [ -L "$CONFIG_FILE" ] && die "configuration must not be a symlink: $CONFIG_FILE"
+  if [ "$TEST_MODE" = '1' ]; then return; fi
+  [ "$(stat -c '%u' "$CONFIG_FILE")" = '0' ] || die 'configuration must be owned by root'
+  local mode
+  mode=$(stat -c '%a' "$CONFIG_FILE")
+  (( (8#$mode & 8#22) == 0 )) || die 'configuration must not be group- or world-writable'
+}
+
+declare -a TARGET_IDS=()
+declare -A TARGET_UNIT=()
+declare -A TARGET_INTERFACE=()
+declare -A TARGET_PORT=()
+declare -A TARGET_BASELINE=()
+MAX_TTL_SECONDS=0
+
+load_config() {
+  assert_secure_config
+  TARGET_IDS=()
+  TARGET_UNIT=()
+  TARGET_INTERFACE=()
+  TARGET_PORT=()
+  TARGET_BASELINE=()
+  MAX_TTL_SECONDS=0
+
+  local kind target unit interface port baseline extra line_number=0 port_value ttl_value
+  while IFS=$' \t' read -r kind target unit interface port baseline extra; do
+    line_number=$((line_number + 1))
+    case "${kind:-}" in
+      ''|'#'*) continue ;;
+      policy)
+        [ -z "${interface:-}" ] && [ -z "${port:-}" ] && [ -z "${baseline:-}" ] && [ -z "${extra:-}" ] || die "invalid policy record at line $line_number"
+        [ "$MAX_TTL_SECONDS" = '0' ] || die 'policy may appear only once'
+        ttl_value=$(decimal_value "${target:-}") || die "invalid policy TTL at line $line_number"
+        (( ttl_value >= 30 && ttl_value <= 3600 )) || die 'policy TTL must be between 30 and 3600 seconds'
+        MAX_TTL_SECONDS=$ttl_value
+        ;;
+      target)
+        [ -n "${target:-}" ] && [ -n "${unit:-}" ] && [ -n "${interface:-}" ] && [ -n "${port:-}" ] && [ -n "${baseline:-}" ] && [ -z "${extra:-}" ] || die "invalid target record at line $line_number"
+        valid_target "$target" || die "invalid target identifier at line $line_number"
+        valid_unit "$unit" || die "invalid unit at line $line_number"
+        valid_interface "$interface" || die "invalid interface at line $line_number"
+        port_value=$(decimal_value "$port") || die "invalid P2P port at line $line_number"
+        (( port_value >= 1024 && port_value <= 65535 )) || die "P2P port outside allowed range at line $line_number"
+        valid_baseline_qdisc "$baseline" || die "unsupported baseline qdisc at line $line_number"
+        [[ -v "TARGET_UNIT[$target]" ]] && die "duplicate target: $target"
+        TARGET_IDS+=("$target")
+        TARGET_UNIT["$target"]=$unit
+        TARGET_INTERFACE["$target"]=$interface
+        TARGET_PORT["$target"]=$port_value
+        TARGET_BASELINE["$target"]=$baseline
+        ;;
+      *) die "unknown configuration record at line $line_number" ;;
+    esac
+  done < "$CONFIG_FILE"
+
+  (( MAX_TTL_SECONDS > 0 )) || die 'configuration needs exactly one policy record'
+  (( ${#TARGET_IDS[@]} > 0 )) || die 'configuration needs at least one target record'
+}
+
+require_target() {
+  valid_target "$1" || die 'invalid target identifier'
+  [[ -v "TARGET_UNIT[$1]" ]] || die "target is not allowlisted: $1"
+}
+
+require_job() {
+  valid_job "$1" || die 'invalid job identifier'
+}
+
+require_expiry() {
+  local expiry now max
+  expiry=$(decimal_value "$1") || die 'expiry must be a decimal epoch second'
+  [[ "$1" =~ ^[0-9]{10}$ ]] || die 'expiry must be a ten-digit epoch second'
+  now=$(date +%s)
+  max=$((now + MAX_TTL_SECONDS))
+  (( expiry > now )) || die 'expiry must be in the future'
+  (( expiry <= max )) || die "expiry exceeds the ${MAX_TTL_SECONDS}s policy"
+}
+
+require_fault_numbers() {
+  local latency jitter loss
+  latency=$(decimal_value "$1") || die 'latency must be an integer millisecond value'
+  jitter=$(decimal_value "$2") || die 'jitter must be an integer millisecond value'
+  loss=$(decimal_value "$3") || die 'loss must be an integer percentage'
+  (( latency >= 1 && latency <= 2000 )) || die 'latency must be 1..2000 ms'
+  (( jitter <= latency )) || die 'jitter must not exceed latency'
+  (( loss >= 0 && loss <= 100 )) || die 'loss must be 0..100 percent'
+}
+
+prepare_directories() {
+  mkdir -p -- "$STATE_DIR" "$RUN_DIR"
+  chmod 700 -- "$STATE_DIR" "$RUN_DIR"
+}
+
+job_file() {
+  printf '%s/job-%s.env\n' "$STATE_DIR" "$1"
+}
+
+declare -A JOB=()
+
+load_job() {
+  local job=$1 file key value extra
+  require_job "$job"
+  file=$(job_file "$job")
+  [ -f "$file" ] || die "job not found: $job"
+  [ -L "$file" ] && die "job record must not be a symlink: $job"
+  JOB=()
+  while IFS='=' read -r key value extra; do
+    [ -n "${key:-}" ] || die "invalid job record: $job"
+    [ -z "${extra:-}" ] || die "invalid job record: $job"
+    case "$key" in kind|target|unit|interface|port|baseline|prior_active|expires|latency|jitter|loss) ;;
+      *) die "invalid job record key: $key" ;;
+    esac
+    [[ -v "JOB[$key]" ]] && die "duplicate job record key: $key"
+    JOB["$key"]=$value
+  done < "$file"
+
+  [ -n "${JOB[kind]:-}" ] && [ -n "${JOB[target]:-}" ] && [ -n "${JOB[expires]:-}" ] || die "incomplete job record: $job"
+  valid_target "${JOB[target]}" || die "invalid job target: $job"
+  decimal "${JOB[expires]}" || die "invalid job expiry: $job"
+  case "${JOB[kind]}" in
+    service)
+      valid_unit "${JOB[unit]:-}" || die "invalid service unit in job: $job"
+      case "${JOB[prior_active]:-}" in yes|no) ;; *) die "invalid service state in job: $job" ;; esac
+      ;;
+    netem)
+      valid_interface "${JOB[interface]:-}" || die "invalid interface in job: $job"
+      decimal "${JOB[port]:-}" || die "invalid port in job: $job"
+      valid_baseline_qdisc "${JOB[baseline]:-}" || die "invalid baseline qdisc in job: $job"
+      require_fault_numbers "${JOB[latency]:-}" "${JOB[jitter]:-}" "${JOB[loss]:-}"
+      ;;
+    *) die "invalid job kind: $job" ;;
+  esac
+}
+
+write_job() {
+  local job=$1 content=$2 file tmp
+  require_job "$job"
+  file=$(job_file "$job")
+  [ ! -e "$file" ] || die "job already exists: $job"
+  tmp=$(mktemp "$STATE_DIR/.job.XXXXXX")
+  chmod 600 -- "$tmp"
+  # Command substitution trims a final newline from the prepared record; put it
+  # back so the strict reader sees the last field as well.
+  printf '%s\n' "$content" > "$tmp"
+  mv -f -- "$tmp" "$file"
+}
+
+target_has_active_job() {
+  local target=$1 file job
+  while IFS= read -r -d '' file; do
+    job=${file##*/job-}
+    job=${job%.env}
+    load_job "$job"
+    [ "${JOB[target]}" = "$target" ] && return 0
+  done < <(find "$STATE_DIR" -maxdepth 1 -type f -name 'job-*.env' -print0)
+  return 1
+}
+
+clear_loaded_job() {
+  local job=$1 file
+  file=$(job_file "$job")
+  case "${JOB[kind]}" in
+    service)
+      if [ "${JOB[prior_active]}" = 'yes' ]; then
+        systemctl start "${JOB[unit]}"
+      else
+        systemctl stop "${JOB[unit]}"
+      fi
+      ;;
+    netem)
+      # The wrapper only applies its temporary prio root qdisc after seeing the
+      # declared baseline; recovery restores that closed, enumerated baseline.
+      tc qdisc replace dev "${JOB[interface]}" root "${JOB[baseline]}"
+      ;;
+  esac
+  rm -f -- "$file"
+}
+
+apply_service() {
+  local action=$1 target=$2 job=$3 expiry=$4 unit prior content
+  case "$action" in start|stop|restart) ;; *) die 'service action must be start, stop or restart' ;; esac
+  require_target "$target"
+  require_job "$job"
+  require_expiry "$expiry"
+  target_has_active_job "$target" && die "target already has an active job: $target"
+  unit=${TARGET_UNIT[$target]}
+  if systemctl is-active --quiet "$unit"; then prior=yes; else prior=no; fi
+  content=$(printf 'kind=service\ntarget=%s\nunit=%s\nprior_active=%s\nexpires=%s\n' "$target" "$unit" "$prior" "$expiry")
+  write_job "$job" "$content"
+  if ! systemctl "$action" "$unit"; then
+    load_job "$job"
+    clear_loaded_job "$job" || true
+    die "systemctl $action failed for $target"
+  fi
+}
+
+apply_netem() {
+  local target=$1 job=$2 expiry=$3 latency=$4 jitter=$5 loss=$6 interface port baseline content current
+  require_target "$target"
+  require_job "$job"
+  require_expiry "$expiry"
+  require_fault_numbers "$latency" "$jitter" "$loss"
+  target_has_active_job "$target" && die "target already has an active job: $target"
+  interface=${TARGET_INTERFACE[$target]}
+  port=${TARGET_PORT[$target]}
+  baseline=${TARGET_BASELINE[$target]}
+  current=$(tc qdisc show dev "$interface" 2>/dev/null || true)
+  [[ "$current" == *"qdisc $baseline "* ]] || die "interface $interface is not at its declared $baseline baseline"
+  content=$(printf 'kind=netem\ntarget=%s\ninterface=%s\nport=%s\nbaseline=%s\nlatency=%s\njitter=%s\nloss=%s\nexpires=%s\n' "$target" "$interface" "$port" "$baseline" "$latency" "$jitter" "$loss" "$expiry")
+  write_job "$job" "$content"
+  if ! tc qdisc replace dev "$interface" root handle 1: prio || \
+    ! tc qdisc replace dev "$interface" parent 1:3 handle 30: netem delay "${latency}ms" "${jitter}ms" loss "${loss}%" || \
+    ! tc filter replace dev "$interface" protocol ip parent 1: prio 3 u32 match ip dport "$port" 0xffff flowid 1:3; then
+    load_job "$job"
+    clear_loaded_job "$job" || true
+    die "tc refused network fault for $target"
+  fi
+}
+
+status_target() {
+  local target=$1 unit interface
+  require_target "$target"
+  unit=${TARGET_UNIT[$target]}
+  interface=${TARGET_INTERFACE[$target]}
+  printf 'target=%s\nunit=%s\nunit_active=' "$target" "$unit"
+  if systemctl is-active --quiet "$unit"; then printf 'yes\n'; else printf 'no\n'; fi
+  printf 'interface=%s\n' "$interface"
+  tc qdisc show dev "$interface"
+}
+
+clear_job() {
+  local target=$1 job=$2
+  require_target "$target"
+  load_job "$job"
+  [ "${JOB[target]}" = "$target" ] || die "job $job does not belong to target $target"
+  clear_loaded_job "$job"
+}
+
+recover_jobs() {
+  local mode=$1 now file job expiry
+  now=$(date +%s)
+  while IFS= read -r -d '' file; do
+    job=${file##*/job-}
+    job=${job%.env}
+    load_job "$job"
+    expiry=$(decimal_value "${JOB[expires]}") || die "invalid job expiry: $job"
+    if [ "$mode" = 'all' ] || (( expiry <= now )); then
+      clear_loaded_job "$job"
+    fi
+  done < <(find "$STATE_DIR" -maxdepth 1 -type f -name 'job-*.env' -print0)
+}
+
+verify() {
+  load_config
+  command -v systemctl >/dev/null 2>&1 || die 'systemctl is not available'
+  command -v tc >/dev/null 2>&1 || die 'tc is not available'
+  printf 'defcon-chaos version=%s targets=%s max_ttl_seconds=%s\n' "$VERSION" "${#TARGET_IDS[@]}" "$MAX_TTL_SECONDS"
+}
+
+main() {
+  local command=${1:-}
+  case "$command" in version) printf '%s\n' "$VERSION"; return ;; esac
+  require_root
+  prepare_directories
+  exec 9>"$RUN_DIR/defcon-chaos.lock"
+  flock -n 9 || die 'another defcon-chaos operation is running'
+
+  case "$command" in
+    verify)
+      [ "$#" -eq 1 ] || usage
+      verify
+      ;;
+    status)
+      [ "$#" -eq 2 ] || usage
+      load_config
+      status_target "$2"
+      ;;
+    service)
+      [ "$#" -eq 5 ] || usage
+      load_config
+      apply_service "$2" "$3" "$4" "$5"
+      ;;
+    netem)
+      [ "$#" -eq 7 ] || usage
+      load_config
+      apply_netem "$2" "$3" "$4" "$5" "$6" "$7"
+      ;;
+    clear)
+      [ "$#" -eq 3 ] || usage
+      load_config
+      clear_job "$2" "$3"
+      ;;
+    recover-expired)
+      [ "$#" -eq 1 ] || usage
+      recover_jobs expired
+      ;;
+    recover-all)
+      [ "$#" -eq 1 ] || usage
+      recover_jobs all
+      ;;
+    *) usage ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,3 @@
+# Copy only through install.sh, which substitutes a validated local operator.
+# This is intentionally one wrapper command, not systemctl/tc/ssh access.
+chaosops ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/defcon-chaos *

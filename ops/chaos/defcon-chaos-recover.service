@@ -1,0 +1,12 @@
+[Unit]
+Description=Recover expired DeFCoN chaos jobs
+Documentation=file:/usr/local/sbin/defcon-chaos
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/defcon-chaos recover-expired
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/defcon-chaos /run/defcon-chaos

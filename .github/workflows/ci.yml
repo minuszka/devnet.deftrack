@@ -27,6 +27,12 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Verify chaos wrapper package
+        run: npm run verify:chaos
+
       # server and client import @devnet-deftrack/shared as a built package, so
       # its declarations must exist before they can be typechecked. A local dev
       # tree already has shared/dist from an earlier build; a clean CI checkout

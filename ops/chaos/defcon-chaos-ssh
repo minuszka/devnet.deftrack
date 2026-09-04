@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# Narrow SSH transport for the root wrapper. It is intentionally not wired into
+# the explorer yet: the day-13 pilot supplies private inventory and approval.
+set -euo pipefail
+IFS=$'\n\t'
+PATH=/usr/bin:/bin
+
+die() { printf 'defcon-chaos-ssh: %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  defcon-chaos-ssh <inventory.conf> status <target>
+  defcon-chaos-ssh <inventory.conf> service <start|stop|restart> <target> <job-id> <expires-at-epoch>
+  defcon-chaos-ssh <inventory.conf> netem <target> <job-id> <expires-at-epoch> <latency-ms> <jitter-ms> <loss-percent>
+  defcon-chaos-ssh <inventory.conf> clear <target> <job-id>
+USAGE
+  exit 2
+}
+valid_target() { [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}$ ]]; }
+valid_job() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; }
+decimal() { [[ "$1" =~ ^[0-9]+$ ]]; }
+valid_destination() { [[ "$1" =~ ^[A-Za-z0-9_.@:-]{1,255}$ ]]; }
+
+[ "$#" -ge 3 ] || usage
+inventory=$1
+shift
+[ -f "$inventory" ] || die "missing inventory: $inventory"
+[ -L "$inventory" ] && die 'inventory must not be a symlink'
+command=$1
+target=''
+case "$command" in
+  status)
+    [ "$#" -eq 2 ] || usage; target=$2; valid_target "$target" || die 'invalid target' ;;
+  service)
+    [ "$#" -eq 5 ] || usage
+    case "$2" in start|stop|restart) ;; *) die 'invalid service action' ;; esac
+    target=$3; valid_target "$target" || die 'invalid target'; valid_job "$4" || die 'invalid job'; decimal "$5" || die 'invalid expiry' ;;
+  netem)
+    [ "$#" -eq 7 ] || usage
+    target=$2; valid_target "$target" || die 'invalid target'; valid_job "$3" || die 'invalid job'
+    decimal "$4" && decimal "$5" && decimal "$6" && decimal "$7" || die 'netem values must be decimal' ;;
+  clear)
+    [ "$#" -eq 3 ] || usage
+    target=$2; valid_target "$target" || die 'invalid target'; valid_job "$3" || die 'invalid job' ;;
+  *) usage ;;
+esac
+
+destination=''
+while IFS=$' \t' read -r kind configured_target configured_destination extra; do
+  case "${kind:-}" in ''|'#'*) continue ;; esac
+  [ "$kind" = 'target' ] && [ -n "${configured_target:-}" ] && [ -n "${configured_destination:-}" ] && [ -z "${extra:-}" ] || die 'invalid inventory record'
+  valid_target "$configured_target" || die 'invalid inventory target'
+  valid_destination "$configured_destination" || die 'invalid SSH destination'
+  if [ "$configured_target" = "$target" ]; then
+    [ -z "$destination" ] || die "duplicate inventory target: $target"
+    destination=$configured_destination
+  fi
+done < "$inventory"
+[ -n "$destination" ] || die "target is absent from private inventory: $target"
+
+# Every remote argument has passed a closed lexical validator above. The fixed
+# wrapper path and sudo -n make this a bounded transport, not remote shell.
+SSH_BIN=${DEFCON_CHAOS_TEST_SSH_BIN:-ssh}
+exec "$SSH_BIN" -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=15 -o StrictHostKeyChecking=yes \
+  "$destination" sudo -n /usr/local/sbin/defcon-chaos "$@"
