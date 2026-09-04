@@ -12,6 +12,7 @@ import {
 import { AdminSession } from '../models/AdminSession.js';
 import { requireAdminApiKey } from './requireAdminApiKey.js';
 import { sendError } from '../utils/http.js';
+import { cloudflareAccessJwtEnabled } from './cloudflareAccessJwt.js';
 
 /**
  * Who a request is acting as, once it has been let in by either door.
@@ -35,7 +36,12 @@ declare module 'express-serve-static-core' {
 
 export function browserSignInEnabled(): boolean {
   const browser = config.adminBrowser;
-  return browser.identityHeader !== '' && browser.trustedProxies.length > 0 && browser.identities.trim() !== '';
+  const hasIdentitySource = cloudflareAccessJwtEnabled() || browser.identityHeader !== '';
+  // A production browser door accepts only a signed Cloudflare Access assertion.
+  // Development keeps the narrow local-proxy/header route so the lab can prove
+  // sessions without a public Access tenant.
+  const hasRequiredProductionProof = config.env !== 'production' || cloudflareAccessJwtEnabled();
+  return hasIdentitySource && hasRequiredProductionProof && browser.trustedProxies.length > 0 && browser.identities.trim() !== '';
 }
 
 /**

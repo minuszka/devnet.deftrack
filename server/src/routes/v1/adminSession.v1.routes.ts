@@ -14,6 +14,7 @@ import { browserSignInEnabled, sessionForRequest } from '../../middleware/adminS
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { AdminSession } from '../../models/AdminSession.js';
 import { asyncRoute, sendData, sendError } from '../../utils/http.js';
+import { cloudflareAccessJwtEnabled, verifiedCloudflareAccessSubject } from '../../middleware/cloudflareAccessJwt.js';
 
 /**
  * Signing a browser in and out of the admin surface.
@@ -55,7 +56,16 @@ router.post(
       sendError(res, 403, 'sign-in is accepted only from the identity proxy');
       return;
     }
-    const asserted = req.get(config.adminBrowser.identityHeader) ?? '';
+    // In production the signed JWT is the identity source.  A forwarded email
+    // header by itself proves only that something wrote a string, whereas the
+    // assertion binds the email to this Access team and this application AUD.
+    const asserted = cloudflareAccessJwtEnabled()
+      ? await verifiedCloudflareAccessSubject(req)
+      : (req.get(config.adminBrowser.identityHeader) ?? '');
+    if (asserted === null) {
+      sendError(res, 403, 'sign-in was not accepted');
+      return;
+    }
     const identity = resolveIdentity(allowlist, asserted);
     if (identity === null) {
       sendError(res, 403, 'this identity is not permitted to sign in');

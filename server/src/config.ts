@@ -41,6 +41,37 @@ function optionalEnum<const T extends readonly string[]>(
   return raw as T[number];
 }
 
+function optionalHttpsOrigin(name: string): string {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return '';
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Environment variable ${name} must be an HTTPS origin`);
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw new Error(`Environment variable ${name} must be an HTTPS origin without a path`);
+  }
+  return parsed.origin;
+}
+
+function optionalAccessAudience(name: string): string {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return '';
+  if (raw.trim() !== raw || raw.length > 512) {
+    throw new Error(`Environment variable ${name} must be a trimmed Access audience tag`);
+  }
+  return raw;
+}
+
 /**
  * Nothing here has a default that points anywhere real. A missing variable is
  * a startup error, not a silent fallback to a production host.
@@ -69,8 +100,8 @@ export const config = {
    * deployment names may sign in, with the role this deployment gives it.
    */
   adminBrowser: {
-    // The header the proxy asserts the signed-in subject in, e.g.
-    // `cf-access-authenticated-user-email`. Empty disables browser sign-in.
+    // Development/VPN fallback identity header. In production Cloudflare Access
+    // JWT validation is compulsory and the verified `email` claim is used instead.
     identityHeader: (process.env.ADMIN_IDENTITY_HEADER ?? '').toLowerCase(),
     // Socket addresses that may assert that header. Compared against the peer
     // address, never X-Forwarded-For, which the client writes. Empty trusts nobody.
@@ -82,6 +113,14 @@ export const config = {
     // The Secure cookie attribute. On by default; the only place it may be off
     // is a lab served over plain http on loopback, and that has to be said.
     cookieSecure: optionalBool('ADMIN_COOKIE_SECURE', true),
+    accessJwt: {
+      // Cloudflare One team domain, e.g. https://example.cloudflareaccess.com.
+      // Both settings are blank together to leave the local lab's header-based
+      // proof available; a production browser door fails closed without them.
+      teamDomain: optionalHttpsOrigin('ADMIN_CLOUDFLARE_ACCESS_TEAM_DOMAIN'),
+      // The Application Audience (AUD) tag from the Access application settings.
+      audience: optionalAccessAudience('ADMIN_CLOUDFLARE_ACCESS_AUDIENCE'),
+    },
   },
 
   simulator: {
