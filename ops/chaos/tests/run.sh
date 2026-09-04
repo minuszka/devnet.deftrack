@@ -4,7 +4,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=$(mktemp -d)
 cleanup() {
   rm -f -- "$TMP/bin/systemctl" "$TMP/bin/tc" "$TMP/bin/ssh" \

@@ -3,7 +3,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 syntax_scripts=(defcon-chaos defcon-chaos-ssh install.sh uninstall.sh verify.sh tests/run.sh)
 for script in "${syntax_scripts[@]}"; do
   bash -n "$HERE/$script"

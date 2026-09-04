@@ -15,7 +15,7 @@ USAGE
   exit 2
 }
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 TARGETS=''
 OPERATOR=''
 DEST_ROOT=''
