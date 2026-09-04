@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
       identities: '{"alice@example.org":"safety-admin"}',
       sessionTtlMs: 60_000,
       cookieSecure: false,
+      accessJwt: { teamDomain: '', audience: '' },
     },
   },
   sessions: new Map<string, { subject: string; role: string; csrfToken: string; expiresAtMs: number; revokedAtMs: number | null }>(),
