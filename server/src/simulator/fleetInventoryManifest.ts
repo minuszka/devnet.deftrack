@@ -20,12 +20,12 @@ export const fleetInventoryManifestSchema = z
     inventoryId: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/),
     network: z.enum(['regtest', 'devnet']),
     /** Declared separately so a missing host cannot be hidden by fewer rows. */
-    expectedHostCount: z.number().int().min(1).max(20),
+    expectedHostCount: z.number().int().min(1).max(50),
     limits: z.object({
-      maxEnabledTargetsTotal: z.number().int().min(1).max(20),
-      maxEnabledTargetsPerHost: z.number().int().min(1).max(10),
+      maxEnabledTargetsTotal: z.number().int().min(1).max(250),
+      maxEnabledTargetsPerHost: z.number().int().min(1).max(50),
     }).strict(),
-    targets: z.array(simulationTargetRegistrationSchema).min(1).max(20),
+    targets: z.array(simulationTargetRegistrationSchema).min(1).max(250),
   })
   .strict()
   .superRefine((manifest, ctx) => {

@@ -196,4 +196,14 @@ describe('private simulation target resolution', () => {
       expect.objectContaining({ code: 'HOST_TARGET_LIMIT_EXCEEDED', targetId: 'mn-1' }),
     ]));
   });
+
+  it('keeps the full fleet inventory cap separate from the 20-target run selection cap', () => {
+    const registry = Array.from({ length: 152 }, (_, index) => registryTarget(index));
+    const inventory = resolve(registry);
+    expect(inventory.complete).toBe(true);
+    expect(inventory.snapshots).toHaveLength(152);
+    expect(() => selectResolvedSimulationTargets(inventory, {
+      mode: 'random', role: 'masternode', capability: 'service-control', count: 21, seed: 'too-many',
+    })).toThrow(/selection is too large/);
+  });
 });

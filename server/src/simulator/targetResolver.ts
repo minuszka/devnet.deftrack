@@ -71,9 +71,9 @@ export interface TargetResolutionPolicy {
   maxHostObservationAgeMs: number;
   maxHostHeightLagBlocks: number;
   requireExpectedBuild: boolean;
-  /** Fail closed rather than silently growing the eligible fault population. */
+  /** Fail closed rather than silently growing the complete declared inventory. */
   maxEnabledTargetsTotal: number;
-  /** A single host cannot acquire an unreviewed number of faultable services. */
+  /** A single host cannot acquire an unreviewed number of declared services. */
   maxEnabledTargetsPerHost: number;
 }
 
@@ -90,8 +90,12 @@ const DEFAULT_POLICY: TargetResolutionPolicy = {
   maxHostObservationAgeMs: 2 * 60_000,
   maxHostHeightLagBlocks: 2,
   requireExpectedBuild: true,
-  maxEnabledTargetsTotal: 20,
-  maxEnabledTargetsPerHost: 10,
+  // This is an inventory limit, not a single-run blast-radius limit. The
+  // latter stays MAX_RESOLVED_SELECTION below: the devnet already has more
+  // than twenty active masternodes, so using that run limit here made a full,
+  // otherwise valid inventory impossible to register.
+  maxEnabledTargetsTotal: 250,
+  maxEnabledTargetsPerHost: 50,
 };
 
 const MAX_RESOLVED_SELECTION = 20;
