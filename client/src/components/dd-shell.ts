@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { DEVNET_BANNER } from '@devnet-deftrack/shared';
-import { api, type HealthSnapshot } from '../lib/api.js';
+import type { HealthSnapshot } from '../lib/api.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
 import { ROUTES, matchRoute, installLinkInterceptor, type Match } from '../lib/router.js';
 import { baseStyles } from '../styles/shared.js';
@@ -28,7 +29,11 @@ export class DdShell extends LitElement {
 
   private _route: Match = matchRoute(location.pathname);
   private _health: HealthSnapshot | null = null;
-  private _timer: number | null = null;
+  /** The header's own poll: stops with the tab, cancels what it supersedes. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: HEALTH_REFRESH_MS,
+    load: (run) => this._loadHealth(run),
+  });
   private _onPop = (): void => {
     this._route = matchRoute(location.pathname);
     document.title = `devnet.deftrack — ${this._route.route.label}`;
@@ -220,19 +225,18 @@ export class DdShell extends LitElement {
     installLinkInterceptor();
     window.addEventListener('popstate', this._onPop);
     this._onPop();
-    void this._loadHealth();
-    this._timer = window.setInterval(() => void this._loadHealth(), HEALTH_REFRESH_MS);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('popstate', this._onPop);
-    if (this._timer !== null) clearInterval(this._timer);
   }
 
-  private async _loadHealth(): Promise<void> {
+  private async _loadHealth(run: PollRun): Promise<void> {
     try {
-      this._health = await api.health();
+      const health = await run.api.health();
+      if (run.stale) return;
+      this._health = health;
     } catch {
       // The chain line is decoration; a page's own error surface is the one
       // that matters, so a failed health poll stays quiet.

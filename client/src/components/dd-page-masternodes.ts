@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { MasternodeRow } from '@devnet-deftrack/shared';
-import { api } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -19,7 +20,11 @@ export class DdPageMasternodes extends LitElement {
   private _total = 0;
   private _error = '';
   private _loading = true;
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -40,27 +45,18 @@ export class DdPageMasternodes extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
-      const p = await api.masternodes({ limit: 200 });
+      const p = await run.api.masternodes({ limit: 200 });
+      if (run.stale) return;
       this._rows = p.items;
       this._total = p.total;
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     } finally {
-      this._loading = false;
+      if (!run.stale) this._loading = false;
     }
   }
 

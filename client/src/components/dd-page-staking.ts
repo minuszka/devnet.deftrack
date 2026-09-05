@@ -1,5 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import { api, type StakingHealth } from '../lib/api.js';
+import type { StakingHealth } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -24,7 +26,11 @@ export class DdPageStaking extends LitElement {
   private _blocks = 500;
   private _view: LeaderView = 'machines';
   private _error = '';
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -250,29 +256,21 @@ export class DdPageStaking extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
-      this._d = await api.stakingHealth(this._blocks);
+      const d = await run.api.stakingHealth(this._blocks);
+      if (run.stale) return;
+      this._d = d;
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     }
   }
 
   private _setWindow(n: number): void {
     this._blocks = n;
-    void this._load();
+    this._poll.refresh();
   }
 
   private _setView(v: LeaderView): void {

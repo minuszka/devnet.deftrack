@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { BanWaveReport, MasternodeEventRow, MasternodeTimelinePoint } from '@devnet-deftrack/shared';
-import { api } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -29,7 +30,11 @@ export class DdPagePose extends LitElement {
   private _events: MasternodeEventRow[] = [];
   private _error = '';
   private _loading = true;
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -65,32 +70,23 @@ export class DdPagePose extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
       const [timeline, waves, events] = await Promise.all([
-        api.masternodeTimeline(24),
-        api.banWaves(24 * 7),
-        api.masternodeEvents({ hours: 24 * 7, limit: 40 }),
+        run.api.masternodeTimeline(24),
+        run.api.banWaves(24 * 7),
+        run.api.masternodeEvents({ hours: 24 * 7, limit: 40 }),
       ]);
+      if (run.stale) return;
       this._points = timeline.points;
       this._waves = waves;
       this._events = events.items;
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     } finally {
-      this._loading = false;
+      if (!run.stale) this._loading = false;
     }
   }
 

@@ -398,3 +398,49 @@ export const controlStyles = css`
   .seg button:hover { color: var(--ink); }
   .seg button.on { background: var(--accent-wash-2); color: var(--accent); font-weight: 700; }
 `;
+
+/**
+ * The pager row under a table, and the small filter buttons above it.
+ *
+ * Three pages had carried their own byte-identical copy of this, and only one
+ * of them had a focus ring -- so the same control was keyboard-visible on one
+ * page and invisible on the next.
+ */
+export const pagerStyles = css`
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line-soft);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--ink-3);
+  }
+  .filters { display: flex; gap: 14px; flex-wrap: wrap; }
+  .group { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  button {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--surface-2);
+    color: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 5px 11px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
+  /* The pressed state is carried by aria-pressed and not by a class, so the
+     control tells a screen reader exactly what it tells the eye. */
+  button[aria-pressed='true'] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-wash);
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+`;
