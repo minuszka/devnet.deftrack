@@ -19,6 +19,7 @@
     "start": "node server/dist/index.js",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client",
     "test": "npm run test -w server && npm run test -w client",
+    "test:integration": "npm run test:integration -w server",
     "verify:chaos": "bash ops/chaos/verify.sh",
     "verify:shell": "bash ops/check-shell.sh",
     "verify:secrets": "bash ops/check-secret-gate.sh",

@@ -11,7 +11,8 @@
     "simulator": "node dist/cli/simulator.js",
     "db:explain": "npm run build --silent && node dist/scripts/explainQueries.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src",
+    "test": "vitest run src --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run src/integration",
     "start:lab": "node dist/labServer.js",
     "dev:lab": "tsx watch src/labServer.ts"
   },
