@@ -19,9 +19,16 @@ export type ZmqObservationListener = (topic: ZmqTopic) => void | Promise<void>;
  *
  * The socket must stay on localhost. It has no authentication of any kind.
  */
+/** First retry after the receive loop ends, then doubling. */
+const RECONNECT_INITIAL_MS = 2_000;
+/** The ceiling; a node down for an hour is retried every minute, not never. */
+const RECONNECT_MAX_MS = 60_000;
+
 export class ZmqService {
   private sock: Subscriber | null = null;
   private closing = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectDelayMs = RECONNECT_INITIAL_MS;
   /** Last sequence number seen per topic, for gap detection. */
   private lastSeq = new Map<ZmqTopic, number>();
   private received = 0;
@@ -52,7 +59,11 @@ export class ZmqService {
       logger.info('ZMQ listener disabled (no ZMQ_ENDPOINT); ChainLock timing falls back to polling');
       return;
     }
+    this.closing = false;
+    this.connect();
+  }
 
+  private connect(): void {
     const sock = new Subscriber();
     for (const topic of ZMQ_TOPICS) sock.subscribe(topic);
     sock.connect(config.zmq.endpoint);
@@ -62,8 +73,33 @@ export class ZmqService {
     void this.loop(sock);
   }
 
+  /**
+   * Come back after the receive loop ends.
+   *
+   * It used to end for good. The loop logged and returned, `sock` stayed
+   * non-null so `stats().connected` went on reporting a live listener, and
+   * ChainLock timing silently dropped to whatever the reconcile poll could see
+   * -- five-minute resolution reported as if it were event-time. Nothing said
+   * so, because the one field that would have said so was wrong.
+   */
+  private scheduleReconnect(): void {
+    if (this.closing || !this.enabled || this.reconnectTimer !== null) return;
+    const delay = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(RECONNECT_MAX_MS, this.reconnectDelayMs * 2);
+    logger.warn(`ZMQ listener disconnected; retrying in ${delay} ms`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.closing) this.connect();
+    }, delay);
+    this.reconnectTimer.unref?.();
+  }
+
   async stop(): Promise<void> {
     this.closing = true;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.sock?.close();
     this.sock = null;
   }
@@ -80,8 +116,19 @@ export class ZmqService {
         }
       }
     } catch (error) {
-      if (this.closing) return;
-      logger.error(`ZMQ listener stopped: ${error instanceof Error ? error.message : String(error)}`);
+      if (!this.closing) {
+        logger.error(`ZMQ listener stopped: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } finally {
+      // The iterator has ended, so this socket delivers nothing more -- whether
+      // it threw or was closed. Clearing it is what makes `connected` honest.
+      if (this.sock === sock) this.sock = null;
+      try {
+        sock.close();
+      } catch {
+        // Already closed; the point was to stop using it.
+      }
+      this.scheduleReconnect();
     }
   }
 
@@ -90,9 +137,14 @@ export class ZmqService {
     if (!msg) return;
 
     this.received++;
+    // A message arrived, so whatever the last outage was, it is over.
+    this.reconnectDelayMs = RECONNECT_INITIAL_MS;
 
     const gap = detectGap(msg.topic, this.lastSeq.get(msg.topic), msg.sequence);
-    this.lastSeq.set(msg.topic, msg.sequence);
+    // Only a sequence that was actually read. A malformed frame parses as -1,
+    // and storing that made the NEXT message incomparable too -- one bad frame
+    // blinded the gap detector for the message after it.
+    if (msg.sequence >= 0) this.lastSeq.set(msg.topic, msg.sequence);
     if (gap) {
       this.missed += gap.missed;
       // A gap is data, not an error to swallow: it states exactly what this

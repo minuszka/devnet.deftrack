@@ -24,7 +24,7 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
 **Következő pontos feladat:** a 7. nap maradéka — a kör-rekord egyeztetése a
-commitment-indexből, ZMQ-felügyelet, poll- és ZMQ-latencia szétválasztása.
+commitment-indexből, és a poll- illetve ZMQ-forrású latencia szétválasztása.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -534,6 +534,15 @@ Elfogadási kapu: egy egy hetes explorer-kiesés után a kör-rekord hiánytalan
   indexelt pillanatképekből jön, körönként. Ahol nincs pillanatkép, marad a mai
   szám — ez a korábbi viselkedés, és a lánc korai szakaszát fedi, ahol a szám
   nem mozgott.
+- **A ZMQ-vevő már nem hal meg csendben.** A ciklus eddig naplózott és
+  visszatért, a socket viszont nem nullázódott, tehát a `connected` **továbbra
+  is élő hallgatót jelentett** — és a ChainLock-időzítés észrevétlenül lecsúszott
+  arra, amit az egyeztető poll lát, vagyis ötperces felbontásra, esemény-időként
+  bemutatva. Épp az az egy mező volt hibás, ami ezt megmondta volna. Most a
+  ciklus vége nullázza a socketet, lezárja, és exponenciálisan visszalépő
+  újracsatlakozást ütemez (2 s-tól 60 s-ig), amit a `stop` elvág. Mellékesen: egy
+  hibás keret `-1` sorszáma többé nem kerül a térképbe, mert eddig a **következő**
+  üzenetet is összehasonlíthatatlanná tette.
 
 ## 8. nap – kliens: a fő üzenet
 
