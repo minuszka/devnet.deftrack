@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
     signingActiveQuorumCount: 4,
     formationGateHeight: 0,
   },
+  /** Newest first, as the collector loads them. */
+  snapshots: [] as { height: number; enabled: number }[],
   getBlockCount: vi.fn(),
   call: vi.fn(),
   logs: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -61,6 +63,9 @@ vi.mock('../models/Block.js', () => ({
 vi.mock('../models/DevnetOperator.js', () => ({
   DevnetOperator: { find: () => ({ select: () => ({ lean: async () => [] }) }) },
 }));
+vi.mock('../models/MasternodeSnapshot.js', () => ({
+  MasternodeSnapshot: { find: () => query(state.snapshots) },
+}));
 
 vi.mock('../config/llmq.js', () => ({
   trackedProfiles: () => [state.profile],
@@ -93,6 +98,7 @@ beforeEach(() => {
   // A tip well past the mining window of every scheduled height below it, and
   // one observed commitment far enough back that absence above it is evidence.
   state.getBlockCount.mockResolvedValue(8040);
+  state.snapshots = [];
 });
 
 /** listextended with a single old commitment, so `oldestObserved` is low. */
@@ -123,6 +129,45 @@ describe('a masternode count the node did not answer', () => {
 
     expect(writtenStatuses()).not.toContain('failed');
     expect(state.logs.warn).toHaveBeenCalledWith(expect.stringContaining('did not answer'));
+  });
+});
+
+describe('the count a round was actually drawn from', () => {
+  it('judges a round by the network at its own height, not by today’s', async () => {
+    // CalculateQuorum draws from the masternode list at the round's own base
+    // block. Judging by today's count reclassified history in both directions:
+    // during a ban wave (152 enabled down to 21) a round that genuinely failed
+    // with 152 members read as `impossible` and was never revisited, and after
+    // the revive the rounds that really were impossible read as failures.
+    state.snapshots = [
+      { height: 8_030, enabled: 152 },
+      { height: 7_790, enabled: 10 },
+    ];
+    state.call.mockImplementation(async (method: string) => {
+      if (method === 'quorum') return listExtended();
+      // Today the network is whole again -- which is exactly what used to be
+      // read back onto the rounds drawn while it was not.
+      return { enabled: 152, total: 152 };
+    });
+
+    await new QuorumRoundService().collect();
+
+    // The rounds below 8030 were drawn from 10 enabled, far under minSize 44.
+    expect(writtenStatuses()).toContain('impossible');
+  });
+
+  it('falls back to the current count for heights older than any snapshot', async () => {
+    // Nothing to read there, and the era it covers is the early chain, where
+    // the count was not moving. The fallback is the previous behaviour.
+    state.snapshots = [];
+    state.call.mockImplementation(async (method: string) => {
+      if (method === 'quorum') return listExtended();
+      return { enabled: 152, total: 152 };
+    });
+
+    await new QuorumRoundService().collect();
+
+    expect(writtenStatuses()).toContain('failed');
   });
 });
 

@@ -4,6 +4,7 @@ import { rpc } from './rpc.service.js';
 import { maxPossibleBan, trackedProfiles, type LlmqProfile } from '../config/llmq.js';
 import { QuorumRound, type RoundMember, type RoundStatus } from '../models/QuorumRound.js';
 import { Block } from '../models/Block.js';
+import { MasternodeSnapshot } from '../models/MasternodeSnapshot.js';
 import {
   absenceIsEvidence,
   classifyRound,
@@ -54,6 +55,13 @@ interface QuorumInfoResult {
 type ObservedRounds = Map<number, ListExtendedEntry & { quorumHash: string }>;
 /** Every tracked profile's commitments from a single listextended call. */
 type ObservedByProfile = Map<string, ObservedRounds>;
+
+/**
+ * How many masternode snapshots to hold for the per-round count. Sorted newest
+ * first, so this is a window back from the tip; a round older than the window
+ * falls back to the current count, exactly as before.
+ */
+const SNAPSHOT_LOOKBACK = 500;
 
 interface RoundPlan {
   profile: LlmqProfile;
@@ -107,6 +115,9 @@ export class QuorumRoundService {
     const available = await this.availableMasternodes();
 
     const plans = await Promise.all(this.profiles.map((p) => this.planProfile(p, tip)));
+    // How many masternodes each round could actually have drawn from. Loaded
+    // once for the whole tick; see `enabledAtHeight`.
+    const enabledAt = await this.enabledCountAtHeight(available);
 
     // The operator index is one query for all profiles, and is skipped
     // entirely when no profile has a round to write.
@@ -116,7 +127,7 @@ export class QuorumRoundService {
 
     const summary: string[] = [];
     for (const plan of plans) {
-      const counts = await this.applyPlan(plan, tip, observed, available, operators);
+      const counts = await this.applyPlan(plan, tip, observed, enabledAt, operators);
       summary.push(
         `${plan.profile.llmqName} ${counts.formed}/${counts.failed}/${counts.pending}` +
           (counts.impossible > 0 ? `/${counts.impossible} below minSize` : '')
@@ -169,14 +180,11 @@ export class QuorumRoundService {
     plan: RoundPlan,
     tip: number,
     observed: ObservedByProfile,
-    available: number | null,
+    enabledAt: (height: number) => number | null,
     operators: OperatorIndex
   ): Promise<{ formed: number; failed: number; pending: number; impossible: number }> {
     const p = plan.profile;
     const seen = observed.get(p.llmqName) ?? new Map();
-    // CalculateQuorum returns min(profile size, masternodes available), so the
-    // effective size differs per profile even though the count does not.
-    const effectiveSize = available === null ? null : Math.min(p.size, available);
     // The oldest commitment listextended still reports for this profile. Below
     // it, a missing commitment is out of the RPC's reach rather than absent.
     const oldestObserved = seen.size > 0 ? Math.min(...seen.keys()) : null;
@@ -193,6 +201,14 @@ export class QuorumRoundService {
       // never receive a verdict, whichever path put it in the plan.
       if (!isSchedulable(expectedHeight, p.formationGateHeight)) continue;
       const entry = seen.get(expectedHeight);
+      // CalculateQuorum draws from the masternode list AT THE ROUND'S OWN base
+      // block, not from today's. Using the current count meant a ban wave
+      // reclassified history in both directions: during one (152 enabled down
+      // to 21) a round that genuinely failed with 152 members read as
+      // `impossible` and was never revisited, and after the revive the rounds
+      // that really were impossible read as failures.
+      const enabled = enabledAt(expectedHeight);
+      const effectiveSize = enabled === null ? null : Math.min(p.size, enabled);
       const status: RoundStatus = classifyRound({
         tip,
         expectedHeight,
@@ -297,6 +313,35 @@ export class QuorumRoundService {
     }
   }
 
+
+  /**
+   * Enabled masternodes as of a height, from the indexed snapshots.
+   *
+   * A snapshot is written whenever the counts change and at least every five
+   * minutes, so the newest one at or before a height is what the network looked
+   * like when that round was drawn. Loaded once per tick rather than per round.
+   *
+   * Before the first snapshot there is nothing to read, and the current count is
+   * used instead -- the old behaviour, and the era it covers is the early chain,
+   * where the count was not moving. A tick with no count at all answers null,
+   * and a null never becomes a verdict.
+   */
+  private async enabledCountAtHeight(
+    fallback: number | null
+  ): Promise<(height: number) => number | null> {
+    const rows = await MasternodeSnapshot.find()
+      .sort({ height: -1 })
+      .limit(SNAPSHOT_LOOKBACK)
+      .select('height enabled')
+      .lean();
+    return (height: number): number | null => {
+      for (const row of rows) {
+        if (row.height <= height) return row.enabled;
+      }
+      return fallback;
+    };
+  }
+
   private async operatorIndex(): Promise<OperatorIndex> {
     return new OperatorIndex(
       await DevnetOperator.find().select('operatorLabel proTxHashes hostIps').lean()
@@ -384,6 +429,15 @@ export class QuorumRoundService {
     if (entry?.minedBlockHash) {
       const minedBlock = await Block.findOne({ hash: entry.minedBlockHash }).select('height').lean();
       minedHeight = minedBlock?.height ?? null;
+      // "the next poll fills it" was only true when the block happened to be
+      // indexed already: shouldRefreshRound refuses a round once
+      // detailsComplete is set, and it was set on the `quorum info` answer
+      // alone. This collector runs at the node's tip while the block indexer
+      // lags behind it, so a round resolved just after its commitment was mined
+      // kept minedHeight null for ever -- and the reorg reset cuts on
+      // minedHeight, so exactly those rounds, the freshly mined ones and the
+      // likeliest to be reorged away, were the ones it could not reach.
+      if (minedHeight === null) detailsComplete = false;
     }
 
     await QuorumRound.updateOne(
