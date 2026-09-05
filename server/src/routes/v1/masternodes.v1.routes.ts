@@ -5,15 +5,20 @@ import { MasternodeEvent } from '../../models/MasternodeEvent.js';
 import { MasternodeSnapshot } from '../../models/MasternodeSnapshot.js';
 import { Block } from '../../models/Block.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
-import { asyncRoute, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
+import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
+import { hostLabel, redactService } from '../../domain/hostRedaction.js';
+import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 
 const router = Router();
 
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
   banned: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
-  hostIp: z.string().min(1).max(64).optional(),
+  // Deliberately no host filter. The old one took a raw address, which on a
+  // public route is an oracle: ask for one, see whether rows come back. A
+  // filter on the published label needs the label stored beside the row, which
+  // it is not yet; an unindexable post-read filter would break `total`.
   operatorLabel: z.string().min(1).max(64).optional(),
 });
 const hoursQuery = z.object({
@@ -21,7 +26,7 @@ const hoursQuery = z.object({
 });
 const eventsQuery = hoursQuery.extend({
   limit: z.coerce.number().int().min(1).max(500).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
   type: z
     .enum([
       'registered',
@@ -48,11 +53,11 @@ router.get(
   validateQuery(listQuery),
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<z.infer<typeof listQuery>>(res);
+    const policy = hostRedactionPolicy();
     // Rows dropped from `protx list registered` are kept for history but are
     // not part of "what the network looks like now".
     const filter: Record<string, unknown> = { active: { $ne: false } };
     if (q.banned !== undefined) filter.banned = q.banned;
-    if (q.hostIp) filter.hostIp = q.hostIp;
     if (q.operatorLabel) filter.operatorLabel = q.operatorLabel;
 
     const [rows, total] = await Promise.all([
@@ -73,8 +78,8 @@ router.get(
       page(
         rows.map((m) => ({
           proTxHash: m.proTxHash,
-          service: m.service,
-          hostIp: m.hostIp,
+          service: redactService(m.service, policy),
+          hostLabel: hostLabel(m.hostIp, policy),
           operatorLabel: m.operatorLabel,
           banned: m.banned,
           poSePenalty: m.poSePenalty,
@@ -133,6 +138,7 @@ router.get(
   validateQuery(eventsQuery),
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<z.infer<typeof eventsQuery>>(res);
+    const policy = hostRedactionPolicy();
     const filter: Record<string, unknown> = { detectedAt: { $gte: new Date(Date.now() - q.hours * 3600_000) } };
     if (q.type) filter.type = q.type;
 
@@ -158,9 +164,9 @@ router.get(
           height: e.height,
           penaltyBefore: e.penaltyBefore,
           penaltyAfter: e.penaltyAfter,
-          serviceBefore: e.serviceBefore,
-          serviceAfter: e.serviceAfter,
-          hostIp: e.hostIp,
+          serviceBefore: redactService(e.serviceBefore, policy),
+          serviceAfter: redactService(e.serviceAfter, policy),
+          hostLabel: hostLabel(e.hostIp, policy),
           operatorLabel: e.operatorLabel,
           detectedAt: e.detectedAt.toISOString(),
         })),
@@ -187,6 +193,7 @@ router.get(
   validateQuery(waveQuery),
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<z.infer<typeof waveQuery>>(res);
+    const policy = hostRedactionPolicy();
     const since = new Date(Date.now() - q.hours * 3600_000);
 
     const [bansByDetection, snapshots] = await Promise.all([
@@ -244,7 +251,7 @@ router.get(
         });
       }
       const w = waves.at(-1)!;
-      const host = ban.hostIp ?? '(unknown)';
+      const host = hostLabel(ban.hostIp, policy) ?? '(unknown)';
       const op = ban.operatorLabel ?? '(unattributed)';
       w.byHost[host] = (w.byHost[host] ?? 0) + 1;
       w.byOperator[op] = (w.byOperator[op] ?? 0) + 1;
@@ -269,7 +276,7 @@ router.get(
         maxPossibleBanAtStart: ceilingAt(w.startedAt),
         firstHeight: Math.min(...w.heights),
         lastHeight: Math.max(...w.heights),
-        byHost: Object.entries(w.byHost).map(([hostIp, count]) => ({ hostIp, count })).sort((a, b) => b.count - a.count),
+        byHost: Object.entries(w.byHost).map(([host, count]) => ({ hostLabel: host, count })).sort((a, b) => b.count - a.count),
         byOperator: Object.entries(w.byOperator).map(([operatorLabel, count]) => ({ operatorLabel, count })).sort((a, b) => b.count - a.count),
       }))
       .sort((a, b) => b.size - a.size);

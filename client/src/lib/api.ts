@@ -328,7 +328,7 @@ export const api = {
   healthTimeline: (hours: number) =>
     get<HealthTimeline>('/quorum-rounds/health-timeline', { hours }),
 
-  masternodes: (params?: { limit?: number; offset?: number; banned?: boolean; hostIp?: string }) =>
+  masternodes: (params?: { limit?: number; offset?: number; banned?: boolean }) =>
     get<Page<MasternodeRow>>('/masternodes', params),
 
   masternodeTimeline: (hours: number) =>

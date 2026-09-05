@@ -180,8 +180,11 @@ export interface OperatorReliabilityRow {
 
 export interface MasternodeRow {
   proTxHash: string;
+  /** Redacted: `<host label>:<port>`, or the raw service when the deployment
+   *  opts in with PUBLIC_HOST_ADDRESSES. */
   service: string | null;
-  hostIp: string | null;
+  /** Stable per-host label. Never an address unless the deployment opts in. */
+  hostLabel: string | null;
   operatorLabel: string | null;
   banned: boolean;
   poSePenalty: number;
@@ -230,7 +233,7 @@ export interface MasternodeEventRow {
   penaltyAfter: number | null;
   serviceBefore: string | null;
   serviceAfter: string | null;
-  hostIp: string | null;
+  hostLabel: string | null;
   operatorLabel: string | null;
   detectedAt: string;
 }
@@ -244,7 +247,7 @@ export interface BanWave {
   maxPossibleBanAtStart: number | null;
   firstHeight: number;
   lastHeight: number;
-  byHost: Array<{ hostIp: string; count: number }>;
+  byHost: Array<{ hostLabel: string; count: number }>;
   byOperator: Array<{ operatorLabel: string; count: number }>;
 }
 

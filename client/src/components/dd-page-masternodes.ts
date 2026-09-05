@@ -68,7 +68,7 @@ export class DdPageMasternodes extends LitElement {
   private _byHost(): Array<{ host: string; total: number; banned: number; penalised: number }> {
     const map = new Map<string, { total: number; banned: number; penalised: number }>();
     for (const m of this._rows) {
-      const key = m.hostIp ?? '(unknown)';
+      const key = m.hostLabel ?? '(unknown)';
       const e = map.get(key) ?? { total: 0, banned: 0, penalised: 0 };
       e.total++;
       if (m.banned) e.banned++;

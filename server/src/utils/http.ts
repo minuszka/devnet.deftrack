@@ -3,6 +3,15 @@ import type { ZodTypeAny, infer as ZodInfer } from 'zod';
 import type { ApiEnvelope, Page } from '@devnet-deftrack/shared';
 import { logger } from './logger.js';
 
+/**
+ * The furthest any paged endpoint will skip.
+ *
+ * `skip(n)` walks n documents inside the server before returning anything, so
+ * an unbounded offset lets an anonymous caller ask a public route for a full
+ * collection scan. Paging deeper than this is an export, not a browser.
+ */
+export const MAX_OFFSET = 100_000;
+
 export function sendData<T>(res: Response, data: T): void {
   const body: ApiEnvelope<T> = { success: true, data };
   res.json(body);

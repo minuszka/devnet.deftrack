@@ -4,13 +4,13 @@ import { config } from '../../config.js';
 import { ServiceEpoch } from '../../models/ServiceEpoch.js';
 import { firstCommittableBoundary } from '../../domain/dslSchedule.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
-import { asyncRoute, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
+import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
 
 const router = Router();
 
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
   status: z.enum(['committed', 'absent']).optional(),
 });
 type ListQuery = z.infer<typeof listQuery>;

@@ -199,7 +199,7 @@ export class DdPagePose extends LitElement {
                           <td class="r mono"><strong>${num(w.size)}</strong></td>
                           <td class="r mono ceiling">${num(w.maxPossibleBanAtStart)}</td>
                           <td class="r mono">${num(w.firstHeight)}–${num(w.lastHeight)}</td>
-                          <td>${w.byHost.map((h) => `${h.hostIp} (${h.count})`).join(', ')}</td>
+                          <td>${w.byHost.map((h) => `${h.hostLabel} (${h.count})`).join(', ')}</td>
                           <td>${w.byOperator.map((o) => `${o.operatorLabel} (${o.count})`).join(', ')}</td>
                         </tr>
                       `
@@ -242,7 +242,7 @@ export class DdPagePose extends LitElement {
                           <td><span class="kind ${e.type}">${e.type.replace('_', ' ')}</span></td>
                           <td class="r mono">${num(e.height)}</td>
                           <td class="mono">${e.proTxHash.slice(0, 12)}…</td>
-                          <td class="mono">${e.hostIp ?? '—'}</td>
+                          <td class="mono">${e.hostLabel ?? '—'}</td>
                           <td class="r mono">
                             ${e.penaltyBefore === null && e.penaltyAfter === null
                               ? '—'

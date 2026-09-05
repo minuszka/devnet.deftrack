@@ -3,13 +3,15 @@ import { z } from 'zod';
 import { QuorumCommitment } from '../../models/QuorumCommitment.js';
 import { MasternodeEvent } from '../../models/MasternodeEvent.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
-import { asyncRoute, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
+import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
+import { hostLabel } from '../../domain/hostRedaction.js';
+import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 
 const router = Router();
 
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
   llmqType: z.coerce.number().int().min(0).max(255).optional(),
 });
 type ListQuery = z.infer<typeof listQuery>;
@@ -57,7 +59,8 @@ router.get(
       const entry = byHeight.get(e.height) ?? { banned: 0, penalised: 0, hosts: new Set<string>() };
       if (e.type === 'banned') entry.banned++;
       else entry.penalised++;
-      if (e.hostIp) entry.hosts.add(e.hostIp);
+      const label = hostLabel(e.hostIp, hostRedactionPolicy());
+      if (label) entry.hosts.add(label);
       byHeight.set(e.height, entry);
     }
 

@@ -10,13 +10,15 @@ import {
   CHAINLOCK_V2_PROFILE_NAME,
 } from '../../config/llmq.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
-import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
+import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
+import { redactService } from '../../domain/hostRedaction.js';
+import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 
 const router = Router();
 
 const pageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
 });
 
 const dec = (v: unknown): string => String(v ?? '0');
@@ -237,7 +239,7 @@ router.get(
       paidMasternode: paidMasternode
         ? {
             proTxHash: paidMasternode.proTxHash,
-            service: paidMasternode.service,
+            service: redactService(paidMasternode.service, hostRedactionPolicy()),
             operatorLabel: paidMasternode.operatorLabel,
           }
         : null,
