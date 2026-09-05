@@ -7,6 +7,7 @@ import { ROUTES, matchRoute, installLinkInterceptor, type Match } from '../lib/r
 import { baseStyles } from '../styles/shared.js';
 import './dd-page-overview.js';
 import './dd-page-rounds.js';
+import './dd-page-round.js';
 import './dd-page-pose.js';
 import './dd-page-masternodes.js';
 import './dd-page-operators.js';
@@ -319,6 +320,8 @@ export class DdShell extends LitElement {
     switch (this._route.route.tag) {
       case 'dd-page-rounds':
         return html`<dd-page-rounds></dd-page-rounds>`;
+      case 'dd-page-round':
+        return html`<dd-page-round .param=${id}></dd-page-round>`;
       case 'dd-page-pose':
         return html`<dd-page-pose></dd-page-pose>`;
       case 'dd-page-masternodes':

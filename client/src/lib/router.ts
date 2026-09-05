@@ -45,6 +45,19 @@ export const ROUTES: Route[] = [
     key: 'runKey',
   },
   {
+    /**
+     * A roundKey is `<llmqType>:<height>:<index>`, so the colons are encoded
+     * and the pattern takes the rest of the path in one piece. The server also
+     * answers on a quorumHash, and this route carries either.
+     */
+    path: '/round',
+    tag: 'dd-page-round',
+    label: 'DKG Round',
+    hidden: true,
+    pattern: /^\/round\/(.+)$/,
+    key: 'id',
+  },
+  {
     path: '/block',
     tag: 'dd-page-block',
     label: 'Block',
@@ -104,4 +117,9 @@ export function installLinkInterceptor(): void {
     event.preventDefault();
     navigate(url.pathname + url.search);
   });
+}
+
+/** Where a round row points. The key contains colons; they must be encoded. */
+export function roundHref(roundKey: string): string {
+  return `/round/${encodeURIComponent(roundKey)}`;
 }

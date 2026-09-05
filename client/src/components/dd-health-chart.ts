@@ -1,6 +1,7 @@
 import { LitElement, css, html, svg, nothing, type TemplateResult } from 'lit';
 import type { HealthTimelinePoint } from '@devnet-deftrack/shared';
 import { ago, num, ratio } from '../lib/format.js';
+import { roundVerdict } from '../lib/roundVerdict.js';
 import { baseStyles } from '../styles/shared.js';
 
 /**
@@ -13,6 +14,11 @@ import { baseStyles } from '../styles/shared.js';
  * failure rail below the plot, never as a point at zero -- a zero would assert
  * that the quorum formed with no valid members, which is a different and
  * untrue statement.
+ *
+ * Colour follows the same rule as every table here: the incident is a round
+ * that formed and punished members, so that is the amber one. A round that did
+ * not form is muted, because it punished nobody -- it used to be the loudest
+ * mark on the chart.
  *
  * Drawn at the element's real width in real pixels rather than scaled from a
  * fixed viewBox, so the labels are the same size on a laptop and on a wall,
@@ -70,7 +76,11 @@ export class DdHealthChart extends LitElement {
       .rail-label {
         font-family: var(--font-mono);
         font-size: 12px;
-        fill: var(--crit);
+        /* Muted, not critical. A round that did not form is a non-event for
+           PoSe: no commitment is mined, so nobody is punished. Painting it the
+           alarm colour put the loudest mark on the chart under the one thing
+           that harmed nobody. */
+        fill: var(--ink-3);
         letter-spacing: 0.04em;
       }
       .pt {
@@ -106,7 +116,14 @@ export class DdHealthChart extends LitElement {
       .swatch.fail {
         height: 12px;
         width: 3px;
-        background: var(--crit);
+        background: var(--ink-3);
+      }
+      /* The incident: a round that formed and punished members. */
+      .swatch.punish {
+        height: 8px;
+        width: 8px;
+        border-radius: 50%;
+        background: var(--warn);
       }
       .swatch.thr {
         background: none;
@@ -142,7 +159,7 @@ export class DdHealthChart extends LitElement {
         font-weight: 700;
       }
       .tip .st.formed { color: var(--good); }
-      .tip .st.failed { color: var(--crit); }
+      .tip .st.failed { color: var(--ink-3); }
       .tip .st.pending { color: var(--warn); }
       .tip .st.impossible { color: var(--ink-3); }
     `,
@@ -288,14 +305,15 @@ export class DdHealthChart extends LitElement {
         )}
         ${formed.map(
           ({ p, i }) =>
-            svg`<circle class="pt" cx=${x(i)} cy=${y(p.healthRatio)} r=${i === hi ? 6 : 3} fill="var(--s1)"
+            svg`<circle class="pt" cx=${x(i)} cy=${y(p.healthRatio)} r=${i === hi ? 6 : p.punishedCount > 0 ? 4.5 : 3}
+                        fill=${p.punishedCount > 0 ? 'var(--warn)' : 'var(--s1)'}
                         stroke=${i === hi ? 'var(--bg)' : 'none'} stroke-width="2" />`
         )}
 
         <line x1=${PAD_L} x2=${W - PAD_R} y1=${RAIL_Y} y2=${RAIL_Y} stroke="var(--line)" stroke-width="1" />
         ${failed.map(
           ({ i }) => svg`<line x1=${x(i)} x2=${x(i)} y1=${RAIL_Y - (i === hi ? 13 : 9)} y2=${RAIL_Y + (i === hi ? 13 : 9)}
-                                stroke="var(--crit)" stroke-width=${i === hi ? 4 : 2.5} />`
+                                stroke="var(--ink-3)" stroke-width=${i === hi ? 4 : 2.5} />`
         )}
         <text class="rail-label" x=${PAD_L} y=${RAIL_Y - 18} text-anchor="start">did not form</text>
 
@@ -309,7 +327,8 @@ export class DdHealthChart extends LitElement {
 
       <div class="legend">
         <span class="key"><span class="swatch"></span> health ratio (formed)</span>
-        <span class="key"><span class="swatch fail"></span> round did not form</span>
+        <span class="key"><span class="swatch punish"></span> round punished members</span>
+        <span class="key"><span class="swatch fail"></span> round did not form (nobody punished)</span>
         ${threshold !== null ? html`<span class="key"><span class="swatch thr"></span> minSize floor</span>` : nothing}
         <span class="key subtle">hover a round for its numbers</span>
       </div>
@@ -318,13 +337,18 @@ export class DdHealthChart extends LitElement {
 
   private _tooltip(p: HealthTimelinePoint, px: number, py: number): TemplateResult {
     const left = Math.max(100, Math.min(this._width - 100, px));
+    // The same reading as every table on the site, from the same function.
+    const verdict = roundVerdict({ status: p.status, punishedCount: p.punishedCount });
     return html`
       <div class="tip" style="left:${left}px;top:${py}px" role="status">
-        <div><b>H ${num(p.expectedHeight)}</b> · <span class="st ${p.status}">${p.status}</span></div>
+        <div>
+          <b>H ${num(p.expectedHeight)}</b> ·
+          <span class="st ${p.status}">${verdict.label}</span>
+        </div>
         ${typeof p.healthRatio === 'number'
           ? html`<div>health <b>${ratio(p.healthRatio)}</b> · valid <b>${num(p.numValidMembers)}/${num(p.effectiveSize)}</b></div>`
           : html`<div>no commitment mined</div>`}
-        <div>punished <b>${num(p.punishedCount)}</b> · ${ago(p.detectedAt)}</div>
+        <div>punished <b>${verdict.punished}</b> · ${ago(p.detectedAt)}</div>
       </div>
     `;
   }
