@@ -37,8 +37,23 @@ jobs:
       - name: Install
         run: npm ci
 
+      # Pinned by version and checksum, not `apt-get install shellcheck`. The
+      # runner image ships 0.9, which reports SC2015 on six `A && B || die`
+      # validations that 0.11 knows are fine because `die` exits -- so the same
+      # tree passed here and failed there, and the gate would have meant
+      # whatever version the image happened to carry that month.
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -sSLf --retry 3 -o /tmp/shellcheck.tar.xz "$url"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          sudo install -m 755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
 
       - name: Verify chaos wrapper package
         run: npm run verify:chaos
@@ -77,8 +92,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # Pinned by version and checksum, not `apt-get install shellcheck`. The
+      # runner image ships 0.9, which reports SC2015 on six `A && B || die`
+      # validations that 0.11 knows are fine because `die` exits -- so the same
+      # tree passed here and failed there, and the gate would have meant
+      # whatever version the image happened to carry that month.
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -sSLf --retry 3 -o /tmp/shellcheck.tar.xz "$url"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          sudo install -m 755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
 
       # Every shell script, including the two extensionless ones that run as
       # root on production hosts.
