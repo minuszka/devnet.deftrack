@@ -50,6 +50,38 @@ describe('explicit fleet inventory manifest', () => {
     expect(first.manifestFingerprint).toBe(second.manifestFingerprint);
   });
 
+  it('accepts a complete devnet-scale declaration while selection remains separately bounded', () => {
+    const targets = Array.from({ length: 162 }, (_, index) => target(index, {
+      hostRef: `host-${Math.floor(index / 18)}`,
+    }));
+    const parsed = parseFleetInventoryManifest({
+      ...manifest(targets),
+      expectedHostCount: 9,
+      limits: { maxEnabledTargetsTotal: 200, maxEnabledTargetsPerHost: 18 },
+    });
+    expect(parsed.targets).toHaveLength(162);
+    expect(parsed.hostRefs).toHaveLength(9);
+  });
+
+  it('keeps the raised inventory ceiling a ceiling, not an opening', () => {
+    const overSized = Array.from({ length: 251 }, (_, index) => target(index, {
+      hostRef: `host-${Math.floor(index / 6)}`,
+    }));
+    expect(() => parseFleetInventoryManifest({
+      ...manifest(overSized),
+      expectedHostCount: 42,
+      limits: { maxEnabledTargetsTotal: 250, maxEnabledTargetsPerHost: 6 },
+    })).toThrow();
+    expect(() => parseFleetInventoryManifest({
+      ...manifest(),
+      limits: { maxEnabledTargetsTotal: 251, maxEnabledTargetsPerHost: 2 },
+    })).toThrow();
+    expect(() => parseFleetInventoryManifest({
+      ...manifest(),
+      limits: { maxEnabledTargetsTotal: 8, maxEnabledTargetsPerHost: 51 },
+    })).toThrow();
+  });
+
   it('rejects an incomplete or ambiguous declaration before any registry write can be considered', () => {
     expect(() => parseFleetInventoryManifest({ ...manifest(), expectedHostCount: 8 })).toThrow(/declares 2 host/);
     expect(() => parseFleetInventoryManifest(manifest([
