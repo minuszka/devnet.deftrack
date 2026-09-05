@@ -72,6 +72,31 @@ export function redactService(
 /** Matches a bare IPv4 address anywhere in a string. The test's whole point. */
 export const DOTTED_QUAD = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
 
+/** An identifier that IS an address, rather than one that merely contains one. */
+const IS_ADDRESS = /^(?:(?:\d{1,3}\.){3}\d{1,3}|\[?[0-9a-f:]*:[0-9a-f:]*\]?)$/i;
+
+/**
+ * A vantage point's own identifier, which an operator chooses.
+ *
+ * `OBSERVER_HOST` is set per machine, the ingest schema accepts anything
+ * hostname-shaped, and "198.51.100.11" is hostname-shaped -- so an operator
+ * naming an observer after its address published that address on
+ * /peers/propagation, verbatim, in six fields at once. Nothing was wrong with
+ * the deployment's current labels; the endpoint simply had no rule.
+ *
+ * A readable label is worth keeping -- "fullnode-4" says something an HMAC does
+ * not, and it is not an address -- so only something that IS an address becomes
+ * a pseudonym. Everything else passes through.
+ */
+export function redactHostId(
+  hostId: string | null | undefined,
+  policy: HostRedactionPolicy
+): string | null {
+  if (!hostId) return null;
+  if (!IS_ADDRESS.test(hostId)) return hostId;
+  return hostLabel(hostId, policy);
+}
+
 /**
  * Whether any value reachable from `body` still carries an address.
  *

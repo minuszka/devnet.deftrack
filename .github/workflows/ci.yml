@@ -17,6 +17,20 @@ jobs:
   check:
     name: Typecheck, test, build
     runs-on: ubuntu-latest
+    # A real MongoDB rather than an in-memory stand-in: the integration tests
+    # exist to check MongoDB's own behaviour -- unique indexes, upsert races --
+    # and a stand-in would be one more thing to trust. 8.0 is the branch the
+    # devnet runs.
+    services:
+      mongo:
+        image: mongo:8.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       # Actions are pinned to a commit, not a tag. A tag is a movable pointer in
       # somebody else's repository, and `@v4` means "whatever they publish
@@ -82,6 +96,16 @@ jobs:
       # leaves them parsing perfectly and broken at run time.
       - name: Check ops imports
         run: npm run verify:ops
+
+      # The claims that are about MongoDB rather than about our code: the unique
+      # index that makes a round un-duplicatable, `$setOnInsert` keeping a first
+      # observation immutable, and the public routes answered over documents
+      # that really do carry a host address. A fake repository cannot fail any
+      # of those, because a fake has no index and serves no HTTP.
+      - name: Integration tests (real MongoDB)
+        env:
+          MONGODB_TEST_URI: mongodb://127.0.0.1:27017
+        run: npm run test:integration
 
   scripts:
     name: Scripts, Dockerfile and units

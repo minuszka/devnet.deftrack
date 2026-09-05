@@ -5,6 +5,8 @@ import { PeerObservation } from '../../models/PeerObservation.js';
 import { HostStatus } from '../../models/HostStatus.js';
 import { StakeScriptObservation } from '../../models/StakeScriptObservation.js';
 import { propagationSpread, laggards, type HostSighting } from '../../domain/propagation.js';
+import { redactHostId } from '../../domain/hostRedaction.js';
+import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 import { requireIngestToken } from '../../middleware/requireIngestToken.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
@@ -160,6 +162,13 @@ router.get(
   asyncRoute(async (_req, res) => {
     const q = parsedQuery<SpreadQuery>(res);
 
+    // Redacted at the door, not at the exit. Every figure below is derived
+    // from these ids -- the spread, the laggards, the missing-host lists -- so
+    // redacting the ids as they come in leaves nothing downstream that could
+    // carry an address, rather than six places that each have to remember.
+    const policy = hostRedactionPolicy();
+    const idOf = (host: string): string => redactHostId(host, policy) ?? 'host-unknown';
+
     const [hosts, recent] = await Promise.all([
       PeerObservation.distinct('host'),
       PeerObservation.find({ topic: q.topic })
@@ -173,7 +182,7 @@ router.get(
     for (const o of recent) {
       const entry = byHash.get(o.hash) ?? { height: o.height, sightings: [] };
       entry.sightings.push({
-        host: o.host,
+        host: idOf(o.host),
         receivedAtMs: new Date(o.receivedAt).getTime(),
         clockOffsetMs: o.clockOffsetMs,
         resolutionMs: o.resolutionMs,
@@ -181,7 +190,7 @@ router.get(
       byHash.set(o.hash, entry);
     }
 
-    const expected = [...hosts].sort();
+    const expected = [...new Set(hosts.map(idOf))].sort();
     const events = [...byHash.entries()]
       .map(([hash, e]) => ({ hash, height: e.height, ...propagationSpread(e.sightings, expected) }))
       .sort((a, b) => (b.height ?? 0) - (a.height ?? 0))
@@ -195,7 +204,7 @@ router.get(
       events,
       laggards: laggards(events),
       hosts: statuses.map((h) => ({
-        host: h.host,
+        host: idOf(h.host),
         peers: h.peers,
         inbound: h.inbound,
         verifiedMasternodes: h.verifiedMasternodes,
