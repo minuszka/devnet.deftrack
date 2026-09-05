@@ -261,6 +261,18 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
 
 ## 6. Housekeeping
 
+- **The simulator's 16-host fleet manifest exists and is waiting for the
+  import decision** (2026-09-05 evening, `docs/SIMULATOR_HANDOFF.md` top
+  addendum). 160 targets (152 masternodes, 8 fleet stakers), schema-valid,
+  fingerprint `41a4c2b0…`, read-only preview: 160 create, 0 update, 0
+  undeclared. Built by `ops/fleet-inventory-collect.sh` (jump host, read-only)
+  and `ops/fleet-inventory-manifest.py` (VPS, private operator map), verified
+  with a negative control. It lives at `/root/fleet-manifest-devnet.json` on
+  the VPS and is never committed. Writing it into the registry is one
+  `PUT /admin/simulations/targets/:id` per target with `enabled: false`, and
+  needs the user's explicit go; enabling is a later, safety-admin act. Until it
+  is imported the forming-quorum view still stops at
+  `no unambiguous target mapping`.
 - Refresh the inherited-failing tests listed in `CLAUDE.md`. **Two of the three
   named there now pass**: `subsidy_tests` and `block_reward_reallocation_tests`
   both came back clean on the deployed commit, so that paragraph is stale.
