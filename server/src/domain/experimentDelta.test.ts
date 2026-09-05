@@ -56,4 +56,23 @@ describe('comparing a run against its baseline', () => {
     );
     expect(delta.medianBlockIntervalSec).toBe(150);
   });
+
+  it('compares concentration, which the producer count alone hides', () => {
+    // The case that motivated the field: the dominant staker stops, so the
+    // count barely moves -- the other producers were already there -- while
+    // the share it took falls by three quarters. A delta built on the count
+    // would report the intervention as having done almost nothing.
+    const delta = compareOutcomes(
+      outcome({ distinctStakers: 42, topStakerShare: 0.11 }),
+      outcome({ distinctStakers: 41, topStakerShare: 0.44 })
+    );
+    expect(delta.topStakerShare).toBeCloseTo(-0.33, 10);
+  });
+
+  it('reports no concentration change for a run closed before the field existed', () => {
+    // Absent is not zero: a run snapshotted without the figure must not read
+    // as "production was perfectly spread".
+    expect(compareOutcomes(outcome({ topStakerShare: 0.44 }), outcome({})).topStakerShare).toBeNull();
+    expect(compareOutcomes(outcome({}), outcome({ topStakerShare: 0.44 })).topStakerShare).toBeNull();
+  });
 });

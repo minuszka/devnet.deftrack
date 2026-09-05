@@ -101,6 +101,12 @@ export async function computeOutcome(
     blocks: blocks.length,
     medianBlockIntervalSec: staking.medianIntervalSec,
     distinctStakers: staking.distinctStakers,
+    // stakingHealth already computes these; the outcome used to drop them, so
+    // every closed run recorded a producer count with no way to tell whether
+    // production was spread or dominated.
+    topStakerShare: staking.topStakerShare,
+    stakerHhi: staking.hhi,
+    stakerGini: staking.gini,
 
     chainLockedBlocks: chainLocked,
     // Coverage over the run's own blocks only. Counting an era in which a lock
@@ -169,6 +175,13 @@ export interface OutcomeDelta {
   masternodesPunished: number;
   medianBlockIntervalSec: number | null;
   chainLockCoverage: number | null;
+  /**
+   * The change in how concentrated block production is -- the number a
+   * fairness intervention exists to move. Without it a run that halved one
+   * producer's share showed nothing in its delta, because the producer *count*
+   * barely moves when the dominant staker stops: the others were already there.
+   */
+  topStakerShare: number | null;
 }
 
 /** Run minus baseline, field by field. Null where either side has no value. */
@@ -182,5 +195,8 @@ export function compareOutcomes(run: ExperimentOutcome, baseline: ExperimentOutc
     masternodesPunished: run.masternodesPunished - baseline.masternodesPunished,
     medianBlockIntervalSec: diff(run.medianBlockIntervalSec, baseline.medianBlockIntervalSec),
     chainLockCoverage: diff(run.chainLockCoverage, baseline.chainLockCoverage),
+    // Undefined on any outcome closed before the field existed; treated as
+    // "no value", which `diff` already renders as null rather than as zero.
+    topStakerShare: diff(run.topStakerShare ?? null, baseline.topStakerShare ?? null),
   };
 }
