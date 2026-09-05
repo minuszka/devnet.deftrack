@@ -21,12 +21,15 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 8 | Kliens: a fő üzenet helyreállítása | **KÉSZ** (2026-09-05) |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 10 | Dokumentáció-drift és runbook | nyitva |
+| 10 | Dokumentáció-drift és runbook | **KÉSZ** (2026-09-05) |
 
-**Következő pontos feladat:** a 10. nap — dokumentáció-drift és runbook:
-`CONTRACTS_HU.md`, `ARCHITECTURE_HU.md`, `CONTROL_API_HU.md`,
-`PERSISTENCE_HU.md`/`THREAT_MODEL_HU.md`, és a `CLAUDE.md` két elavult
-bekezdése.
+**Az ütemterv minden napja kész.** Ami az auditból nyitva maradt, az öt
+átsorolt tétel és egy VPS-lépés, mind a `plan.md`-ben, indoklással: a pilot
+host wrapper-újratelepítése (amíg nincs meg, valódi netem-fault nem
+futtatható), a git-történetben maradt IP döntése, a tervezett vég +
+live-lock/lease csomag, a `phase:'dkg'` kvórum-tagság kiszámolása, a kör-rekord
+commitment-alapú egyeztetése, és a másik négy írószolgáltatás integrációs
+tesztje.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -817,3 +820,60 @@ Feladatok:
 
 Elfogadási kapu: a dokumentáció a megvalósított rendszert írja le, és a
 következő auditor nem egy 1. napi vázlathoz méri a kódot.
+
+### Amit a 10. nap elvégzett (2026-09-05)
+
+Minden állítás forráshoz ellenőrizve, és a javított dokumentumok megnevezik a
+fájlt, amiből olvashatók — hogy a következő auditor ne egy 1. napi vázlathoz
+mérje a kódot.
+
+- **`CONTRACTS_HU.md`**: a tervezett öt `snake_case` scenario helyett a valódi
+  nyolc kebab-case; `low/medium/high` a `green/yellow/red` helyett (a
+  jóváhagyási kapu is ezekre a nevekre hivatkozik, tehát a régi hármas nem
+  szinonima volt, hanem nem létező skála); a run-státuszok közül hiányzott az
+  `activation_pending`; a paraméterek most a tényleges zod-sémák, a két
+  szabállyal együtt, ami bennük él és a prózában nem (a flapping staker-plafonja
+  és az, hogy a `network-degradation` nem fogad `seed` szerepet); és az
+  action-payload union. Ez utóbbi a legfontosabb: a terv `unitRef`-et vitt a
+  `service-stop`/`service-start` payloadban, **a kód pedig kifejezetten tiltja**,
+  teszttel őrizve — vagyis a dokumentum egy szivárgást írt le működő
+  szerződésként.
+- **`ARCHITECTURE_HU.md`**: a jump-hoston futó orchestrator worker és az
+  SSH-vezérelt node-wrapper nem létezik; két executor van, `dryRunExecutor` és
+  `dockerLiveExecutor`, és az élő ma **netem-only**. A rajz is ezt mutatja.
+  Külön kitétel a „kizárólag a devnet P2P portra": ez **a devnet chaos-wrapper**
+  tulajdonsága (`u32` szűrő a forrásportra, elérhetetlen `prio` sávban, épp
+  azért, mert egyszer már megzavarta az operátor SSH-ját), a **laborban** a
+  netem a konténer teljes interfészére kerül. Aki a laborból következtet a
+  devnetre, két konstrukciót olvas össze.
+- **`CONTROL_API_HU.md`**: van action-diszpécser; a két ajtó szabályai
+  szétválasztva (az API-kulcs ajtaján a middleware **minden `Origin` és
+  `Cookie` fejlécet elutasít** — ez teszi a kulcsot böngészőből
+  használhatatlanná; a session-ajtó cookie-t fogad, CSRF-tokennel). Az
+  `X-Simulation-Client` **nem lett kötelezővé téve**, szándékosan: a CLI küldi,
+  a böngészős panel nem, tehát az ellenőrzés a panelt törné, biztonsági haszon
+  nélkül — amit védene, azt a cookie/Origin-tilalom már megvédi.
+- **`PERSISTENCE_HU.md` / `THREAT_MODEL_HU.md`**: a négy `action_*`
+  audit-eseménytípus definiálva van és **soha nem íródik** (az egyetlen író a
+  run-stream), a `SimulationResumeDirective` pedig kiszámolódik és **semmi nem
+  olvassa** — automatikus recovery-indítás tehát nincs; ami visszaállít, az a
+  fault TTL-je és a wrapper watchdogja. Mindkettő be nem kötött ígéretként van
+  jelölve, nem funkcióként.
+- **`CLAUDE.md`**: a „withCachePolicy profilok + in-flight dedup" fele hamis
+  volt — a `withCachePolicy` fejléceket állít és semmi mást, nincs
+  szerveroldali cache és nincs in-flight dedup, miközben a mondat azt sugallta,
+  hogy egy ismételt nehéz lekérdezés már olcsó. És az inherited-failing tesztek
+  bekezdéséből kikerült a két név, ami már zöld (`subsidy_tests`,
+  `block_reward_reallocation_tests`), a maradékhoz pedig odakerült, hogy azok
+  2026-09-02 óta **nincsenek újramérve**: egy elavult tétel itt ugyanannyi órát
+  visz el, mint egy hiányzó, csak a másik irányba.
+- **`ops/backfill-commitment-names.cjs`**: a névtáblából hiányzott a **7-es
+  típus, az `llmq_defcon`** — a profil, amiért ez a devnet létezik. Minden Q60
+  commitment, amivel a backfill találkozott, `llmqName: null`-lal maradt volna;
+  az a sor, amit senki nem gondolna újraellenőrizni. A `100` (`llmq_test`) is
+  bekerült.
+- **`plan.md`**: az audit nyitva hagyott tételei egy helyre kerültek —
+  pilot-újratelepítés, az IP-döntés, a `defcon-enable-staking` toggle-hibája, a
+  négy írószolgáltatás integrációs tesztje, és a két be nem kötött ígéret.
+
+

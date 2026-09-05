@@ -1,6 +1,16 @@
 # Devnet Simulator – TypeScript adatszerződések
 
-Állapot: implementációs terv. A nevek még kód-review során finomíthatók, de a biztonsági invariánsok nem lazíthatók.
+Állapot: **a megvalósult kód leírása**, 2026-09-05-én forráshoz ellenőrizve.
+Eredetileg implementációs terv volt, és a megvalósítás több ponton elment tőle
+— a scenario-azonosítók, a kockázati osztályok és az action-payload union mind
+mást mondtak, mint a kód. Ahol a kettő eltért, a kód nyert, és a forrásfájl meg
+van nevezve, hogy vissza lehessen ellenőrizni.
+
+Az igazság forrása:
+`server/src/simulator/scenarioTypes.ts`, `server/src/simulator/scenarioRegistry.ts`,
+`server/src/domain/simulationRunState.ts`, `server/src/models/SimulationRun.ts`
+és `server/src/models/SimulationAction.ts`. A biztonsági invariánsok nem
+lazíthatók.
 
 ## Alapelv
 
@@ -22,6 +32,9 @@ type SimulationRunStatus =
   | 'scheduled'
   | 'baseline'
   | 'armed'
+  // A dokumentumból hiányzott: az arm és a fault között van egy állapot,
+  // amiben a run már aktiválható, de még nem aktív.
+  | 'activation_pending'
   | 'fault_active'
   | 'observing'
   | 'aborting'
@@ -40,36 +53,63 @@ type SimulationActionStatus =
   | 'compensated';
 
 type SimulationNetwork = 'regtest' | 'devnet';
-type RiskClass = 'green' | 'yellow' | 'red';
+
+// A kockázati osztályok a kódban low/medium/high, nem green/yellow/red. A
+// jóváhagyási kapu is ezekre a nevekre hivatkozik (CONTROL_API_HU.md), tehát a
+// régi hármas nem szinonima volt, hanem egy nem létező skála.
+type SimulationRiskClass = 'low' | 'medium' | 'high';
 ```
 
 Mainnet szándékosan nem eleme a `SimulationNetwork` unionnek. Ettől függetlenül a workernek és a node-wrappernek is saját hálózati guardot kell végeznie.
 
 ## Scenario registry
 
-```ts
-type ScenarioId =
-  | 'service_restart'
-  | 'network_latency'
-  | 'packet_loss'
-  | 'provider_partition'
-  | 'dsl_signing_fault';
+A tervezett öt `snake_case` scenario helyett **nyolc** van, kebab-case
+azonosítókkal, és a leíró is szűkebb, mint amit a terv rajzolt: a limitek nem
+per-scenario mezők, hanem egy közös `SCENARIO_LIMITS` a registryben, a
+validáció pedig zod-séma és nem `validate()` metódus.
 
-interface ScenarioDefinition<TParams extends ScenarioParameters> {
-  id: ScenarioId;
+```ts
+// server/src/simulator/scenarioTypes.ts
+const SIMULATION_SCENARIO_IDS = [
+  'mn-stop',
+  'host-outage',
+  'quorum-member-outage',
+  'staker-stop',
+  'restart-flapping',
+  'network-degradation',
+  'node-isolation',
+  'clear-recover',
+] as const;
+
+interface ScenarioDescriptor {
+  scenarioId: SimulationScenarioId;
   version: number;
-  displayName: string;
+  title: string;
   description: string;
-  riskClass: RiskClass;
-  allowedNetworks: readonly SimulationNetwork[];
-  requiredCapabilities: readonly TargetCapability[];
-  minTargets: number;
-  maxTargets: number;
-  maxDurationSeconds: number;
-  requiresExplicitApproval: boolean;
-  validate(params: unknown): TParams;
-  plan(context: PlanningContext, params: TParams): PlannedAction[];
+  riskClass: SimulationRiskClass;
 }
+
+// server/src/simulator/scenarioRegistry.ts
+const SCENARIO_LIMITS = {
+  maxTargets: 20,
+  // BLOKKBAN kifejezve, aztán másodpercre váltva: hat blokk az a hossz, ami
+  // minden illeszkedésnél nulla kihagyott DKG-ablakot garantál. Lásd
+  // OUTAGE_WINDOWS_HU.md, mielőtt bárki hozzányúl.
+  maxDurationSeconds: 6 * BLOCK_SECONDS,
+  maxLatencyMs: 2_000,
+  maxJitterMs: 1_000,
+  maxPacketLossPercent: 30,
+  maxFlapCycles: 5,
+  maxStakers: 5,
+  maxIsolatedTargets: 5,
+};
+```
+
+Kockázati osztályok a registryből: `low` a `clear-recover`; `medium` az
+`mn-stop` és a `staker-stop`; `high` a `host-outage`, a
+`quorum-member-outage`, a `restart-flapping`, a `network-degradation` és a
+`node-isolation`.
 
 type TargetCapability =
   | 'service-control'
@@ -82,62 +122,34 @@ A registry szerveroldali kód, nem adatbázisból szerkeszthető script. A `vers
 
 ## Scenario paraméterek
 
-```ts
-interface BaseScenarioParameters {
-  durationSeconds: number;
-  seed: string;
-}
+Zod-sémák, `strict` módban, discriminated union a `scenarioId`-n
+(`simulationScenarioRequestSchema`). Minden kérés `scenarioVersion: 1`-et és egy
+`seed`-et hordoz; a `targetIds` mindenhol opcionális azoknál, amelyek maguk
+választanak célpontot, és kötelező a `clear-recover`-nél.
 
-interface ServiceRestartParameters extends BaseScenarioParameters {
-  scenarioId: 'service_restart';
-  downtimeSeconds: number;
-  restartMode: 'simultaneous' | 'staggered';
-  staggerSeconds?: number;
-}
+| scenario | paraméterek |
+|---|---|
+| `mn-stop` | `count`, `durationSeconds`, `targetIds?` |
+| `host-outage` | `anchorTargetId`, `durationSeconds`, `expectedMasternodes?` |
+| `quorum-member-outage` | `count`, `phase: 'dkg' \| 'chainlock'`, `durationSeconds`, `targetIds?` |
+| `staker-stop` | `count` (max `maxStakers`), `durationSeconds`, `targetIds?` |
+| `restart-flapping` | `role: 'masternode' \| 'staker'`, `count`, `cycles`, `downSeconds`, `upSeconds`, `targetIds?` |
+| `network-degradation` | `role`, `count`, `durationSeconds`, `latencyMs`, `jitterMs`, `lossPercent`, `correlationPercent`, `targetIds?` |
+| `node-isolation` | `count` (max `maxIsolatedTargets`), `durationSeconds`, `targetIds?` |
+| `clear-recover` | `targetIds` |
 
-interface NetworkLatencyParameters extends BaseScenarioParameters {
-  scenarioId: 'network_latency';
-  latencyMs: number;
-  jitterMs: number;
-  correlationPercent: number;
-}
+Két szabály, ami a sémákban él és nem a prózában:
 
-interface PacketLossParameters extends BaseScenarioParameters {
-  scenarioId: 'packet_loss';
-  lossPercent: number;
-  correlationPercent: number;
-}
+- **A `restart-flapping` `count`-ját kétszer korlátozza a séma**, mert staker
+  szerepben más kísérlet: tíz masternode flappelése nem ugyanaz, mint öt
+  stakeré, amiken a blokktermelés áll.
+- **A `network-degradation` nem fogad `seed` szerepet.** A seed node az, ahonnan
+  az explorer RPC- és ZMQ-bizonyítéka jön, tehát megrontani a *mérést* rontja
+  meg, nem a mért hálózatot — és az eredmény hálózati leletnek látszana.
 
-interface ProviderPartitionParameters extends BaseScenarioParameters {
-  scenarioId: 'provider_partition';
-  split: 'balanced' | 'by-provider';
-}
-
-interface DslSigningFaultParameters extends BaseScenarioParameters {
-  scenarioId: 'dsl_signing_fault';
-  behavior: 'skip-signing' | 'delay-signing' | 'invalid-test-signature';
-  delayMs?: number;
-  epochCount: number;
-}
-
-type ScenarioParameters =
-  | ServiceRestartParameters
-  | NetworkLatencyParameters
-  | PacketLossParameters
-  | ProviderPartitionParameters
-  | DslSigningFaultParameters;
-```
-
-Kezdeti biztonságos limitek – konfigurációból csak szigoríthatók, lazításuk kód-reviewt igényel:
-
-- `durationSeconds`: legfeljebb 15 perc;
-- `downtimeSeconds`: legfeljebb 5 perc;
-- `latencyMs`: legfeljebb 2000 ms;
-- `jitterMs`: legfeljebb 1000 ms;
-- `lossPercent`: legfeljebb 30%;
-- `correlationPercent`: 0–100%;
-- `epochCount`: kezdetben legfeljebb 2;
-- `invalid-test-signature`: csak erre fordított devnet test hookkal, külön piros jóváhagyással.
+A tervben szereplő `dsl_signing_fault` scenario nem létezik. A `dsl-test-hook`
+capability megmaradt a `SimulationTargetCapability` unionben, de egyetlen
+scenario sem kéri.
 
 ## Target kiválasztás és snapshot
 
@@ -263,71 +275,55 @@ Required check hibája esetén a run `rejected`. Warning esetén elindítható, 
 
 ## Action és lease
 
+A payload **nem hordoz unit-nevet.** A tervben `service-stop` és
+`service-start` is `unitRef`-et vitt; a megvalósításban egyik sem, mert az
+action a célpont logikai azonosítójára hivatkozik, és a unit nevét kizárólag a
+privát registry ismeri. Ezt teszt is őrzi: `dryRunExecutor.test.ts` a
+szerializált payloadokban elutasít mindent, ami `hostRef`, `unitRef`, `command`,
+`script` vagy útvonal-szerű.
+
+A `ttlSeconds` neve `faultLeaseSeconds`, és a netem mezői kötelezőek, nem
+opcionálisak — egy hiányzó `lossPercent` nem „nulla veszteség", hanem egy
+kérdés, amit senki nem tett fel.
+
 ```ts
-type ActionPayload =
-  | { kind: 'service-stop'; unitRef: string; ttlSeconds: number }
-  | { kind: 'service-start'; unitRef: string }
+// server/src/simulator/scenarioTypes.ts
+type PlannedActionPayload =
+  | { kind: 'service-stop'; faultLeaseSeconds: number }
+  | { kind: 'service-start' }
   | {
       kind: 'netem-apply';
       interfaceRef: 'devnet-p2p';
-      latencyMs?: number;
-      jitterMs?: number;
-      lossPercent?: number;
-      correlationPercent?: number;
-      ttlSeconds: number;
+      latencyMs: number;
+      jitterMs: number;
+      lossPercent: number;
+      correlationPercent: number;
+      faultLeaseSeconds: number;
     }
   | {
       kind: 'partition-apply';
-      peerTargetIds: TargetId[];
       p2pPortRef: 'devnet-p2p';
-      ttlSeconds: number;
+      peerTargetIds: string[];
+      faultLeaseSeconds: number;
     }
-  | { kind: 'fault-clear'; scope: 'run' }
-  | {
-      kind: 'dsl-test-hook';
-      behavior: DslSigningFaultParameters['behavior'];
-      delayMs?: number;
-      epochCount: number;
-      ttlSeconds: number;
-    };
+  | { kind: 'fault-clear'; scope: 'run' };
 
-interface SimulationActionDocument {
-  actionId: SimulationActionId;
-  runKey: SimulationRunKey;
+interface PlannedSimulationAction {
+  actionId: string;
+  runKey: string;
   sequence: number;
-  targetId: TargetId;
-  status: SimulationActionStatus;
-  payload: ActionPayload;
-  notBefore?: Date;
-  expiresAt: Date;
-
-  attempts: number;
+  targetId: string;
+  kind: PlannedActionPayload['kind'];
+  payload: PlannedActionPayload;
+  /** A payload tartalmi ujjlenyomata: két azonos akció ugyanaz az akció. */
+  payloadDigest: string;
+  notBeforeOffsetMs: number;
+  expiresAfterMs: number;
   maxAttempts: number;
-  claimedBy?: string;
-  leaseUntil?: Date;
-  claimedAt?: Date;
-  executedAt?: Date;
-
-  result?: ActionResult;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-interface ActionResult {
-  code:
-    | 'applied'
-    | 'already-applied'
-    | 'cleared'
-    | 'already-clear'
-    | 'guard-rejected'
-    | 'target-unreachable'
-    | 'wrapper-failed';
-  publicMessage: string;
-  privateDetail?: string;
-  wrapperVersion?: string;
-  finishedAt: Date;
 }
 ```
+
+A tervben szereplő `dsl-test-hook` payload nem létezik.
 
 Az actionön nincs nyers parancs. A `unitRef` és `interfaceRef` szintén registry-azonosító; a worker/node-wrapper oldja fel fix helyi allowlistből.
 

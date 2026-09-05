@@ -285,3 +285,32 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   -- but that is a reading of the messages, not yet a measurement.
 - CI builds linux64 only and runs no functional tests, while releases ship
   win64 and macOS.
+
+### Open items the 2026-09-05 audit left in the explorer
+
+- **The pilot host still carries the pre-fix chaos wrapper** and is owed a
+  reinstall from the merged package, because `targets.conf` now requires a
+  `host` record and the wrapper checks it on every command. Until then the
+  pilot holds the old, wrong netem band, so **no real netem fault (E4b) may be
+  run**. A VPS operation, and the only one the audit left owed.
+- **A real host IP is in this repository's public git history**, at `fb6bb7c`
+  and replaced at `a2f86c6`. The decision -- rewrite the history, or accept it
+  and firewall -- is the owner's and has not been made. The CI secret gate
+  deliberately scans the tree and not the history, so it neither forces that
+  decision nor pretends it was made.
+- **`defcon-enable-staking` has a latent toggle bug** (see §3): its state check
+  matches `"staking": "true"` while the node answers `"staking": true`, so it
+  calls `setstaking` unconditionally -- and `setstaking` is a toggle. Invisible
+  on a normal restart, because the switch defaults to off; if it were ever
+  already on, the same call would turn staking **off**. devnet2 and the fleet
+  stakers use this script.
+- **The other four writing services have no integration test.** `quorumRound`
+  is covered end to end against a real MongoDB, and the repository-level claims
+  (unique index, `$setOnInsert`, the write race) are covered for the round and
+  ban-event patterns. `sync`, `masternodePoller`, `mnListDiff` and `chainLock`
+  still have only unit tests over faked models, which cannot catch a schema
+  path Mongoose silently drops.
+- **The `action_*` audit events are declared and never written, and the
+  `SimulationResumeDirective` is computed and never read.** Both are recorded
+  in the simulator docs as unkept promises rather than features; closing either
+  is its own piece of work.

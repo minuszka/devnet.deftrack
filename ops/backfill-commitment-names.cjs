@@ -27,6 +27,11 @@ const NAMES = {
   3: 'llmq_400_85',
   4: 'llmq_100_67',
   5: 'llmq_60_75',
+  // Type 7 is the profile this whole devnet exists to test, and it was missing
+  // from this table: every llmq_defcon commitment the backfill met was left
+  // with a null name, which is the one row nobody would think to re-check.
+  7: 'llmq_defcon',
+  100: 'llmq_test',
   101: 'llmq_devnet',
 };
 

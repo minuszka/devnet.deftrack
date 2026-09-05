@@ -399,7 +399,11 @@ Two corrections to what this entry said before, both verified at
 
 - **Tests that fail on any build of this tree, because they inherit Dash's
   constants.** Reading one of them as a regression costs an hour each time.
-  `subsidy_tests` and `block_reward_reallocation_tests` (Dash economics);
+  Two names have left this list: `subsidy_tests` and
+  `block_reward_reallocation_tests` **both pass** as of 2026-09-05, measured on
+  the deployed commit (`plan.md` §6), and were still listed here as
+  inherited-failing -- a stale entry here costs the same hour as a missing one,
+  in the other direction. What remains:
   `validation_chainstate_tests/chainstate_update_tip` (it activates a regtest
   assumeutxo snapshot at height 110 and compares the UTXO hash against Dash's
   constant, which this fork's regtest chain -- different genesis, subsidy and
@@ -408,10 +412,12 @@ Two corrections to what this entry said before, both verified at
   `coin_mark_dirty_immature_credit`, `WatchOnlyPubKeys`, `ListCoins`,
   `select_coins_grouped_by_addresses` -- 500-coin coinbase assumptions); and
   the functional `rpc_getblockstats.py`, whose fixture expects a subsidy of
-  500 where this chain pays 11,000,000 per proof-of-work block. All verified
-  to fail identically on the unmodified `v22.1.x` tip (2026-09-02). Refreshing
-  them is one housekeeping item; until then, prove a suite is inherited-failing
-  by running it on the base commit in the same tree before blaming a change.
+  500 where this chain pays 11,000,000 per proof-of-work block. Those were
+  verified to fail identically on the unmodified `v22.1.x` tip (2026-09-02) and
+  have **not been re-measured since** -- unlike the two removed above, which
+  were. Prove a suite is inherited-failing by running it on the base commit in
+  the same tree before blaming a change, and treat a name on this list as an
+  observation with a date on it rather than a standing fact.
 
 - **Two staking hardenings worth knowing about (#167).** Staking selection took
   `AvailableCoins` at its word and never read `fSpendable`, so a watch-only
@@ -843,8 +849,12 @@ paused" from "quorum punished the network" is the whole purpose of this tool.
   `total` alongside the page. The production `/events` endpoint truncates at its
   limit with no indication — do not repeat that.
 - **Validation:** zod on every route input; bounded `limit` / `hours`.
-- **Caching:** `withCachePolicy` profiles + in-flight dedup, ported from the
-  production server.
+- **Caching:** `withCachePolicy` sets response headers and nothing else --
+  `Cache-Control` and `X-Cache-Profile`, on four profiles (`no-store`, 10 s,
+  60 s, 300 s), chosen against the shape of the data. There is **no server-side
+  cache and no in-flight dedup**; this entry claimed both for months, which
+  would have been read as "a repeated heavy query is already cheap" while every
+  one of them hits Mongo.
 - **Commits:** no `Co-Authored-By` trailer — commits show the repository owner
   as the sole author.
 - **Retention:** all TTLs >= 90 days, or disabled. The production noise TTL was
