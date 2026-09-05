@@ -28,11 +28,14 @@ import { prepareSimulationDraft, type PreparedSimulationDraft } from '../simulat
 import { planMeasurementWindowsForLlmqFault } from '../simulator/measurementWindows.js';
 import { evaluateSimulationPreflight, type SimulationPreflightEvaluation } from '../simulator/preflight.js';
 import { readWrapperHeartbeat, recoveryEvidenceFromHeartbeat } from '../simulator/wrapperHeartbeat.js';
+import { resolveFormingQuorum, type FormingQuorumResolution } from '../simulator/formingQuorum.js';
 import {
+  formingQuorumForTargets,
   freezeQuorumTargetSnapshot,
   sameQuorumTargetSnapshot,
   type QuorumMembershipObservation,
 } from '../simulator/quorumTargetSnapshot.js';
+import { logger } from '../utils/logger.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import {
   resolveSimulationTargetInventory,
@@ -56,7 +59,10 @@ interface EvidenceSnapshot {
   masternodes: TargetMasternodeEvidence[];
   hosts: TargetHostEvidence[];
   currentQuorum: QuorumMembershipObservation | null;
-  nextQuorumUnavailableReason: string;
+  /** The quorum whose DKG is running, resolved from the chain; see `formingQuorum`. */
+  nextQuorum: QuorumMembershipObservation | null;
+  nextQuorumUnavailableReason: string | null;
+  formingQuorum: FormingQuorumResolution;
   quorumMemberProTxHashes: string[];
   quorumStable: boolean;
   quorumProfile: ReturnType<typeof chainlockProfileAtHeight>;
@@ -174,6 +180,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
           capturedAtHeight: chain.blocks,
           memberProTxHashes: quorumMembers,
         };
+    const formingQuorum = await this.resolveForming(chain, profile, currentQuorum);
     return {
       chain,
       genesisHash,
@@ -181,7 +188,9 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       masternodes,
       hosts,
       currentQuorum,
-      nextQuorumUnavailableReason: 'No verified next quorum membership is available.',
+      nextQuorum: formingQuorum.next,
+      nextQuorumUnavailableReason: formingQuorum.nextUnavailableReason,
+      formingQuorum,
       quorumMemberProTxHashes: quorumMembers,
       quorumStable:
         currentQuorum !== null &&
@@ -189,6 +198,116 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         quorum?.size === profile.size &&
         quorum?.numValidMembers === profile.size,
       quorumProfile: profile,
+    };
+  }
+
+  /**
+   * The quorum whose DKG is running, from the chain. Every failure here is a
+   * reason string on the snapshot, never an exception: the forming quorum is
+   * evidence the draft records, not a precondition of it. The self-check
+   * outcome is logged either way, because a selection that stops reproducing
+   * formed quorums is a finding in its own right -- it would mean the node's
+   * rule changed under the explorer.
+   */
+  private async resolveForming(
+    chain: EvidenceSnapshot['chain'],
+    profile: ReturnType<typeof chainlockProfileAtHeight>,
+    currentQuorum: QuorumMembershipObservation | null
+  ): Promise<FormingQuorumResolution> {
+    try {
+      const resolution = await resolveFormingQuorum({
+        tipHeight: chain.blocks,
+        profile,
+        v20Active: chain.softforks?.v20?.active === true,
+        current: currentQuorum === null
+          ? null
+          : {
+              quorumHash: currentQuorum.quorumHash,
+              expectedHeight: currentQuorum.expectedHeight,
+              memberProTxHashes: currentQuorum.memberProTxHashes,
+            },
+        source: {
+          getBlockHash: (height) => this.rpcClient.getBlockHash(height),
+          masternodeListAt: async (height) => {
+            const diff = await this.rpcClient.protxSimplifiedListAt(height);
+            return diff.mnList.map((entry) => ({
+              proTxHash: entry.proRegTxHash,
+              confirmedHash: entry.confirmedHash,
+              isValid: entry.isValid,
+            }));
+          },
+        },
+      });
+      if (resolution.selfCheck !== null && !resolution.selfCheck.passed) {
+        logger.error(
+          `Forming-quorum self-check failed for ${profile.llmqName} at ${resolution.selfCheck.verifiedAgainst.expectedHeight}: ` +
+            (resolution.selfCheck.detail ?? 'no detail')
+        );
+      }
+      return resolution;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`Forming quorum for ${profile.llmqName} could not be resolved: ${message}`);
+      return {
+        next: null,
+        nextUnavailableReason: `The forming ${profile.llmqName} quorum could not be resolved from the node.`,
+        selfCheck: null,
+      };
+    }
+  }
+
+  /**
+   * Read-only view for the operator: the forming quorum as the chain defines
+   * it, with the self-check it passed, mapped onto the target registry so two
+   * observers can compare fingerprints. Member proTxHashes are public chain
+   * data; target ids are registry labels, never host addresses.
+   */
+  async formingQuorum(network: SimulationNetwork, nowMs: number): Promise<{
+    tipHeight: number;
+    profile: { llmqType: number; llmqName: string; size: number; dkgInterval: number };
+    current: QuorumMembershipObservation | null;
+    forming: FormingQuorumResolution;
+    resolution: ReturnType<typeof freezeQuorumTargetSnapshot> | null;
+    resolutionError: string | null;
+  }> {
+    const evidence = await this.snapshot(network, nowMs);
+    let resolution: ReturnType<typeof freezeQuorumTargetSnapshot> | null = null;
+    let resolutionError: string | null = null;
+    try {
+      const inventory = resolveSimulationTargetInventory({
+        network,
+        currentHeight: evidence.chain.blocks,
+        nowMs,
+        registry: evidence.registry,
+        masternodes: evidence.masternodes,
+        hosts: evidence.hosts,
+      });
+      const forming = formingQuorumForTargets(
+        inventory.snapshots,
+        evidence.formingQuorum.next,
+        evidence.formingQuorum.nextUnavailableReason
+      );
+      resolution = freezeQuorumTargetSnapshot({
+        targets: inventory.snapshots,
+        current: evidence.currentQuorum,
+        next: forming.next,
+        nextUnavailableReason: forming.nextUnavailableReason,
+      });
+    } catch (error) {
+      resolutionError = error instanceof Error ? error.message : String(error);
+    }
+    return {
+      tipHeight: evidence.chain.blocks,
+      profile: {
+        llmqType: evidence.quorumProfile.llmqType,
+        llmqName: evidence.quorumProfile.llmqName,
+        size: evidence.quorumProfile.size,
+        dkgInterval: evidence.quorumProfile.dkgInterval,
+      },
+      current: evidence.currentQuorum,
+      forming: evidence.formingQuorum,
+      resolution,
+      resolutionError,
     };
   }
 
@@ -207,6 +326,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       masternodes: evidence.masternodes,
       hosts: evidence.hosts,
       currentQuorum: evidence.currentQuorum,
+      nextQuorum: evidence.nextQuorum,
       nextQuorumUnavailableReason: evidence.nextQuorumUnavailableReason,
       currentQuorumMemberProTxHashes: evidence.quorumMemberProTxHashes,
     });
@@ -366,10 +486,12 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     }
     let observedQuorumTargetSnapshot = null;
     try {
+      const forming = formingQuorumForTargets(inventory.snapshots, evidence.nextQuorum, evidence.nextQuorumUnavailableReason);
       observedQuorumTargetSnapshot = freezeQuorumTargetSnapshot({
         targets: inventory.snapshots,
         current: evidence.currentQuorum,
-        nextUnavailableReason: evidence.nextQuorumUnavailableReason,
+        next: forming.next,
+        nextUnavailableReason: forming.nextUnavailableReason,
       });
     } catch {
       // Target-resolution preflight exposes the mapping failure with its own

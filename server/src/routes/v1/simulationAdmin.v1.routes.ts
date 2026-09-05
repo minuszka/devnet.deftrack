@@ -183,7 +183,18 @@ function runKey(req: Request): string {
   return runKeySchema.parse(String(req.params.runKey ?? ''));
 }
 
-export function createSimulationAdminRouter(service: SimulationControlService): Router {
+/** The one read the router takes straight from evidence rather than through the control service. */
+export interface FormingQuorumReporter {
+  formingQuorum(
+    network: 'regtest' | 'devnet',
+    nowMs: number
+  ): Promise<Awaited<ReturnType<MongoRpcSimulationEvidenceService['formingQuorum']>>>;
+}
+
+export function createSimulationAdminRouter(
+  service: SimulationControlService,
+  evidence?: FormingQuorumReporter
+): Router {
   const router = Router();
   router.use(rateLimit({
     windowMs: 60_000,
@@ -272,6 +283,24 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
       sendData(res, { target: saved });
     }));
   }
+
+  /**
+   * The quorum whose DKG is running, resolved from the chain the way the node
+   * resolves it, and only after that selection reproduced the last formed
+   * quorum. Read-only. Two observers on the same tip must answer with the same
+   * `resolution.next.resolutionFingerprint`; that is the day-15 acceptance
+   * gate, and this is where it can be checked without arming anything.
+   */
+  router.get('/quorums/forming', controlRoute(async (req, res) => {
+    if (evidence === undefined) {
+      throw new SimulationControlError('INVALID_REQUEST', 'forming-quorum evidence is not wired on this server');
+    }
+    const network = req.query.network === undefined ? 'devnet' : String(req.query.network);
+    if (network !== 'regtest' && network !== 'devnet') {
+      throw new SimulationControlError('INVALID_REQUEST', 'network must be regtest or devnet');
+    }
+    sendData(res, await evidence.formingQuorum(network, Date.now()));
+  }));
 
   router.get('/targets', controlRoute(async (req, res) => {
     const network = req.query.network === undefined ? undefined : String(req.query.network);
@@ -420,10 +449,12 @@ function buildLabExecutor(): DockerLiveExecutor | undefined {
   );
 }
 
+const defaultEvidence = new MongoRpcSimulationEvidenceService();
+
 const defaultService = new SimulationControlService(
   new SimulationPersistenceService(new MongoSimulationPersistenceRepository()),
   new SimulationControlPersistenceService(new MongoSimulationControlPersistenceRepository()),
-  new MongoRpcSimulationEvidenceService(),
+  defaultEvidence,
   {
     actor: {
       actorId: config.simulator.adminActorId,
@@ -477,4 +508,4 @@ export const defaultActionDispatcher = new SimulationActionDispatcher(
   }
 );
 
-export default createSimulationAdminRouter(defaultService);
+export default createSimulationAdminRouter(defaultService, defaultEvidence);

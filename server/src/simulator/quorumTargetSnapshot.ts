@@ -22,6 +22,55 @@ export interface QuorumMembershipObservation {
   quorumIndex: number;
   capturedAtHeight: number;
   memberProTxHashes: readonly string[];
+  /**
+   * `observed`: the node listed the quorum after its commitment was mined.
+   * `computed`: the members were selected from the cycle base block exactly
+   * as the node selects them (`simulator/formingQuorum.ts`), after that
+   * selection reproduced the formed quorum named in
+   * `verifiedAgainstQuorumHash`. Absent means observed; it is provenance, not
+   * identity, so the resolution fingerprint ignores it.
+   */
+  provenance?: 'observed' | 'computed';
+  verifiedAgainstQuorumHash?: string | null;
+}
+
+/**
+ * The members of `memberProTxHashes` that the frozen target population cannot
+ * name unambiguously. Empty means `freezeQuorumTargetSnapshot` will accept the
+ * list; the caller can then decide whether a gap is fatal (the current quorum
+ * of a quorum scenario) or a reason to record the list as unavailable (the
+ * forming quorum, which is evidence rather than a selection input).
+ */
+export function unresolvableQuorumMembers(
+  targets: readonly SimulationTargetSnapshot[],
+  memberProTxHashes: readonly string[]
+): string[] {
+  const mapping = proTxToTargetId(targets);
+  return memberProTxHashes
+    .map((value) => value.toLowerCase())
+    .filter((proTxHash) => !HEX_64.test(proTxHash) || !mapping.has(proTxHash));
+}
+
+/**
+ * The forming quorum as the frozen target population can carry it. A member
+ * outside that population does not block anything -- the forming quorum is
+ * evidence, not a selection input -- but it must not be frozen half-mapped
+ * either, so the list becomes unavailable with the gap counted in the reason.
+ */
+export function formingQuorumForTargets(
+  targets: readonly SimulationTargetSnapshot[],
+  next: QuorumMembershipObservation | null,
+  nextUnavailableReason: string | null
+): { next: QuorumMembershipObservation | null; nextUnavailableReason: string | null } {
+  if (next === null) return { next, nextUnavailableReason };
+  const unmapped = unresolvableQuorumMembers(targets, next.memberProTxHashes);
+  if (unmapped.length === 0) return { next, nextUnavailableReason: null };
+  return {
+    next: null,
+    nextUnavailableReason:
+      `The forming ${next.llmqName} quorum at ${next.expectedHeight} has ${unmapped.length} member(s) ` +
+      'outside the registered target population.',
+  };
 }
 
 function assertReference(observation: QuorumMembershipObservation): void {
@@ -88,10 +137,19 @@ function resolveReference(
     memberProTxHashes,
     memberTargetIds,
   };
+  const verifiedAgainstQuorumHash = observation.verifiedAgainstQuorumHash ?? null;
+  if (verifiedAgainstQuorumHash !== null && !HEX_64.test(verifiedAgainstQuorumHash)) {
+    throw new Error('quorum verification reference is invalid');
+  }
+  if (observation.provenance === 'computed' && verifiedAgainstQuorumHash === null) {
+    throw new Error('a computed quorum membership must name the formed quorum it was verified against');
+  }
   return {
     ...identity,
     capturedAtHeight: observation.capturedAtHeight,
     resolutionFingerprint: simulationFingerprint(identity),
+    provenance: observation.provenance ?? 'observed',
+    verifiedAgainstQuorumHash: verifiedAgainstQuorumHash === null ? null : verifiedAgainstQuorumHash.toLowerCase(),
   };
 }
 
@@ -122,7 +180,17 @@ export function freezeQuorumTargetSnapshot(input: {
   };
 }
 
-/** Only the canonical identity is compared; fields cannot be reordered into a match. */
+/**
+ * Only the canonical identity of the *current* quorum is compared; fields
+ * cannot be reordered into a match.
+ *
+ * The forming quorum is deliberately left out. It is evidence that changes by
+ * rule every cycle -- resolved in one cycle, unavailable while the next base
+ * block is unmined, resolved again after it -- and no selection input reads it
+ * yet, so a run drafted in one cycle and preflighted in the next would fail
+ * for a difference it never depended on. The current quorum is what the
+ * quorum-member scenario selected from, and that is what must not drift.
+ */
 export function sameQuorumTargetSnapshot(
   left: SimulationQuorumTargetSnapshot | null,
   right: SimulationQuorumTargetSnapshot | null
@@ -131,11 +199,5 @@ export function sameQuorumTargetSnapshot(
     first: SimulationQuorumTargetReference | null,
     second: SimulationQuorumTargetReference | null
   ) => first?.resolutionFingerprint === second?.resolutionFingerprint;
-  return (
-    left !== null && right !== null
-      ? sameReference(left.current, right.current) &&
-        sameReference(left.next, right.next) &&
-        left.nextUnavailableReason === right.nextUnavailableReason
-      : left === right
-  );
+  return left !== null && right !== null ? sameReference(left.current, right.current) : left === right;
 }

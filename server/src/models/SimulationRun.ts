@@ -62,11 +62,21 @@ export interface SimulationQuorumTargetReference {
   memberProTxHashes: string[];
   memberTargetIds: string[];
   resolutionFingerprint: string;
+  /**
+   * How the member list was obtained. `observed` is `quorum info` after the
+   * commitment was mined; `computed` is the node's own selection reproduced
+   * from the cycle base block, offered only after it reproduced the formed
+   * quorum in `verifiedAgainstQuorumHash`. Runs from before this field exists
+   * carry neither and are observed.
+   */
+  provenance?: 'observed' | 'computed';
+  verifiedAgainstQuorumHash?: string | null;
 }
 
 /**
- * Current and (only when authoritatively observed) next quorum resolution.
- * A missing next member list is explicit rather than a predicted fault target.
+ * Current and next quorum resolution. `next` is either the quorum whose DKG is
+ * running, resolved from the chain, or null with the reason spelled out; it is
+ * never a predicted member list.
  */
 export interface SimulationQuorumTargetSnapshot {
   current: SimulationQuorumTargetReference | null;
@@ -195,6 +205,8 @@ const quorumTargetReferenceSchema = new Schema<SimulationQuorumTargetReference>(
     memberProTxHashes: [{ type: String, required: true, match: /^[0-9a-f]{64}$/i }],
     memberTargetIds: [{ type: String, required: true }],
     resolutionFingerprint: { type: String, required: true, match: /^[0-9a-f]{64}$/i },
+    provenance: { type: String, enum: ['observed', 'computed'], required: false },
+    verifiedAgainstQuorumHash: { type: String, default: null, match: /^[0-9a-f]{64}$/i },
   },
   { _id: false, strict: 'throw' }
 );
