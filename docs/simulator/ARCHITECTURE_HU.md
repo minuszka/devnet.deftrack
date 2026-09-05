@@ -1,6 +1,10 @@
 # Devnet Simulator – architektúra
 
-Állapot: 1. napi tervezési alap, implementáció előtt
+Állapot: **1. napi tervezési alap, 2026-09-05-én a megvalósult kódhoz igazítva.**
+A terv egy jump-hoston futó orchestrator workert és SSH-n keresztül vezérelt
+node-wrappert rajzolt; **egyik sem létezik**. Ami létezik, azt az alábbi
+„Mi épült meg valójában" szakasz írja le, és a rajzon is az szerepel. A többi
+rész terv maradt, és ott is annak van jelölve.
 
 Ág: `feat/devnet-chaos-orchestrator`
 Hatókör: automatikus kísérlet-orchesztrátor → Live Devnet Chaos → DSL fault injection
@@ -36,14 +40,14 @@ Privát admin-hozzáférés
                                     MongoDB
                               SimulationRun/Action
                                       ▲
-                                      │ outbound poll, szűk worker token
-Privát jump host                       │
-  └─ Orchestrator worker ──────────────┘
+                                      │ ugyanabban a processzben
+                                      │
+  DockerLiveExecutor ──────────────────┘
         │
-        └─ SSH ──> allowlistelt root wrapper a kiválasztott devnet node-okon
+        └─ fájl-sorba írt parancs ──> node-lokális wrapper a labor konténerében
                          │
-                         ├─ időkorlátos netem/tűzfal/restart művelet
-                         └─ független watchdog és automatikus cleanup
+                         ├─ netem az adott konténer saját interfészén
+                         └─ a wrapper saját TTL-watchdogja állít vissza
 
 Node-ok ── read-only státusz ──> Observer ingest API ──> HostStatus
 ```
@@ -56,20 +60,35 @@ Node-ok ── read-only státusz ──> Observer ingest API ──> HostStatus
 
 ### Control API
 
-- A meglévő `/api/v1/admin` útvonalak szerveroldali API-key védelme jó alap CLI-hoz, de böngészős adminhoz önmagában nem elég.
-- A későbbi admin panel rövid életű sessiont, CSRF-védelmet, rate limitet és auditált szerepkört kap.
+- A meglévő `/api/v1/admin` útvonalak szerveroldali API-key védelme a CLI ajtaja,
+  és ezen az ajtón a middleware **elutasít minden `Origin` és `Cookie` fejlécet** —
+  ez az, ami a kulcsot böngészőből használhatatlanná teszi.
+- A böngészős admin panel megépült: rövid életű session cookie plusz CSRF-token
+  minden módosító kérésen (`middleware/adminSession.ts`). Nem „későbbi" többé.
 - Csak regisztrált `scenarioId` + validált paraméterek fogadhatók el.
 - A Control API nem rendelkezik fleet SSH-kulccsal, és nem futtat parancsot közvetlenül.
 
-### Orchestrator worker
+### Mi épült meg valójában (2026-09-05)
 
-- A jump hoston fut, mert ott van a privát fleet inventory és a node-okhoz szükséges hozzáférés.
-- Kifelé kezdeményez kapcsolatot: claimeli a várakozó actionöket, heartbeatet küld és riportálja az eredményt.
-- Szűk jogosultságú worker tokent használ, amely nem admin- és nem observer-token.
-- Egy actiont `actionId` alapján idempotensen hajt végre.
-- A node-on kizárólag az allowlistelt wrapper fix alparancsait hívja strukturált argumentumokkal.
+**Két executor van, és egyik sem SSH-t használ.**
 
-### Node-oldali wrapper
+- `dryRunExecutor` — tervez és nem hajt végre semmit. Ez adja az
+  action-listát, a hatásbecslést és a küszöb-margókat.
+- `dockerLiveExecutor` — az egyetlen élő executor, és a **Docker-labort** hajtja
+  (`allowedContainerProject` kapuval). A parancsokat egy fájl-alapú sorba írja,
+  amit a konténerben futó wrapper vesz ki; a fault valódi visszaállítója a
+  wrapper saját TTL-watchdogja, az executor recovery-je csak megerősítés.
+- **Az élő executor ma netem-only.** A `service-stop` és a partíciós faultok
+  fail-closed módon el vannak halasztva: a terv fordítása előre eldobja őket,
+  nem félúton.
+
+A jump-hoston futó orchestrator worker, a worker token és az SSH-n hívott
+node-wrapper **terv maradt**. Ami ebből létezik, az az `ops/chaos` csomag: egy
+allowlistelt root parancs és egy SSH forced-command wrapper, telepítve egyetlen
+pilot hosztra — de a szimulátor nem hívja, kézzel vagy szkriptből használjuk.
+A kettő összekötése önálló munka, saját jóváhagyással.
+
+### Node-oldali wrapper (a labor konténerében; a devnet-pilot csomag külön)
 
 - Nem fogad shell-fragmentet, csővezetéket, átirányítást vagy szabad fájlútvonalat.
 - Ellenőrzi a hálózatot, a unitot, az interfészt, a célportot, a célhalmaz méretét és a maximális időtartamot.
@@ -144,15 +163,29 @@ A futás kezdetén snapshot készül, így egy futó kísérlet céljai nem vál
 | `regtest/scenarios.json` | scenario-paraméterek és tesztmátrix | registry-be emelni, sémával validálni |
 | Core-native `CalculateQuorum` modell | várható quorum/PoSe eredmény | dry-run és oracle jellegű előellenőrzés |
 
-## Első implementálható szcenáriók
+## Első implementálható szcenáriók (terv) és ami megvalósult
 
-1. `service_restart`: allowlistelt daemon unit kontrollált leállítása és visszaindítása.
-2. `network_latency`: időkorlátos késleltetés és jitter kizárólag a devnet P2P portra.
-3. `packet_loss`: korlátozott csomagvesztés a devnet P2P forgalmon.
-4. `provider_partition`: előre számított A/B target-csoport közti P2P kapcsolat ideiglenes blokkolása.
-5. `dsl_signing_fault`: későbbi DSL test hook, build- és devnet-guarddal; nem általános bináriscserével.
+A terv öt `snake_case` szcenáriót nevezett meg. A registryben **nyolc** van,
+más nevekkel; a leképezés és az eltérések a `CONTRACTS_HU.md`-ben állnak. Ami
+itt fontos, az egy pontatlanság, amit a terv szövege hordozott:
 
-Az MVP-ben minden szcenárióhoz rögzíteni kell a maximális target-számot, időtartamot, kockázati osztályt, recovery-módot és szükséges preflight checkeket.
+> „késleltetés és jitter **kizárólag a devnet P2P portra**"
+
+Ez **a devnet chaos-wrapper tulajdonsága**, nem a laboré. Az `ops/chaos`
+wrapper valóban egy `u32` szűrővel a célpont saját *forrás*portjára szűkíti a
+netemet, elérhetetlen `prio` sávban — épp azért, mert egy megosztott NIC-en a
+szomszédos szolgáltatásokat, köztük az operátor SSH-ját, nem szabad megzavarni;
+ez egyszer már megtörtént. A **laborban** viszont a netem a konténer **saját
+interfészére** kerül, portszűrő nélkül: egy konténer egy node, tehát nincs
+szomszéd, akit védeni kellene, és egy interfészen egyébként is egyetlen qdisc
+lehet.
+
+Aki tehát a labor viselkedéséből következtet arra, mit tesz egy devnet-fault,
+két különböző konstrukciót olvas össze.
+
+Az MVP-ben minden szcenárióhoz rögzíteni kell a maximális target-számot,
+időtartamot, kockázati osztályt, recovery-módot és szükséges preflight
+checkeket.
 
 ## Telepítési lépések és jogosultság
 

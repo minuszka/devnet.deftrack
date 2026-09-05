@@ -100,6 +100,15 @@ A mainnet hard-disable háromszoros: a típusszerződésben nincs mainnet, a wor
 
 ## Recovery követelmények
 
+> **Automatikus recovery indítás nincs, 2026-09-05-én ellenőrizve.**
+> A `simulationRunState.ts` kiszámol egy `SimulationResumeDirective`-et minden
+> státuszhoz — mit kellene tenni egy félbeszakadt runnal újraindulás után —, és
+> **semmi nem olvassa**: a projekt egyetlen fogyasztója sem hivatkozik rá.
+> Egy process-restart fault közben tehát nem indít magától recoveryt; ami
+> visszaállít, az a fault saját TTL-je és a wrapper watchdogja, ahogy az alábbi
+> pontok írják. Ez épp elég ahhoz, hogy a node ne maradjon hibás állapotban, de
+> a run rekordja emberi beavatkozásig ott marad, ahol elakadt.
+
 - A fault telepítése és a TTL/watchdog felélesítése egy műveleti egység; TTL nélkül nincs apply.
 - A watchdog a workertől, MongoDB-től és explorertől függetlenül takarít.
 - Reboot után induláskor megvizsgálja és lejárat szerint eltávolítja a simulator state-et.

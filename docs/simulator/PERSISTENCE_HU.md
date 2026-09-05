@@ -57,7 +57,19 @@ A worker számára optimalizált action projekció:
 - claim lease, attempt és strukturált result;
 - revision a későbbi action-CAS-hoz.
 
-Az action audit eseménytípusok és a stream már definiáltak. A day-4 DryRun executor készíti majd az első action terveket; valódi worker-claim csak későbbi nap feladata.
+**Az action audit-eseménytípusok definiálva vannak, és soha nem íródnak** —
+2026-09-05-én ellenőrizve. A `SimulationAuditEvent` unionje ismeri a
+`action_created`, `action_claimed`, `action_result` és `action_expired`
+típusokat, de a repository egyetlen írója a run-stream: `run_created` és a
+státuszátmenetek (`domain/simulationAudit.ts`). Az action-életút így nincs az
+append-only folyamban; ami róla megmarad, az a `SimulationAction` projekció
+saját mezői (`claim`, `attempts`, `result`), amelyek felülíródnak.
+
+Ez nem elírás a kódban, hanem be nem kötött ígéret a dokumentumban: az
+audit-folyam addig nem az action igazságforrása, amíg valaki nem írja bele.
+Két becsületes kimenet van, és mindkettő önálló munka — vagy a diszpécser és az
+executor írja ezeket az eseményeket, vagy a négy típus kikerül az unionből,
+hogy egy olvasó ne higgye, hogy létezik egy nyom, ami nincs.
 
 ### `SimulationTarget`
 

@@ -1,18 +1,30 @@
 # Simulator Control API és CLI
 
-A 6. napi vezérlőréteg kizárólag a biztonságos DryRun életciklust hajtja
-végre. Nincs action worker, SSH, service manager vagy hálózati fault injection.
-Egy `live` run előkészíthető, de a recovery preflight és a `start` fail-closed
-marad a 8. napi, lease-es executor elkészültéig.
+Állapot: 2026-09-05-én forráshoz ellenőrizve. A 6. napi szöveg azt írta, hogy
+„nincs action worker, SSH, service manager vagy hálózati fault injection" — ez
+már nem igaz: **van action-diszpécser** (`dispatchScheduledAction`) és van élő
+executor, a `DockerLiveExecutor`, ami a Docker-labor konténereire alkalmaz
+netemet. SSH és service manager továbbra sincs, és az élő executor **netem-only**:
+a `service-stop` és a partíciós faultok fail-closed módon el vannak halasztva.
 
 ## Bizalmi határ
 
 - Privát alapútvonal: `/api/v1/admin/simulations`.
-- Kötelező: `X-Admin-Api-Key` és `X-Simulation-Client: deftrack-cli-v1`.
-- Minden módosító kéréshez kötelező a 8–200 karakteres
-  `X-Idempotency-Key`.
-- Az API nem fogad böngészős `Origin` vagy `Cookie` fejlécet. A későbbi
-  session + CSRF token adminpanel külön hitelesítési adapter lesz.
+- **Két ajtó van, és a szabályaik különböznek.**
+  - *API-kulcs (CLI):* `X-Admin-Api-Key`. Ezen az ajtón a middleware
+    **elutasít minden `Origin` és `Cookie` fejlécet** — ez teszi a kulcsot
+    böngészőből használhatatlanná, és ez az igazi CSRF-védelem, nem egy egyedi
+    fejléc megléte.
+  - *Session (admin panel):* `deftrack_admin_session` cookie, és minden módosító
+    kérésen a session CSRF-tokenje. A régi szöveg szerint „az API nem fogad
+    cookie-t"; az adapter, amit ugyanaz a bekezdés „későbbi"-nek nevezett,
+    azóta megépült.
+- Minden módosító kéréshez kötelező a 8–200 karakteres `X-Idempotency-Key`.
+- `X-Simulation-Client: deftrack-cli-v1` — a CLI **küldi**, a szerver **nem
+  ellenőrzi**, és a dokumentum korábban kötelezőnek nevezte. Nem lett
+  ellenőrzés belőle, szándékosan: a böngészős panel nem küldi (nem is kell
+  neki), tehát a kötelezővé tétele a panelt törné, biztonsági haszon nélkül —
+  amit véd, azt az API-kulcs-ajtó cookie/Origin-tilalma már megvédte.
 - A szerepkör szerverkonfiguráció: a kliens nem adhat meg saját role-t vagy
   audit identityt.
 - A privát útvonal külön 30 kérés/perc/IP limitet kap.
