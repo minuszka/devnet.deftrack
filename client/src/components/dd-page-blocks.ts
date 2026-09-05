@@ -185,7 +185,10 @@ export class DdPageBlock extends LitElement {
   });
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has('param')) this._poll.refresh();
+    // Only a real change. On the first update every initialised property is
+    // in the map, and the controller has already loaded once on connect --
+    // reloading here made every detail page fetch itself twice.
+    if (changed.has('param') && changed.get('param') !== undefined) this._poll.refresh();
   }
 
   private async _load(run: PollRun): Promise<void> {
