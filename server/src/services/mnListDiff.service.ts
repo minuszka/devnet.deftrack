@@ -34,6 +34,17 @@ export class MnListDiffService {
    */
   private penalties = new Map<string, number>();
   private seeded = false;
+  /**
+   * Bumped by `reset`, captured by each walk.
+   *
+   * The block sync calls `reset` from its reorg rollback, and it can do so
+   * while a walk is in flight. That walk then carried on against a cleared
+   * penalty map -- where every masternode looks like a first sighting, so every
+   * penalised one reads as an increase -- and finished by writing its own
+   * cursor over the rewound one. A walk that finds the generation changed
+   * underneath it now abandons its batch instead.
+   */
+  private generation = 0;
 
   start(): void {
     void this.tick();
@@ -52,6 +63,16 @@ export class MnListDiffService {
     try {
       await this.walk();
     } catch (error) {
+      // The penalty map advances per height inside the walk, but the cursor is
+      // persisted only after it. A throw part-way therefore leaves the map
+      // AHEAD of the cursor -- and PoSe penalties decay by one per block, so
+      // replaying those heights compares each real penalty against an already
+      // decayed one and reads every penalised masternode as having just been
+      // punished again. That is the invented missed duty `seed` exists to
+      // prevent, arriving by another route. Dropping the seed costs one extra
+      // listdiff on the next tick and makes the map match the cursor exactly.
+      this.seeded = false;
+      this.penalties.clear();
       logger.error(
         `Masternode list-diff walk failed: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -64,6 +85,7 @@ export class MnListDiffService {
   reset(): void {
     this.seeded = false;
     this.penalties.clear();
+    this.generation++;
   }
 
   private async walk(): Promise<void> {
@@ -102,9 +124,17 @@ export class MnListDiffService {
       ])
     );
     const last = Math.min(target, cursor + BATCH);
+    const generation = this.generation;
     let events = 0;
 
     for (let height = cursor + 1; height <= last; height++) {
+      // A reorg rollback ran while this batch was in flight. Its rewound cursor
+      // is the truth now, and this walk's map describes a chain that no longer
+      // exists; finishing would write both over it.
+      if (this.generation !== generation) {
+        logger.warn(`Masternode list-diff walk abandoned at ${height}: the chain was rewound underneath it`);
+        return;
+      }
       const diff = await rpc.call<ListDiffResult>('protx', ['listdiff', height - 1, height]);
       const changes = classifyListDiff(diff, this.penalties);
       this.penalties = penaltiesAfter(diff, this.penalties);
@@ -145,6 +175,7 @@ export class MnListDiffService {
       cursor = height;
     }
 
+    if (this.generation !== generation) return;
     await SyncState.updateOne(
       { key: DIFF_CURSOR_KEY },
       { $set: { lastSyncedHeight: cursor, lastSyncedAt: new Date() } }
