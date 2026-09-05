@@ -121,6 +121,19 @@ Owed: fix the band binding before any further netem run, and re-run E4b once the
 fault can actually isolate a member — which needs a filter on the peer set, not
 on a port number.
 
+**Closed 2026-09-05 at height 8088**, not at the tip. Left open it had absorbed
+147 blocks — the whole of `stake-redistribution`'s recovery window, and it would
+have taken the fleet roll's restart of 162 daemons as well. 8088 bounds it at
+the full lifecycle of the round the fault was aimed at: the fault began at the
+8064 cycle boundary and that round's commitment is mined in [8074, 8082]. The
+frozen outcome over those 37 blocks is the clean statement of the negative
+result — `llmq_50_60` formed both its rounds at health 1.00 with nobody
+punished, on the profile and in the window the fault was timed to disrupt.
+
+`stake-redistribution-2026-09-05` closed the same day at 8172: top-1 producer
+share 44 % → **5.06 %** against an expected 10–15 %, 40 distinct producers,
+Gini 0.216, ChainLock coverage 1.00, nobody punished.
+
 ## 3. Tooling debts found by using the tools
 
 - **The InstantSend probe races the ChainLock.** It polls `getislocks`, and
