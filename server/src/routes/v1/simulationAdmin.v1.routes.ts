@@ -44,6 +44,11 @@ import {
   registryUpdateFrom,
   simulationTargetRegistrationSchema,
 } from '../../simulator/targetRegistration.js';
+import {
+  parseFleetInventoryManifest,
+  previewFleetInventoryImport,
+  type ExistingFleetInventoryTarget,
+} from '../../simulator/fleetInventoryManifest.js';
 
 const runKeySchema = z.string().regex(/^sim_[0-9a-f]{32}$/);
 const createSchema = z.object({
@@ -55,6 +60,7 @@ const armSchema = z.object({
   acknowledgedRiskClass: z.enum(['low', 'medium', 'high']),
 }).strict();
 const emptySchema = z.object({}).strict();
+const inventoryPreviewSchema = z.object({ manifest: z.unknown() }).strict();
 
 function statusFor(error: unknown): number {
   if (error instanceof SimulationControlError) {
@@ -180,6 +186,35 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
 
   router.get('/scenarios', controlRoute(async (_req, res) => {
     sendData(res, { items: service.scenarios() });
+  }));
+
+  /**
+   * Parses a complete fleet declaration and compares it with the registry
+   * without writing either of them. The returned diff cannot enable, update or
+   * delete a target; it exists so a reviewed manifest is demonstrably safe
+   * before a separate privileged import workflow is introduced.
+   */
+  router.post('/targets/inventory-preview', controlRoute(async (req, res) => {
+    const manifest = parseFleetInventoryManifest(inventoryPreviewSchema.parse(req.body).manifest);
+    const existing = await SimulationTarget.find({ network: manifest.network })
+      .select(
+        'targetId displayLabel operatorId proTxHash hostRef chainHostRef unitRef p2pPort role network capabilities expectedBuild labels maintenance enabled'
+      )
+      .lean() as ExistingFleetInventoryTarget[];
+    const preview = previewFleetInventoryImport({ manifest, existing });
+    // hostRef/unitRef stay private even on the admin response: callers get
+    // target IDs and counts sufficient to review the pending change.
+    sendData(res, {
+      manifest: {
+        inventoryId: manifest.inventoryId,
+        fingerprint: manifest.manifestFingerprint,
+        network: manifest.network,
+        targetCount: manifest.targets.length,
+        hostCount: manifest.hostRefs.length,
+        limits: manifest.limits,
+      },
+      preview,
+    });
   }));
 
   // The execution registry. Targets are declared here and nowhere else: hostRef
