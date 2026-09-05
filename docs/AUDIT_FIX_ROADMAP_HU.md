@@ -24,8 +24,7 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
 **Következő pontos feladat:** a 7. nap maradéka — a kör-rekord egyeztetése a
-commitment-indexből, `minedHeight` visszatöltés, `effectiveSize` a kör
-alapmagasságán, ZMQ-felügyelet.
+commitment-indexből, ZMQ-felügyelet, poll- és ZMQ-latencia szétválasztása.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -519,6 +518,22 @@ Elfogadási kapu: egy egy hetes explorer-kiesés után a kör-rekord hiánytalan
 
   Ez most fontosabb, mint korábban volt: a walker lett az egyetlen írója
   ezeknek az eseményeknek, tehát amit kitalál, az maga a rekord.
+- **A `minedHeight` már része a „kész" fogalmának.** A saját kommentje azt
+  ígérte, hogy „a következő poll kitölti", de a frissítési szabály nem nyúl
+  hozzá többé, amint a kör késznek számít — az pedig a `quorum info` válaszán
+  múlt. Ez a gyűjtő a node csúcsán fut, a blokk-indexer viszont mögötte, tehát
+  egy frissen bányászott commitmenthez tartozó kör **örökre null** magassággal
+  maradt. A reorg-visszaállítás épp `minedHeight` szerint vág, vagyis pontosan
+  azokat a köröket nem érte el, amelyeket a legvalószínűbb, hogy egy reorg
+  elvisz.
+- **Az `effectiveSize` a kör saját magasságán.** A `CalculateQuorum` a kör
+  alapblokkjának listájából merít, a gyűjtő viszont a mai számot használta.
+  Emiatt egy ban-hullám **mindkét irányban átírta a történelmet**: közben egy
+  valóban 152 taggal elbukott kör `impossible`-ként rögzült és többé nem került
+  elő, utána pedig a ténylegesen lehetetlen körök bukásnak látszottak. Most az
+  indexelt pillanatképekből jön, körönként. Ahol nincs pillanatkép, marad a mai
+  szám — ez a korábbi viselkedés, és a lánc korai szakaszát fedi, ahol a szám
+  nem mozgott.
 
 ## 8. nap – kliens: a fő üzenet
 

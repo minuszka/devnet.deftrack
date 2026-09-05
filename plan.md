@@ -185,7 +185,20 @@ on a port number.
   current `ops/chaos/install.sh`, which refuses a mismatched host and a host
   showing production markers.
 
-## 5. v23 / M-02 — postponed by the user, kept here so it is not lost
+## 5. v23 / M-02 — DROPPED from v23 (user, 2026-09-05)
+
+**M-02 gets no mainnet or testnet height in v23.** Nothing is reverted: the
+merged rule stays gated on devnet at 5250 and regtest 0, and mainnet simply
+continues on the pre-M-02 `IsBLSSig` behaviour, which is therefore an accepted
+exposure rather than an open finding. The notes below are kept because they are
+the evidence behind the decision and would have to be re-derived if a later
+release schedules it.
+
+With K-03 (2026-09-04) and M-02 (2026-09-05) both out, the coordinated v23
+activation is `nPosKernelV2ActivationHeight` + the Q60 switchover, not four
+halves of one decision. The `CMainParams` comment above `posLimit` in
+`chainparams.cpp` still names K-03 and M-02 and is now wrong on both.
+
 
 - **The mainnet premine is already spent.** Verified against a copy of mainnet
   at height 130100 with a control: `gettxout` on the coinbases of blocks 1, 2,
@@ -201,8 +214,9 @@ on a port number.
   `CheckSignatureEncoding` then returns immediately — skipping DER strictness,
   low-S and hashtype for ordinary outputs too. `CPubKey::Verify` parses with
   `ecdsa_signature_parse_der_lax` and normalises, so a non-canonical signature
-  can still verify. That is live on mainnet today. Activating M-02 in v23 is
-  therefore a net gain, not a risk to be deferred.
+  can still verify. That is live on mainnet today — and stays live, since M-02
+  is out of v23. The technical case for the rule is unchanged; the release
+  decision went the other way.
   *Not measured:* exactly which mutations the lax parser tolerates, i.e. how
   exploitable this is by a third party. That is a bounded, worthwhile test.
 - **Open question that decides the rest:** are there any unspent BLS-locked
