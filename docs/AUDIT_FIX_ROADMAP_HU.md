@@ -18,13 +18,13 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
 | 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **RÉSZBEN KÉSZ** (2026-09-05) |
+| 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 8 | Kliens: a fő üzenet helyreállítása | nyitva |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** a 7. nap maradéka — a kör-rekord egyeztetése a
-commitment-indexből, és a poll- illetve ZMQ-forrású latencia szétválasztása.
+**Következő pontos feladat:** 8. nap — a kliens: a fő üzenet helyreállítása.
+Tisztán repóbeli munka.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -543,6 +543,27 @@ Elfogadási kapu: egy egy hetes explorer-kiesés után a kör-rekord hiánytalan
   újracsatlakozást ütemez (2 s-tól 60 s-ig), amit a `stop` elvág. Mellékesen: egy
   hibás keret `-1` sorszáma többé nem kerül a térképbe, mert eddig a **következő**
   üzenetet is összehasonlíthatatlanná tette.
+- **A latencia-percentilisek már nem kevernek kétféle mérést.** A másodperces
+  sorozat minden lockolt blokkot beszámolt, forrástól függetlenül — pedig egy
+  ChainLock kétféleképp ér el egy blokkot: a rá kiadott CLSIG-gel, és az
+  egyeztető pollal, ami **minden ősét** is megjelöli, mert a `hashchainlock`
+  csak arra a blokkra tüzel, amelyet a CLSIG megnevez. A pollos érték
+  `most − blokkidő`, tehát akár egy teljes poll-intervallumnyi várakozást
+  hordoz, és semmit nem mond arról, milyen gyorsan érkezett a lock. Ezek
+  uralták a percentiliseket. A modell saját kommentje már eddig is kimondta,
+  hogy a kettőt nem szabad összeátlagolni — mégis az történt.
+- **A batch közbeni reorg többé nem megy át.** Eddig csak a batch **utolsó**
+  hash-e volt ellenőrizve, a következő tickben. Egy indexelés közben landoló
+  reorg így egyenesen bekerült: az elhagyott lánc blokkjai egy érvényes csúcs
+  alá íródtak, és fölöttük semmi nem mondott ellent, tehát későbbi
+  visszagörgetésnek sem volt oka rájuk nézni. Most minden blokknak meg kell
+  neveznie az előzőt.
+
+**Átsorolva:** a kör-rekord teljes egyeztetése a commitment-indexből. Ez a nap
+legnagyobb tétele, és a mostani javítások jó részét éppen az teszi majd
+feleslegessé — de önálló migrációt és visszamenőleges újraépítést jelent az egész
+láncra, amit **élő adaton kell bizonyítani**, nem unit tesztekkel. A közbenső
+javítások addig is a helyükön tartják a rekordot.
 
 ## 8. nap – kliens: a fő üzenet
 

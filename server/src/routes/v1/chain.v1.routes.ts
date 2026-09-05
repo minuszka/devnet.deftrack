@@ -308,7 +308,18 @@ router.get(
       }
     }
 
+    // ZMQ-sourced only, like the millisecond series below it.
+    //
+    // A ChainLock reaches a block two ways: the CLSIG the node published for
+    // that block, and the reconcile poll, which also marks every ANCESTOR the
+    // lock covers -- `hashchainlock` fires only for the block the CLSIG names
+    // (zmqpublishnotifier.cpp:235-238). A polled sighting's latency is
+    // `now - block.time`, so it carries up to a whole poll interval of waiting
+    // and says nothing about how fast the lock arrived. Mixed into one series
+    // those values dominated the percentiles, and the model's own field comment
+    // already said the two must never be averaged together silently. They were.
     const measured = locked
+      .filter((b) => b.chainLockSource === 'zmq')
       .map((b) => b.chainLockLatencySec)
       .filter((v): v is number => typeof v === 'number')
       .sort((a, b) => a - b);
@@ -344,6 +355,7 @@ router.get(
       // Locks seen before the watcher started count as covered but have no
       // measurable latency; they are excluded from the timings, not guessed at.
       latencyMeasured: measured.length,
+      /** Event-time seconds, ZMQ only. `sourceCounts` says what was excluded. */
       latencySec: { p50: pct(0.5), p90: pct(0.9), max: measured.at(-1) ?? null },
       eventLatencyMeasured: eventMeasured.length,
       eventLatencyMs: { p50: eventPct(0.5), p90: eventPct(0.9), max: eventMeasured.at(-1) ?? null },
