@@ -192,7 +192,7 @@ export function labFaultsForPlan(input: {
           container: target.hostRef,
           faultClass: 'netem',
           jobId,
-          apply: { op: 'apply', container: target.hostRef, kind: 'netem', args, runTag: input.runTag, expiresAtMs: input.expiresAtMs },
+          apply: { op: 'apply', container: target.hostRef, kind: 'netem', args, runTag: input.runTag, expiresAtMs: input.expiresAtMs, commandId: jobId },
         });
       } catch (error) {
         refuse(error as Error);
@@ -232,6 +232,7 @@ export function labFaultsForPlan(input: {
             container: target.hostRef,
             kind: 'partition',
             args: peers,
+            commandId: jobId,
             runTag: input.runTag,
             expiresAtMs: input.expiresAtMs,
           },
@@ -266,7 +267,7 @@ export function labFaultsForPlan(input: {
           container: target.hostRef,
           faultClass: 'service',
           jobId,
-          apply: { op: 'service-stop', container: target.hostRef, runTag: input.runTag, expiresAtMs: input.expiresAtMs },
+          apply: { op: 'service-stop', container: target.hostRef, runTag: input.runTag, expiresAtMs: input.expiresAtMs, commandId: jobId },
         });
       } catch (error) {
         refuse(error as Error);
@@ -360,11 +361,15 @@ export function scheduledLabActionsForPlan(input: {
       notBeforeOffsetMs: action.notBeforeOffsetMs,
       command:
         payload.kind === 'service-stop'
-          ? { op: 'service-stop', container: target.hostRef, runTag: input.runTag, expiresAtMs: input.expiresAtMs }
+          ? { op: 'service-stop', container: target.hostRef, runTag: input.runTag, expiresAtMs: input.expiresAtMs, commandId: action.actionId }
           : // Starting the node again IS clearing its stop: the wrapper's undo for
             // a service job is `docker start`, so a mid-cycle restart and the
             // recovery teardown travel the same path and cannot diverge.
-            { op: 'clear', jobId },
+            //
+            // Keyed on the action rather than the job: a flapping cycle stops and
+            // starts the same container in the same run, so the job id is the
+            // same for both ends and could not tell their outcomes apart.
+            { op: 'clear', jobId, commandId: action.actionId },
     });
   }
   scheduled.sort(
@@ -436,7 +441,7 @@ export function faultRecoveryTargetsForPlan(input: {
     targetId: fault.targetId,
     container: fault.container,
     faultClass: fault.faultClass,
-    clear: { op: 'clear', jobId: fault.jobId },
+    clear: { op: 'clear', jobId: fault.jobId, commandId: fault.jobId },
   }));
   // A target whose ONLY stop is scheduled would otherwise be missing here, and
   // recovery would report all-clear over a node a dispatcher had stopped. Its
@@ -450,7 +455,7 @@ export function faultRecoveryTargetsForPlan(input: {
       targetId: scheduled.targetId,
       container: scheduled.container,
       faultClass: scheduled.faultClass,
-      clear: { op: 'clear', jobId: serviceJobId(input.runTag, scheduled.container) },
+      clear: { op: 'clear', jobId: serviceJobId(input.runTag, scheduled.container), commandId: serviceJobId(input.runTag, scheduled.container) },
     });
   }
   return { targets, skipped: skipped + deferred.skipped };

@@ -34,7 +34,7 @@ import {
   UnscheduledLiveFaultError,
   UnsupportedLiveFaultError,
 } from '../../simulator/liveExecutorPlan.js';
-import { fileCommandQueue } from '../../simulator/netemWrapperHost.js';
+import { fileCommandQueue, fileOutcomeStore } from '../../simulator/netemWrapperHost.js';
 import { SimulationRun } from '../../models/SimulationRun.js';
 import { rpc } from '../../services/rpc.service.js';
 import { MongoSimulationActionRepository } from '../../services/simulationAction.repository.js';
@@ -372,7 +372,10 @@ function buildLabExecutor(): DockerLiveExecutor | undefined {
     fileCommandQueue(config.simulator.labWrapperCommandDir),
     dockerLabProbes(config.simulator.labDockerBin),
     undefined,
-    { allowedContainerProject: config.simulator.labContainerProject }
+    { allowedContainerProject: config.simulator.labContainerProject },
+    // The wrapper writes its verdicts beside the queue, and the executor will
+    // not report a fault active until it has read them.
+    fileOutcomeStore(config.simulator.labWrapperCommandDir)
   );
 }
 

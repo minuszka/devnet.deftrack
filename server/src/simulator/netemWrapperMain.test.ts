@@ -34,7 +34,11 @@ describe('parseWrapperCommand', () => {
   it('accepts a well-formed apply and clear', () => {
     expect(parseWrapperCommand({ op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: NOW + 30_000 }, NOW))
       .toMatchObject({ op: 'apply', container: 'mn01', kind: 'latency', expiresAtMs: NOW + 30_000 });
-    expect(parseWrapperCommand({ op: 'clear', jobId: 'netem-abc' }, NOW)).toEqual({ op: 'clear', jobId: 'netem-abc' });
+    expect(parseWrapperCommand({ op: 'clear', jobId: 'netem-abc' }, NOW)).toEqual({ op: 'clear', jobId: 'netem-abc', commandId: null });
+    // The id the orchestrator uses to ask what happened to this command. Absent
+    // is allowed -- a wrapper driven by hand has nobody waiting on an outcome.
+    expect(parseWrapperCommand({ op: 'clear', jobId: 'netem-abc', commandId: 'cmd-1' }, NOW))
+      .toEqual({ op: 'clear', jobId: 'netem-abc', commandId: 'cmd-1' });
   });
 
   it('rejects malformed commands loudly', () => {
@@ -47,7 +51,7 @@ describe('parseWrapperCommand', () => {
 
   it('accepts a service-stop and validates its fields', () => {
     expect(parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: NOW + 30_000 }, NOW))
-      .toEqual({ op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: NOW + 30_000 });
+      .toEqual({ op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: NOW + 30_000, commandId: null });
     expect(() => parseWrapperCommand({ op: 'service-stop', runTag: 'r', expiresAtMs: NOW + 1 }, NOW)).toThrow(/container/);
     expect(() => parseWrapperCommand({ op: 'service-stop', container: 'mn01', expiresAtMs: NOW + 1 }, NOW)).toThrow(/runTag/);
   });
@@ -82,22 +86,22 @@ describe('parseWrapperCommand', () => {
 describe('dispatchWrapperCommand', () => {
   it('applies and clears through the runner', async () => {
     const { runner, actions } = fakeRunner();
-    await dispatchWrapperCommand(runner, { op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: 31_000 });
+    await dispatchWrapperCommand(runner, { op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: 31_000, commandId: null });
     expect(actions.filter((a) => a.op === 'apply')).toHaveLength(1);
     const jobId = (await runner.apply({ container: 'mn01', kind: 'latency', args: ['100ms'] }, 'r', 31_000)).jobId;
     actions.length = 0;
-    await dispatchWrapperCommand(runner, { op: 'clear', jobId });
+    await dispatchWrapperCommand(runner, { op: 'clear', jobId, commandId: null });
     expect(actions).toEqual([{ op: 'clear', container: 'mn01', tcArgs: ['qdisc', 'del', 'dev', 'eth0', 'root'] }]);
   });
 
   it('routes a service-stop to the service class, and undoes it through the same clear', async () => {
     const { runner, actions } = fakeRunner();
-    await dispatchWrapperCommand(runner, { op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: 31_000 });
+    await dispatchWrapperCommand(runner, { op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: 31_000, commandId: null });
     expect(actions).toEqual([{ op: 'stop', container: 'mn01' }]);
     // There is no service-start command: a start is the undo of the stop.
     const jobId = serviceJobId('r', 'mn01');
     actions.length = 0;
-    await dispatchWrapperCommand(runner, { op: 'clear', jobId });
+    await dispatchWrapperCommand(runner, { op: 'clear', jobId, commandId: null });
     expect(actions).toEqual([{ op: 'start', container: 'mn01' }]);
   });
 });
@@ -167,6 +171,79 @@ describe('runWrapperCycle', () => {
       expect(rejected).toHaveLength(1);
       expect(rejected[0]).toMatch(/already passed/);
     })();
+  });
+});
+
+describe('the outcome the wrapper writes back', () => {
+  const outcomes = () => {
+    const written: Record<string, { status: string; detail: string | null }> = {};
+    return {
+      written,
+      store: {
+        async record(o: { commandId: string; status: 'applied' | 'rejected'; detail: string | null }) {
+          written[o.commandId] = { status: o.status, detail: o.detail };
+        },
+        async read() { return null; },
+      },
+    };
+  };
+
+  const queueOf = (payloads: unknown[]) => ({
+    async enqueue() {},
+    async claim() {
+      return payloads.splice(0).map((payload) => ({
+        payload, attempts: 1, ack: async () => {}, retry: async () => {}, reject: async () => {},
+      }));
+    },
+    async recoverInflight() { return 0; },
+  });
+
+  it('records applied against the command id once the fault is on', async () => {
+    const { runner, now } = fakeRunner();
+    const { written, store } = outcomes();
+    const queue = queueOf([
+      { op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: now.ms + 30_000, commandId: 'cmd-1' },
+    ]);
+
+    await runWrapperCycle({ runner, queue, logger: silent, clock: () => now.ms, outcomes: store });
+
+    expect(written['cmd-1']).toEqual({ status: 'applied', detail: null });
+  });
+
+  it('records a rejection against the id read off the raw payload', async () => {
+    // The parse is what failed, so the id cannot come from the parsed command.
+    // Without reading it off the payload a malformed command is quarantined
+    // silently and the orchestrator waits out its whole timeout for an outcome
+    // that was never going to come.
+    const { runner, now } = fakeRunner();
+    const { written, store } = outcomes();
+    const queue = queueOf([{ op: 'apply', container: 'mn01', commandId: 'cmd-2' }]);
+
+    await runWrapperCycle({ runner, queue, logger: silent, clock: () => now.ms, outcomes: store });
+
+    expect(written['cmd-2']!.status).toBe('rejected');
+    expect(written['cmd-2']!.detail).toMatch(/kind/);
+  });
+
+  it('says nothing while a command is still being retried', async () => {
+    // A retry is not an outcome. Recording one would tell the orchestrator a
+    // fault had failed while the wrapper was still going to apply it.
+    const { now } = fakeRunner();
+    const failing = {
+      apply: async () => { throw new Error('docker is busy'); },
+      stopService: async () => ({ jobId: 'x' }),
+      clear: async () => {},
+      tick: async () => ({ cleared: 0, failed: 0 }),
+    } as unknown as Parameters<typeof runWrapperCycle>[0]['runner'];
+    const { written, store } = outcomes();
+    const queue = queueOf([
+      { op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: now.ms + 30_000, commandId: 'cmd-3' },
+    ]);
+
+    const result = await runWrapperCycle({ runner: failing, queue, logger: silent, clock: () => now.ms, outcomes: store });
+
+    expect(result.failed).toBe(1);
+    expect(written['cmd-3']).toBeUndefined();
   });
 });
 

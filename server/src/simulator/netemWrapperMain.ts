@@ -3,8 +3,11 @@ import {
   dockerNetemExecutor,
   dockerRunningContainers,
   fileCommandQueue,
+  fileOutcomeStore,
   fileWrapperStore,
+  MAX_COMMAND_ATTEMPTS,
   type CommandQueue,
+  type OutcomeStore,
 } from './netemWrapperHost.js';
 import { buildWrapperHeartbeat, writeWrapperHeartbeat } from './wrapperHeartbeat.js';
 
@@ -22,6 +25,23 @@ import { buildWrapperHeartbeat, writeWrapperHeartbeat } from './wrapperHeartbeat
  * Env: NETEM_WRAPPER_STATE (state file), NETEM_WRAPPER_COMMANDS (command dir),
  * NETEM_WRAPPER_INTERVAL_MS (cycle interval), DOCKER_BIN.
  */
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The command id straight off an unparsed payload.
+ *
+ * Used only on the rejection path, where the parse has already failed. Without
+ * it a malformed command is quarantined silently and the orchestrator waits out
+ * its whole timeout for an outcome that was never going to come.
+ */
+function commandIdOf(payload: unknown): string | null {
+  if (payload === null || typeof payload !== 'object') return null;
+  const id = (payload as { commandId?: unknown }).commandId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
 
 /**
  * One wrapper cycle: apply everything queued, then sweep expired leases. A
@@ -47,8 +67,33 @@ export async function runWrapperCycle(input: {
    * then refuse. Defaults to the wall clock, which is what production uses.
    */
   clock?: () => number;
+  /**
+   * Where the wrapper says what it did with each command.
+   *
+   * Optional only so the fake-runner tests can leave it out; the real
+   * entrypoint always passes one. Without it the orchestrator has no way to
+   * learn that a command was refused, and records an enqueue as an applied
+   * fault -- which is the whole reason this channel exists.
+   */
+  outcomes?: OutcomeStore;
 }): Promise<{ dispatched: number; failed: number; cleared: number }> {
   const now = input.clock ?? Date.now;
+
+  // Never lets a bookkeeping failure break a cycle: the recovery guarantee does
+  // not depend on the outcome being written, and a wrapper that cannot write
+  // one must still be able to clear faults.
+  const record = async (
+    commandId: string | null,
+    status: 'applied' | 'rejected',
+    detail: string | null
+  ): Promise<void> => {
+    if (input.outcomes === undefined || commandId === null) return;
+    try {
+      await input.outcomes.record({ commandId, status, jobId: null, detail, atMs: now() });
+    } catch (error) {
+      input.logger.error(`outcome for ${commandId} could not be recorded: ${message(error)}`);
+    }
+  };
   let dispatched = 0;
   let failed = 0;
   for (const claimed of await input.queue.claim()) {
@@ -57,8 +102,11 @@ export async function runWrapperCycle(input: {
       command = parseWrapperCommand(claimed.payload, now());
     } catch (error) {
       // Malformed: no number of retries will make it parse, so it is quarantined
-      // rather than left to circle.
+      // rather than left to circle. The id is read straight off the raw payload,
+      // because the parse that would have given it to us is the thing that
+      // failed -- and a refusal nobody can attribute is a refusal nobody sees.
       failed++;
+      await record(commandIdOf(claimed.payload), 'rejected', message(error));
       await claimed.reject(String(error));
       input.logger.error(`wrapper command rejected: ${error instanceof Error ? error.message : String(error)}`);
       continue;
@@ -69,10 +117,17 @@ export async function runWrapperCycle(input: {
       // a crash in between and is re-claimed at the next boot; every command the
       // wrapper takes is idempotent, so arriving twice costs nothing while
       // arriving zero times leaves a node stopped that nothing will start.
+      await record(command.commandId, 'applied', null);
       await claimed.ack();
       dispatched++;
     } catch (error) {
       failed++;
+      // Recorded only once the queue has given up on it. A retry is not an
+      // outcome, and writing one would tell the orchestrator a fault had failed
+      // while the wrapper was still going to apply it.
+      if (claimed.attempts >= MAX_COMMAND_ATTEMPTS) {
+        await record(command.commandId, 'rejected', message(error));
+      }
       await claimed.retry();
       input.logger.error(
         `wrapper command failed (attempt ${claimed.attempts}): ${error instanceof Error ? error.message : String(error)}`
@@ -102,6 +157,9 @@ async function main(): Promise<void> {
     logger,
   });
   const queue = fileCommandQueue(commandDir);
+  // Beside the queue, so one directory carries the whole conversation:
+  // what the orchestrator asked for, and what the wrapper did about it.
+  const outcomes = fileOutcomeStore(commandDir);
 
   // The wrapper's own claim about itself, which is what the live preflight reads.
   // Unset means it publishes nothing, and a live run then fails recovery-ready --
@@ -134,7 +192,7 @@ async function main(): Promise<void> {
   const timer = setInterval(() => {
     if (inFlight) return;
     inFlight = true;
-    void runWrapperCycle({ runner, queue, logger, publish })
+    void runWrapperCycle({ runner, queue, logger, publish, outcomes })
       .catch((error) => {
         logger.error(`wrapper cycle failed: ${error instanceof Error ? error.message : String(error)}`);
       })
