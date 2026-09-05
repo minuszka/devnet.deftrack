@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   getBlockCount: vi.fn(),
   getBlockHash: vi.fn(),
+  getBlockVerbose: vi.fn(),
   call: vi.fn(),
   logs: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
   syncStateDoc: { lastSyncedHeight: 8028, lastSyncedHash: 'aaaa' } as Record<string, unknown>,
@@ -45,6 +46,7 @@ vi.mock('./rpc.service.js', () => ({
   rpc: {
     getBlockCount: state.getBlockCount,
     getBlockHash: state.getBlockHash,
+    getBlockVerbose: state.getBlockVerbose,
     call: state.call,
   },
 }));
@@ -60,7 +62,9 @@ vi.mock('./mnListDiff.service.js', () => ({
   DIFF_CURSOR_KEY: 'listdiff',
   mnListDiffService: { reset: state.diffReset },
 }));
-vi.mock('./chainLock.service.js', () => ({ chainLockService: { noteBlock: vi.fn() } }));
+vi.mock('./chainLock.service.js', () => ({
+  chainLockService: { noteBlock: vi.fn(), notifyBlockIndexed: vi.fn() },
+}));
 vi.mock('./metrics.service.js', () => ({
   metricsService: { setSyncPosition: vi.fn(), observeSync: vi.fn() },
 }));
@@ -138,6 +142,7 @@ beforeEach(() => {
     state.roundsUpdateMany,
     state.blockUpdateOne,
     state.syncUpdateOne,
+    state.getBlockVerbose,
     state.diffReset,
   ]) {
     fn.mockReset();
@@ -211,6 +216,36 @@ describe('a node that cannot answer', () => {
 
     expect(destructiveCalls()).toBe(0);
     expect(recordedError()).toContain('operator');
+  });
+});
+
+describe('a reorg that lands mid-batch', () => {
+  it('refuses the block that does not follow the one before it', async () => {
+    // Only the batch's LAST hash was ever checked, on the next tick. A reorg
+    // that landed while a batch was being indexed therefore went straight in:
+    // blocks from the abandoned chain were stored below a tip that was valid,
+    // and nothing above them ever disagreed, so no later rollback had a reason
+    // to look at them.
+    state.syncStateDoc = { lastSyncedHeight: 8028, lastSyncedHash: 'aaaa' };
+    state.getBlockCount.mockResolvedValue(8031);
+    state.getBlockHash.mockImplementation(async (height: number) =>
+      height === 8028 ? 'aaaa' : `hash-${height}`
+    );
+    // 8029 follows the indexed tip; 8030 names a predecessor from another chain.
+    state.getBlockVerbose.mockImplementation(async (hash: string) => {
+      const height = Number(hash.replace('hash-', ''));
+      return {
+        hash,
+        height,
+        previousblockhash: height === 8029 ? 'aaaa' : 'from-another-chain',
+        time: 0, mediantime: 0, size: 0, version: 0, merkleroot: 'm',
+        bits: '1', nonce: 0, difficulty: 0, chainwork: 'c', nTx: 0, tx: [],
+      };
+    });
+
+    await new SyncService().tick();
+
+    expect(recordedError()).toContain('moved mid-batch');
   });
 });
 

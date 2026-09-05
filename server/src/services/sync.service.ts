@@ -314,7 +314,9 @@ export class SyncService {
 
     let lastHash = state.lastSyncedHash;
     for (let height = from; height <= to; height++) {
-      lastHash = await this.indexBlock(height, tip);
+      // The predecessor this block must name. Empty for the first block ever
+      // indexed, and after a rollback the rewound tip is what it has to follow.
+      lastHash = await this.indexBlock(height, tip, lastHash === '' ? null : lastHash);
       // Checkpoint inside the batch. Writing progress only at the end left the
       // health endpoint reporting -1 while thousands of blocks were already
       // stored, and made a restart mid-batch redo all of it.
@@ -454,7 +456,7 @@ export class SyncService {
     return cursor;
   }
 
-  private async indexBlock(height: number, tip: number): Promise<string> {
+  private async indexBlock(height: number, tip: number, expectedPrevious: string | null): Promise<string> {
     const hash = await rpc.getBlockHash(height);
 
     // The genesis coinbase is not in the transaction index and the node refuses
@@ -724,6 +726,18 @@ export class SyncService {
       await Block.updateOne(
         { hash: block.previousblockhash, nextblockhash: { $ne: block.hash } },
         { $set: { nextblockhash: block.hash } }
+      );
+    }
+
+    // Each block must name the one before it. Only the batch's LAST hash was
+    // ever checked, on the next tick -- so a reorg that landed mid-batch was
+    // indexed straight through: blocks from the abandoned chain were stored
+    // below a tip that was valid, and nothing above them ever disagreed, so no
+    // later rollback had a reason to look. Refused here rather than written.
+    if (expectedPrevious !== null && block.previousblockhash !== expectedPrevious) {
+      throw new ChainUndecidableError(
+        `block ${height} follows ${block.previousblockhash ?? '(none)'} but ${expectedPrevious} was ` +
+          'indexed before it; the chain moved mid-batch'
       );
     }
 
