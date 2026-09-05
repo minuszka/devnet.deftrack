@@ -81,6 +81,10 @@ valid_baseline_qdisc() {
   case "$1" in fq_codel|pfifo_fast|noqueue) return 0 ;; *) return 1 ;; esac
 }
 
+valid_hostname() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]]
+}
+
 decimal() {
   [[ "$1" =~ ^[0-9]+$ ]]
 }
@@ -108,6 +112,7 @@ declare -A TARGET_INTERFACE=()
 declare -A TARGET_PORT=()
 declare -A TARGET_BASELINE=()
 MAX_TTL_SECONDS=0
+CONFIG_HOST=''
 
 load_config() {
   assert_secure_config
@@ -117,8 +122,9 @@ load_config() {
   TARGET_PORT=()
   TARGET_BASELINE=()
   MAX_TTL_SECONDS=0
+  CONFIG_HOST=''
 
-  local kind target unit interface port baseline extra line_number=0 port_value ttl_value
+  local kind target unit interface port baseline extra line_number=0 port_value ttl_value this_host
   while IFS=$' \t' read -r kind target unit interface port baseline extra; do
     line_number=$((line_number + 1))
     case "${kind:-}" in
@@ -129,6 +135,12 @@ load_config() {
         ttl_value=$(decimal_value "${target:-}") || die "invalid policy TTL at line $line_number"
         (( ttl_value >= 30 && ttl_value <= 3600 )) || die 'policy TTL must be between 30 and 3600 seconds'
         MAX_TTL_SECONDS=$ttl_value
+        ;;
+      host)
+        [ -n "${target:-}" ] && [ -z "${unit:-}" ] && [ -z "${interface:-}" ] && [ -z "${port:-}" ] && [ -z "${baseline:-}" ] && [ -z "${extra:-}" ] || die "invalid host record at line $line_number"
+        [ -z "$CONFIG_HOST" ] || die 'host may appear only once'
+        valid_hostname "${target:-}" || die "invalid host name at line $line_number"
+        CONFIG_HOST=$target
         ;;
       target)
         [ -n "${target:-}" ] && [ -n "${unit:-}" ] && [ -n "${interface:-}" ] && [ -n "${port:-}" ] && [ -n "${baseline:-}" ] && [ -z "${extra:-}" ] || die "invalid target record at line $line_number"
@@ -151,6 +163,18 @@ load_config() {
 
   (( MAX_TTL_SECONDS > 0 )) || die 'configuration needs exactly one policy record'
   (( ${#TARGET_IDS[@]} > 0 )) || die 'configuration needs at least one target record'
+
+  # The configuration names the machine it belongs to, and the wrapper refuses
+  # to act anywhere else. Without this the package acts on whatever host it was
+  # copied to: two fleet hosts ended up carrying an installed wrapper and an
+  # enabled recovery timer by accident, one of them alongside a production
+  # container, and nothing on the host was able to notice.
+  [ -n "$CONFIG_HOST" ] || die 'configuration must name its host (host <short-hostname>)'
+  if [ "$TEST_MODE" != '1' ]; then
+    this_host=$(hostname -s 2>/dev/null || true)
+    [ "$this_host" = "$CONFIG_HOST" ] ||
+      die "configuration belongs to host '$CONFIG_HOST' but this machine is '${this_host:-unknown}'"
+  fi
 }
 
 require_target() {
@@ -177,7 +201,9 @@ require_fault_numbers() {
   latency=$(decimal_value "$1") || die 'latency must be an integer millisecond value'
   jitter=$(decimal_value "$2") || die 'jitter must be an integer millisecond value'
   loss=$(decimal_value "$3") || die 'loss must be an integer percentage'
-  (( latency >= 1 && latency <= 2000 )) || die 'latency must be 1..2000 ms'
+  # Zero latency is allowed so a pure packet-loss fault can be expressed at all;
+  # `delay` is then left off the netem command entirely rather than sent as 0ms.
+  (( latency <= 2000 )) || die 'latency must be 0..2000 ms'
   (( jitter <= latency )) || die 'jitter must not exceed latency'
   (( loss >= 0 && loss <= 100 )) || die 'loss must be 0..100 percent'
 }
@@ -317,12 +343,42 @@ apply_netem() {
   port=${TARGET_PORT[$target]}
   baseline=${TARGET_BASELINE[$target]}
   current=$(tc qdisc show dev "$interface" 2>/dev/null || true)
-  [[ "$current" == *"qdisc $baseline "* ]] || die "interface $interface is not at its declared $baseline baseline"
+  # Anchored on the ROOT qdisc line. Matching the kind anywhere in the output
+  # passes on a multi-queue NIC whose per-queue children are fq_codel while the
+  # root is mq -- and the clear path would then install a single-queue root in
+  # its place, a different configuration, silently. The handle is not compared:
+  # the kernel assigns a new one on replacement (fq_codel 0: comes back as
+  # 8001:), so only the kind and the fact that it is the root are evidence.
+  grep -Eq "^qdisc ${baseline} [0-9a-f]+: root" <<<"$current" ||
+    die "interface $interface is not at its declared $baseline baseline"
   content=$(printf 'kind=netem\ntarget=%s\ninterface=%s\nport=%s\nbaseline=%s\nlatency=%s\njitter=%s\nloss=%s\nexpires=%s\n' "$target" "$interface" "$port" "$baseline" "$latency" "$jitter" "$loss" "$expiry")
   write_job "$job" "$content"
-  if ! tc qdisc replace dev "$interface" root handle 1: prio || \
-    ! tc qdisc replace dev "$interface" parent 1:3 handle 30: netem delay "${latency}ms" "${jitter}ms" loss "${loss}%" || \
-    ! tc filter replace dev "$interface" protocol ip parent 1: prio 3 u32 match ip dport "$port" 0xffff flowid 1:3; then
+  # Band 4 is unreachable without a filter: the priomap sends all sixteen TOS
+  # classes to band 1. A plain `prio` root uses the DEFAULT priomap, which puts
+  # "bulk" traffic -- OpenSSH's own interactive default is af21 -- into band 3,
+  # so a netem attached there impaired the host's SSH and any co-hosted service
+  # whose packets carry those bits, with no filter matching them at all. That
+  # is how a 100% loss fault once cut the operator out of the pilot host.
+  #
+  # The filter matches the target's own listening port as the SOURCE port, so
+  # only packets leaving that daemon's listening socket are impaired. Matching
+  # the destination port instead -- what this did before -- catches every other
+  # daemon on the host dialling a remote node that happens to listen on the same
+  # number, which on a shared NIC reaches production traffic.
+  #
+  # Known limitation: connections this daemon itself initiated leave from an
+  # ephemeral source port and are not matched. Covering those without touching
+  # the neighbours needs a per-process classifier (cgroup v2 + nftables mark),
+  # which has to be proven on a real host before it ships.
+  # `if`, not `(( ... )) && ...`: under `set -e` a false arithmetic test is the
+  # compound statement's exit status and would abort the wrapper mid-fault.
+  local -a netem_args=(loss "${loss}%")
+  if (( latency > 0 )); then
+    netem_args=(delay "${latency}ms" "${jitter}ms" "${netem_args[@]}")
+  fi
+  if ! tc qdisc replace dev "$interface" root handle 1: prio bands 4 priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 || \
+    ! tc qdisc replace dev "$interface" parent 1:4 handle 40: netem "${netem_args[@]}" || \
+    ! tc filter replace dev "$interface" protocol ip parent 1: prio 4 u32 match ip sport "$port" 0xffff flowid 1:4; then
     load_job "$job"
     clear_loaded_job "$job" || true
     die "tc refused network fault for $target"
@@ -366,7 +422,10 @@ verify() {
   load_config
   command -v systemctl >/dev/null 2>&1 || die 'systemctl is not available'
   command -v tc >/dev/null 2>&1 || die 'tc is not available'
-  printf 'defcon-chaos version=%s targets=%s max_ttl_seconds=%s\n' "$VERSION" "${#TARGET_IDS[@]}" "$MAX_TTL_SECONDS"
+  # The host label is printed because an operator reading this output is often
+  # checking exactly one thing: whether they are on the machine they think.
+  printf 'defcon-chaos version=%s host=%s targets=%s max_ttl_seconds=%s\n' \
+    "$VERSION" "$CONFIG_HOST" "${#TARGET_IDS[@]}" "$MAX_TTL_SECONDS"
 }
 
 main() {
