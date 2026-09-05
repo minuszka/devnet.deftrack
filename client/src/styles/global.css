@@ -18,7 +18,11 @@
 
   --ink: #e6ede6;
   --ink-2: #9fac9f;
-  --ink-3: #66736a;
+  /* 4.62:1 on the darkest surface text sits on. It was #66736a -- 3.19:1 --
+     and it carries the units, the timestamps and every "—" that stands for a
+     value that does not exist, which is not decoration. styles/contrast.test.ts
+     fails if any text token drops below 4.5 again. */
+  --ink-3: #808e82;
 
   --accent: #a8e64b;
   --accent-strong: #c0f566;
@@ -30,10 +34,12 @@
   --good: #0ca30c;
   --warn: #fab219;
   --serious: #ec835a;
-  --crit: #d03b3b;
+  /* Was #d03b3b: 3.30:1 on surface-3, and it is a text colour in 26 places --
+     the error bar, the health cells, the ban counts. */
+  --crit: #e66767;
   --good-wash: rgba(12, 163, 12, 0.12);
   --warn-wash: rgba(250, 178, 25, 0.12);
-  --crit-wash: rgba(208, 59, 59, 0.12);
+  --crit-wash: rgba(230, 103, 103, 0.12);
   --info: #3987e5;
   --info-wash: rgba(57, 135, 229, 0.12);
 
@@ -68,7 +74,8 @@
 
   --ink: #161b16;
   --ink-2: #4e5a4f;
-  --ink-3: #7d887e;
+  /* 4.66:1 against the lightest surface; it was #7d887e at 3.23:1. */
+  --ink-3: #636e65;
 
   --accent: #3f7a0f;
   --accent-strong: #2f6006;
@@ -78,11 +85,12 @@
   --accent-wash-2: rgba(63, 122, 15, 0.15);
 
   --good: #0a7d0a;
-  --warn: #a36f00;
+  /* Was #a36f00: 3.81:1, and warn is the colour the punished count is in. */
+  --warn: #8f6200;
   --serious: #b35328;
   --crit: #c22f2f;
   --good-wash: rgba(10, 125, 10, 0.1);
-  --warn-wash: rgba(163, 111, 0, 0.12);
+  --warn-wash: rgba(143, 98, 0, 0.12);
   --crit-wash: rgba(194, 47, 47, 0.1);
   --info: #2a78d6;
   --info-wash: rgba(42, 120, 214, 0.1);

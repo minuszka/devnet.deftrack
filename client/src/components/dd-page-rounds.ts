@@ -3,6 +3,7 @@ import type { QuorumRoundListItem } from '@devnet-deftrack/shared';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
+import { interventionsFor, type InterventionRun } from '../lib/interventions.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
@@ -18,6 +19,8 @@ export class DdPageRounds extends LitElement {
     _status: { state: true },
     _llmq: { state: true },
     _types: { state: true },
+    _runs: { state: true },
+    _revives: { state: true },
     _error: { state: true },
     _loading: { state: true },
   };
@@ -34,6 +37,14 @@ export class DdPageRounds extends LitElement {
    * others disappear from the control that switches back to them.
    */
   private _types: string[] = [];
+  /**
+   * What was being done to the network while these rounds were measured. Two
+   * cheap extra reads, because a round measured during an intervention is a
+   * true number about a network nobody should generalise from -- and the row
+   * had no way to say so.
+   */
+  private _runs: InterventionRun[] = [];
+  private _revives: number[] = [];
   private _error = '';
   private _loading = true;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
@@ -60,6 +71,36 @@ export class DdPageRounds extends LitElement {
       td.muted-cell {
         color: var(--ink-3);
       }
+      /* What was being done to the network when this round was measured. Next
+         to the round key, because it qualifies the whole row and not one cell. */
+      .badges {
+        display: inline-flex;
+        gap: 4px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
+      .badge {
+        padding: 1px 5px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        color: var(--ink-2);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        text-decoration: none;
+        cursor: help;
+      }
+      .badge.experiment {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      a.badge:hover {
+        text-decoration: none;
+        background: var(--surface-3);
+      }
+
       /* Sits against the punished count, because that is the number a reader
          would otherwise take at face value. */
       .warmup {
@@ -85,10 +126,25 @@ export class DdPageRounds extends LitElement {
       };
       if (this._status) params.status = this._status;
       if (this._llmq) params.llmqName = this._llmq;
-      const p = await run.api.rounds(params);
+      const [p, runs, revives] = await Promise.all([
+        run.api.rounds(params),
+        // Neither is worth an error bar of its own: without them the rows are
+        // simply unbadged, which is where they were before.
+        run.api.experiments({ limit: 50 }).catch(() => null),
+        run.api.masternodeEvents({ hours: 24 * 90, type: 'revived', limit: 500 }).catch(() => null),
+      ]);
       if (run.stale) return;
       this._rounds = p.items;
       this._total = p.total;
+      if (runs) {
+        this._runs = runs.items.map((r) => ({
+          runKey: r.runKey,
+          title: r.title,
+          startHeight: r.startHeight,
+          endHeight: r.endHeight,
+        }));
+      }
+      if (revives) this._revives = revives.items.map((e) => e.height);
       const known = new Set([...this._types, ...p.items.map((r) => r.llmqName)]);
       this._types = [...known].sort();
       this._error = '';
@@ -173,20 +229,21 @@ export class DdPageRounds extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Every scheduled DKG round, including the ones that left no trace on the chain, and what each punished.</caption>
               <thead>
                 <tr>
-                  <th>Round</th>
-                  <th>Type</th>
-                  <th class="r">Height</th>
-                  <th class="c">Formed</th>
-                  <th class="r">Valid members</th>
-                  <th class="r">Health</th>
-                  <th class="r">Punished</th>
-                  <th class="r">Max possible ban</th>
-                  <th class="r">Streak</th>
-                  <th>Who failed</th>
-                  <th>Quorum hash</th>
-                  <th class="r">Seen</th>
+                  <th scope="col">Round</th>
+                  <th scope="col">Type</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col" class="c">Formed</th>
+                  <th scope="col" class="r">Valid members</th>
+                  <th scope="col" class="r">Health</th>
+                  <th scope="col" class="r">Punished</th>
+                  <th scope="col" class="r">Max possible ban</th>
+                  <th scope="col" class="r">Streak</th>
+                  <th scope="col">Who failed</th>
+                  <th scope="col">Quorum hash</th>
+                  <th scope="col" class="r">Seen</th>
                 </tr>
               </thead>
               <tbody>
@@ -229,6 +286,22 @@ export class DdPageRounds extends LitElement {
     >`;
   }
 
+  /** Experiment window and post-revive settling, from the row's own height. */
+  private _badges(r: QuorumRoundListItem) {
+    const badges = interventionsFor(
+      { expectedHeight: r.expectedHeight, dkgInterval: r.dkgInterval },
+      { runs: this._runs, reviveHeights: this._revives }
+    );
+    if (badges.length === 0) return nothing;
+    return html`<span class="badges"
+      >${badges.map((b) =>
+        b.href === null
+          ? html`<span class="badge ${b.kind}" title=${b.detail}>${b.label}</span>`
+          : html`<a class="badge ${b.kind}" href=${b.href} title=${b.detail}>${b.label}</a>`
+      )}</span
+    >`;
+  }
+
   private _row(r: QuorumRoundListItem): TemplateResult {
     const who =
       r.failuresByOperator.length === 0
@@ -244,7 +317,9 @@ export class DdPageRounds extends LitElement {
 
     return html`
       <tr>
-        <td class="mono"><a href=${roundHref(r.roundKey)}>${r.roundKey}</a></td>
+        <td class="mono">
+          <a href=${roundHref(r.roundKey)}>${r.roundKey}</a>${this._badges(r)}
+        </td>
         <td class="mono">${r.llmqName}</td>
         <td class="r mono">${num(r.expectedHeight)}</td>
         <td class="c"><span class="pill ${verdict.tone}">${verdict.label}</span></td>

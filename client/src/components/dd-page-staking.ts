@@ -291,7 +291,11 @@ export class DdPageStaking extends LitElement {
         <div class="seg">
           ${WINDOWS.map(
             (n) => html`
-              <button class=${this._blocks === n ? 'on' : ''} @click=${() => this._setWindow(n)}>
+              <button
+                class=${this._blocks === n ? 'on' : ''}
+                aria-pressed=${this._blocks === n ? 'true' : 'false'}
+                @click=${() => this._setWindow(n)}
+              >
                 ${num(n)}
               </button>
             `

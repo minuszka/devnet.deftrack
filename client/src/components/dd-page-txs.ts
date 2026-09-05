@@ -99,16 +99,17 @@ export class DdPageTxs extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">The most recent transactions, with their kind and the value they moved.</caption>
               <thead>
                 <tr>
-                  <th>Txid</th>
-                  <th class="c">Kind</th>
-                  <th class="r">Height</th>
-                  <th class="r">In</th>
-                  <th class="r">Out</th>
-                  <th class="r">Value out</th>
-                  <th class="r">Minted</th>
-                  <th class="r">Age</th>
+                  <th scope="col">Txid</th>
+                  <th scope="col" class="c">Kind</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col" class="r">In</th>
+                  <th scope="col" class="r">Out</th>
+                  <th scope="col" class="r">Value out</th>
+                  <th scope="col" class="r">Minted</th>
+                  <th scope="col" class="r">Age</th>
                 </tr>
               </thead>
               <tbody>
@@ -249,7 +250,8 @@ export class DdPageTx extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
-              <thead><tr><th>Source</th><th class="r">Index</th></tr></thead>
+              <caption class="sr-only">The inputs this transaction spends.</caption>
+              <thead><tr><th scope="col">Source</th><th scope="col" class="r">Index</th></tr></thead>
               <tbody>
                 ${t.vin.map(
                   (i) => html`
@@ -274,7 +276,8 @@ export class DdPageTx extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
-              <thead><tr><th class="r">#</th><th>Address</th><th>Script</th><th class="r">Value</th></tr></thead>
+              <caption class="sr-only">The outputs this transaction creates.</caption>
+              <thead><tr><th scope="col" class="r">#</th><th scope="col">Address</th><th scope="col">Script</th><th scope="col" class="r">Value</th></tr></thead>
               <tbody>
                 ${t.vout.map(
                   (o) => html`

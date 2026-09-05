@@ -100,7 +100,11 @@ export class DdPageFairness extends LitElement {
         <div class="seg">
           ${WINDOWS.map(
             (n) => html`
-              <button class=${this._rounds === n ? 'on' : ''} @click=${() => this._setWindow(n)}>
+              <button
+                class=${this._rounds === n ? 'on' : ''}
+                aria-pressed=${this._rounds === n ? 'true' : 'false'}
+                @click=${() => this._setWindow(n)}
+              >
                 ${num(n)}
               </button>
             `
@@ -173,14 +177,15 @@ export class DdPageFairness extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Quorum selection counted by host rather than by masternode.</caption>
               <thead>
                 <tr>
-                  <th>Host</th>
-                  <th class="r">Masternodes</th>
-                  <th class="r">Selections</th>
-                  <th>Share of the busiest</th>
-                  <th class="r">Invalid</th>
-                  <th class="r">Failure rate</th>
+                  <th scope="col">Host</th>
+                  <th scope="col" class="r">Masternodes</th>
+                  <th scope="col" class="r">Selections</th>
+                  <th scope="col">Share of the busiest</th>
+                  <th scope="col" class="r">Invalid</th>
+                  <th scope="col" class="r">Failure rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,15 +233,16 @@ export class DdPageFairness extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">How often each masternode was selected into a quorum, and how often it was marked invalid.</caption>
               <thead>
                 <tr>
-                  <th>proTxHash</th>
-                  <th>Host</th>
-                  <th>Operator</th>
-                  <th class="r">Selections</th>
-                  <th>Against chance</th>
-                  <th class="r">Invalid</th>
-                  <th class="r">Failure rate</th>
+                  <th scope="col">proTxHash</th>
+                  <th scope="col">Host</th>
+                  <th scope="col">Operator</th>
+                  <th scope="col" class="r">Selections</th>
+                  <th scope="col">Against chance</th>
+                  <th scope="col" class="r">Invalid</th>
+                  <th scope="col" class="r">Failure rate</th>
                 </tr>
               </thead>
               <tbody>

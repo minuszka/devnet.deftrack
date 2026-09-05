@@ -125,15 +125,16 @@ export class DdPageExperiments extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Every recorded experiment run, its status and the height range it covers.</caption>
               <thead>
                 <tr>
-                  <th>Run</th>
-                  <th>Title</th>
-                  <th class="c">Status</th>
-                  <th class="r">Heights</th>
-                  <th class="r">MN</th>
-                  <th>Intervention</th>
-                  <th class="r">Started</th>
+                  <th scope="col">Run</th>
+                  <th scope="col">Title</th>
+                  <th scope="col" class="c">Status</th>
+                  <th scope="col" class="r">Heights</th>
+                  <th scope="col" class="r">MN</th>
+                  <th scope="col">Intervention</th>
+                  <th scope="col" class="r">Started</th>
                 </tr>
               </thead>
               <tbody>
@@ -247,18 +248,19 @@ export class DdPageExperiments extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">This run broken down by quorum type, because the schedules interleave and must never be blended.</caption>
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th class="r">Every</th>
-                  <th class="r">Formed</th>
-                  <th class="r">Failed</th>
-                  <th class="r">Pending</th>
-                  <th class="r">Impossible</th>
-                  <th class="r">Formation</th>
-                  <th class="r">Median health</th>
-                  <th class="r">Worst</th>
-                  <th class="r">Members punished</th>
+                  <th scope="col">Type</th>
+                  <th scope="col" class="r">Every</th>
+                  <th scope="col" class="r">Formed</th>
+                  <th scope="col" class="r">Failed</th>
+                  <th scope="col" class="r">Pending</th>
+                  <th scope="col" class="r">Impossible</th>
+                  <th scope="col" class="r">Formation</th>
+                  <th scope="col" class="r">Median health</th>
+                  <th scope="col" class="r">Worst</th>
+                  <th scope="col" class="r">Members punished</th>
                 </tr>
               </thead>
               <tbody>
@@ -383,8 +385,9 @@ export class DdPageExperiments extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">This run measured against its baseline run, figure by figure.</caption>
               <thead>
-                <tr><th>Measure</th><th class="r">This run</th><th class="r">Baseline</th><th class="r">Δ</th></tr>
+                <tr><th scope="col">Measure</th><th scope="col" class="r">This run</th><th scope="col" class="r">Baseline</th><th scope="col" class="r">Δ</th></tr>
               </thead>
               <tbody>
                 ${rows.map(([label, run, base, delta, isRatio]) => {

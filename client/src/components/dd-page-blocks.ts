@@ -91,17 +91,18 @@ export class DdPageBlocks extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">The most recent blocks: height, kind, what the block paid, and its age.</caption>
               <thead>
                 <tr>
-                  <th class="r">Height</th>
-                  <th>Hash</th>
-                  <th class="c">Type</th>
-                  <th class="r">Txs</th>
-                  <th class="r">MN paid</th>
-                  <th class="r">Stake paid</th>
-                  <th class="r">Burned</th>
-                  <th class="r">Size</th>
-                  <th class="r">Age</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col">Hash</th>
+                  <th scope="col" class="c">Type</th>
+                  <th scope="col" class="r">Txs</th>
+                  <th scope="col" class="r">MN paid</th>
+                  <th scope="col" class="r">Stake paid</th>
+                  <th scope="col" class="r">Burned</th>
+                  <th scope="col" class="r">Size</th>
+                  <th scope="col" class="r">Age</th>
                 </tr>
               </thead>
               <tbody>
@@ -249,8 +250,9 @@ export class DdPageBlock extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Every transaction in this block, with its kind and the value it moved.</caption>
               <thead>
-                <tr><th>Txid</th><th class="c">Kind</th><th class="r">In</th><th class="r">Out</th><th class="r">Value out</th></tr>
+                <tr><th scope="col">Txid</th><th scope="col" class="c">Kind</th><th scope="col" class="r">In</th><th scope="col" class="r">Out</th><th scope="col" class="r">Value out</th></tr>
               </thead>
               <tbody>
                 ${b.txs.map(

@@ -101,11 +101,16 @@ export class DdPagePeers extends LitElement {
           </div>
         </div>
         <div class="seg">
-          <button class=${this._topic === 'block' ? 'on' : ''} @click=${() => this._setTopic('block')}>
+          <button
+            class=${this._topic === 'block' ? 'on' : ''}
+            aria-pressed=${this._topic === 'block' ? 'true' : 'false'}
+            @click=${() => this._setTopic('block')}
+          >
             Blocks
           </button>
           <button
             class=${this._topic === 'chainlock' ? 'on' : ''}
+            aria-pressed=${this._topic === 'chainlock' ? 'true' : 'false'}
             @click=${() => this._setTopic('chainlock')}
           >
             ChainLocks
@@ -164,17 +169,18 @@ export class DdPagePeers extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Each vantage point: peers, height, ping and the daemon build it reports.</caption>
               <thead>
                 <tr>
-                  <th>Host</th>
-                  <th class="r">Peers</th>
-                  <th class="r">Inbound</th>
-                  <th class="r">MNAUTH</th>
-                  <th class="r">Median ping</th>
-                  <th class="r">Height</th>
-                  <th class="r">Clock</th>
-                  <th>Build</th>
-                  <th class="r">Reported</th>
+                  <th scope="col">Host</th>
+                  <th scope="col" class="r">Peers</th>
+                  <th scope="col" class="r">Inbound</th>
+                  <th scope="col" class="r">MNAUTH</th>
+                  <th scope="col" class="r">Median ping</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col" class="r">Clock</th>
+                  <th scope="col">Build</th>
+                  <th scope="col" class="r">Reported</th>
                 </tr>
               </thead>
               <tbody>
@@ -226,8 +232,9 @@ export class DdPagePeers extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Hosts that repeatedly see an event last.</caption>
               <thead>
-                <tr><th>Host</th><th class="r">Samples</th><th class="r">Mean delay</th><th class="r">Last place</th></tr>
+                <tr><th scope="col">Host</th><th scope="col" class="r">Samples</th><th scope="col" class="r">Mean delay</th><th scope="col" class="r">Last place</th></tr>
               </thead>
               <tbody>
                 ${d.laggards.map(
@@ -264,16 +271,17 @@ export class DdPagePeers extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Recent propagation events and how long each took to reach every reporting host.</caption>
               <thead>
                 <tr>
-                  <th class="r">Height</th>
-                  <th class="r">Hosts</th>
-                  <th class="r">Spread</th>
-                  <th class="r">Median delay</th>
-                  <th class="r">Error bar</th>
-                  <th>First</th>
-                  <th>Last</th>
-                  <th>Missing</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col" class="r">Hosts</th>
+                  <th scope="col" class="r">Spread</th>
+                  <th scope="col" class="r">Median delay</th>
+                  <th scope="col" class="r">Error bar</th>
+                  <th scope="col">First</th>
+                  <th scope="col">Last</th>
+                  <th scope="col">Missing</th>
                 </tr>
               </thead>
               <tbody>
