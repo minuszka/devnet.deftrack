@@ -147,6 +147,15 @@ jobs:
       - name: Lint the Dockerfile
         run: docker buildx build --check -f docker/Dockerfile .
 
+      # The one test that asks the kernel rather than a fake. Two network
+      # namespaces, the real wrapper in one of them, datagrams counted in the
+      # other: a 100% loss fault must drop everything from the target's port,
+      # nothing from any other port, and `clear` must give the link back. The
+      # suite that ran before this used a loss of 0%, so it could not have told
+      # a working fault from no fault at all.
+      - name: Prove a network fault reaches the network
+        run: sudo bash ops/chaos/tests/netns.sh
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
