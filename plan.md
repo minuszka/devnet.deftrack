@@ -156,9 +156,34 @@ on a port number.
   active on both, and one of them carries a fleet staker *and* a running
   `defcon-node` container. That is the case `fleet-nodes.txt` exists to
   prevent. Neither has ever run a fault: both sit at an untouched
-  `fq_codel 0:` with zero job records. Cleanup owed:
-  `ops/chaos/uninstall.sh` on those two. Full removal anywhere is
-  `ops/chaos/uninstall.sh` plus `userdel chaosops`.
+  `fq_codel 0:` with zero job records.
+
+  **The two leftovers were removed on 2026-09-05, with the user's approval.**
+  All 16 hosts were swept first; exactly three carried the package and none
+  had an active fault anywhere (zero `tc` filters, zero job records, every
+  root qdisc a plain `fq_codel`). Recovery ran before the watchdog was
+  disabled on each, and the removal was gated on the host's own hostname
+  rather than on an inventory line, so a wrong entry could not have reached a
+  machine it was not meant for. After: wrapper gone, timer absent, no
+  `chaosops` account, `eth0` still at `fq_codel 0:` with no filters, and 11
+  masternode units still active on each. Re-swept afterwards: 16 checked, 1
+  with the wrapper. The network was unchanged throughout -- 152/152 enabled,
+  ChainLock signing on `llmq_defcon`.
+
+  **The pilot host still carries the pre-fix wrapper and is owed a
+  reinstall.** Its root qdisc reads `fq_codel 8002:`, not the `8001:` this
+  note said -- the kernel assigns a fresh handle on each replacement, which is
+  exactly why a checker must compare parameters and not handles. Reinstalling
+  needs the package from #76: `targets.conf` now requires a `host` record and
+  the wrapper refuses every command on a machine whose hostname does not match
+  it. Full removal anywhere is `ops/chaos/uninstall.sh` plus `userdel
+  chaosops`.
+
+  Note for whoever reinstalls: `/root/chaos-install.sh` on the jump host is
+  the scratch script from the session that produced the two accidental
+  installs. It predates the host binding and should be rewritten against the
+  current `ops/chaos/install.sh`, which refuses a mismatched host and a host
+  showing production markers.
 
 ## 5. v23 / M-02 — postponed by the user, kept here so it is not lost
 

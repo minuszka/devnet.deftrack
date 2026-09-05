@@ -13,7 +13,7 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | Nap | Tárgy | Állapot |
 |---|---|---|
 | 1 | A rekord védelme: fail-closed rollback, ítélet sosem hibából | **KÉSZ** (2026-09-05) |
-| 2 | Chaos-biztonság: netem-sáv, szűrő, host-kötés | **KÓD KÉSZ** (2026-09-05); két VPS-lépés hátra |
+| 2 | Chaos-biztonság: netem-sáv, szűrő, host-kötés | **KÓD KÉSZ**; takarítás **KÉSZ**; pilot-újratelepítés a merge után |
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
 | 4 | Szimulátor: a csendes no-op osztály lezárása | nyitva |
 | 5 | Szimulátor: tervezett vég és live-lock | nyitva |
@@ -26,16 +26,17 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 **Következő pontos feladat:** 4. nap — a szimulátor csendes no-op osztályának
 lezárása. Tisztán repóbeli munka, jóváhagyás nélkül végezhető.
 
-**Két VPS-lépés vár jóváhagyásra** (a 2. napból, kódot nem blokkolnak):
+**A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
+install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
+csomagot, aktív fault sehol. Utána: 16-ból 1, a pilot. A hálózat végig
+változatlan (152/152 engedélyezve, ChainLock a `llmq_defcon`-on). Részletek a
+`plan.md` §4-ben.
 
-1. A két maradvány chaos-install eltávolítása a `plan.md` §4-ben leírt hostokon.
-   A telepített (régi) wrapper takarít, tehát a mostani szigorítás nem akadály.
-   Utána `userdel chaosops` ott, ahol létezik.
-2. A pilot host újratelepítése a mostani csomaggal, mert a `targets.conf` immár
-   `host <rövid-hostnév>` rekordot követel, és a wrapper minden parancsnál
-   ellenőrzi. Amíg ez nem történik meg, a hoston a régi, hibás netem-sáv él.
-
-Amíg ez a kettő nincs meg, **valódi netem-fault (E4b) nem futtatható**.
+**Hátra van a pilot host újratelepítése**, mert a `targets.conf` immár
+`host <rövid-hostnév>` rekordot követel, és a wrapper minden parancsnál
+ellenőrzi. Ez a #76 mergelése után történik, hogy a hoszton az legyen, ami a
+`main`-en van. Amíg nincs meg, a pilot a régi, hibás netem-sávot hordozza,
+tehát **valódi netem-fault (E4b) nem futtatható**.
 
 ---
 
