@@ -7,18 +7,28 @@ on:
 permissions:
   contents: read
 
+# A superseded run is wasted minutes and a red X on a commit nobody is looking
+# at any more. The newest push on a ref is the only one whose answer matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Typecheck, test, build
     runs-on: ubuntu-latest
     steps:
+      # Actions are pinned to a commit, not a tag. A tag is a movable pointer in
+      # somebody else's repository, and `@v4` means "whatever they publish
+      # next", which is a supply chain this build has no way to review. The
+      # comment says which release the SHA was.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -27,8 +37,23 @@ jobs:
       - name: Install
         run: npm ci
 
+      # Pinned by version and checksum, not `apt-get install shellcheck`. The
+      # runner image ships 0.9, which reports SC2015 on six `A && B || die`
+      # validations that 0.11 knows are fine because `die` exits -- so the same
+      # tree passed here and failed there, and the gate would have meant
+      # whatever version the image happened to carry that month.
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -sSLf --retry 3 -o /tmp/shellcheck.tar.xz "$url"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          sudo install -m 755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
 
       - name: Verify chaos wrapper package
         run: npm run verify:chaos
@@ -51,3 +76,104 @@ jobs:
       # a green deploy.
       - name: Build
         run: npm run build
+
+      # After the build on purpose: the lab scripts import from server/dist, so
+      # this checks the artefact they actually load. A rename in server/src
+      # leaves them parsing perfectly and broken at run time.
+      - name: Check ops imports
+        run: npm run verify:ops
+
+  scripts:
+    name: Scripts, Dockerfile and units
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # Pinned by version and checksum, not `apt-get install shellcheck`. The
+      # runner image ships 0.9, which reports SC2015 on six `A && B || die`
+      # validations that 0.11 knows are fine because `die` exits -- so the same
+      # tree passed here and failed there, and the gate would have meant
+      # whatever version the image happened to carry that month.
+      - name: Install ShellCheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -sSLf --retry 3 -o /tmp/shellcheck.tar.xz "$url"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          sudo install -m 755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      # Every shell script, including the two extensionless ones that run as
+      # root on production hosts.
+      - name: ShellCheck
+        run: npm run verify:shell
+
+      # Syntax only -- what these catch is a broken edit, not a broken import.
+      # The import side is checked in the other job, against the built output.
+      - name: Parse the node scripts
+        run: |
+          set -euo pipefail
+          count=0
+          for f in ops/*.mjs ops/*.cjs; do
+            node --check "$f"
+            count=$((count + 1))
+          done
+          echo "parsed $count node scripts"
+
+      - name: Parse the observer
+        run: python3 -m py_compile ops/devnet-observer.py
+
+      # The unit is verified against the real command, installed where the unit
+      # says it lives: otherwise systemd only reports that the path is missing,
+      # which says nothing about the unit.
+      - name: Verify the systemd units
+        run: |
+          set -euo pipefail
+          sudo install -m 755 ops/chaos/defcon-chaos /usr/local/sbin/defcon-chaos
+          systemd-analyze verify \
+            ops/chaos/defcon-chaos-recover.service \
+            ops/chaos/defcon-chaos-recover.timer
+
+      # Lint, not build. A real build needs the pre-built `defcond` at the
+      # context root -- an artefact this public repository does not and must not
+      # carry -- so what can be checked here is the Dockerfile itself.
+      - name: Lint the Dockerfile
+        run: docker buildx build --check -f docker/Dockerfile .
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # The release tarball, pinned by version AND by checksum. An action from
+      # the marketplace would be a third party with a token in this repository's
+      # build; a binary whose hash is written down here is neither.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSLf --retry 3 -o /tmp/gitleaks.tar.gz "$url"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # Runs twice: the tree must be clean, and a planted credential must trip
+      # it. A scanner that reports nothing is indistinguishable from a scanner
+      # with no rules loaded.
+      - name: Secret gate
+        run: npm run verify:secrets

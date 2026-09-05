@@ -221,7 +221,7 @@ case "$mode" in
     exit 1
   fi
   echo "==> tip $tip, target $H ($((H - tip)) blocks ahead, roughly $(( (H - tip) * 162 / 60 )) minutes)"
-  what=check; [ "$mode" = "--write" ] && what=write
+  what='check'; [ "$mode" = "--write" ] && what='write'
   # Neither half may abort the other. Under `set -e` a failing fleet exits
   # before the seed is even looked at, and the run then reports a total that
   # silently omits the two nodes a reader would least expect to be missing --

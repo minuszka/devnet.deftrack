@@ -23,6 +23,9 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$TMP/bin" "$TMP/config" "$TMP/jobs" "$TMP/run" "$TMP/systemd"
 
+# The single quotes are the point: every line below is the *body* of a fake
+# systemctl being written out, and must reach the file unexpanded.
+# shellcheck disable=SC2016
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
@@ -39,6 +42,8 @@ printf '%s\n' \
   '  stop) rm -f -- "$state/$2" ;;' \
   '  *) printf "unexpected systemctl: %s\n" "$*" >&2; exit 64 ;;' \
   'esac' > "$TMP/bin/systemctl"
+# Same again: the body of a fake binary, written out unexpanded.
+# shellcheck disable=SC2016
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
@@ -51,6 +56,8 @@ printf '%s\n' \
   '    printf "qdisc %s 0: root refcnt 2\n" "${FAKE_TC_QDISC:-fq_codel}"' \
   '  fi' \
   'fi' > "$TMP/bin/tc"
+# Same again: the body of a fake binary, written out unexpanded.
+# shellcheck disable=SC2016
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \

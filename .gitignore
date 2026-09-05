@@ -43,3 +43,7 @@ KICKOFF_PROMPT.md
 lab-compose.yml
 lab-masternode-keys.json
 .lab-state/
+
+# py_compile output: the observer is checked in CI, which leaves this behind.
+__pycache__/
+*.pyc
