@@ -10,8 +10,8 @@ Last updated 2026-09-05.
 
 | Run | What it settles | Blocked on |
 |---|---|---|
-| **E1a** enforcement gate | `-dslenforcementheight` reaches every conf; nothing happens at the height | conf edit + restart on 160 fleet instances, seed, devnet2 |
-| **E1b** enforcement outage | The DSL punishing branch, first time on any chain: 5 nodes down, `nMissedEpochs` 1→4 → `fRewardSuspended`, 5 → `nDSLBanHeight`; one online epoch clears all three (#189, #190) | E1a |
+| **E1a** enforcement gate | `-dslenforcementheight` reaches every conf; nothing happens at the height | **CLOSED 2026-09-05 at 8348** (`dsl-enforcement-gate-2026-09-05`): 162/162 daemons answer 8304, 160/160 fleet instances on one chain, nobody suspended or banned, 13/13 rounds at health 1.00, ChainLock 1.00 |
+| **E1b** enforcement outage | The DSL punishing branch, first time on any chain: 5 nodes down, `nMissedEpochs` 1→4 → `fRewardSuspended`, 5 → `nDSLBanHeight`; one online epoch clears all three (#189, #190) | **RUNNING** (`dsl-enforcement-outage-2026-09-05`, opened 8353): fullnode-1 mn1-mn5 stop at 8376, start at 8544 (`/root/dsl-outage-e1b.sh` on the host, log beside it). Expected: suspended at the 8496 commit, banned at 8520, cleared without a ProUpServTx within an epoch of 8544. Close after the clear; revive any DKG-PoSe ban afterwards, outside the measurement |
 | **E2** mass-outage guard | The edge pair: 23/152 = 15.13 % (guard on, nobody punished, counter neither advances nor resets) against 22/152 = 14.47 % (guard off) | E1b |
 | **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network; owed again once the fault can isolate a member |
 | **InstantSend security** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only |
@@ -39,7 +39,7 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
 |---|---|
 | #186 `CheckLLMQConfiguration` | Unit tests pass (`llmq_configuration_coherence`, `formation_follows_the_height_not_the_network`). **Not reachable from a running node's configuration**: `-llmqchainlocks` only accepts types the network registers, so `require_registered` cannot be tripped from the command line. The guard is against a chainparams edit — i.e. the v23 Q60 mainnet activation — not against operator error. |
 | #189 banned masternode may still answer | Needs a PoSe-banned node; the network is 152/152 enabled. Falls out of E1b. |
-| #190 enforcement height | E1a. |
+| #190 enforcement height | Proven by E1a (closed 2026-09-05): the height reached all 162 daemons and crossing it changed nothing. The punishing side is E1b. |
 | #191 report target must be registered | Needs a crafted P2P message. Lab only. |
 | #192 refused ChainLock leaves no trace | Needs a forged CLSIG. Lab only; unit-covered in `llmq_chainlocks_tests`. |
 | #167 staking hardenings | Covered and passing: `a_watch_only_output_is_never_offered_as_a_kernel` in `pos_stake_rules_tests`. The 256-bit `expectedtime` half cannot be falsified at the current network weight — a passing observation today is not evidence. |
@@ -177,9 +177,9 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   Revert: delete
   `/etc/systemd/system/defcond-devnet.service.d/no-staking.conf`, restore
   `staking=1`, `daemon-reload`, restart.
-- **`stake-redistribution-2026-09-05` is open.** Close it once the LWMA-3
-  retarget settles (N = 36, recomputed every block) and measure the top-1
-  producer share: 44 % before, expected 10–15 % after.
+- **`stake-redistribution-2026-09-05` is closed** (8015 to 8172, same day);
+  an earlier version of this entry still called it open after §3 had already
+  recorded the result. Read §3 for the numbers.
 - **The chaos wrapper is installed on THREE fleet hosts, not one.** Measured
   2026-09-05; the earlier entry here said one and was wrong. The documented
   pilot host is the third (9 masternodes, no staker, no container, `chaosops`
