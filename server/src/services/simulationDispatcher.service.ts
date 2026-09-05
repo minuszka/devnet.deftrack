@@ -184,6 +184,14 @@ export class SimulationActionDispatcher {
  * make. `expiresAtMs` is the run's own lease, so an action that could no longer
  * be undone within the run is never performed at all.
  */
+/**
+ * The action kinds a dispatcher can carry out.
+ *
+ * Mirrors what `scheduledLabActionsForPlan` will translate. The two must agree:
+ * a row enqueued for a kind the translation refuses can only ever fail.
+ */
+const DISPATCHABLE_ACTION_KINDS: ReadonlySet<string> = new Set(['service-stop', 'service-start']);
+
 export function scheduledActionRowsFor(input: {
   runKey: string;
   actions: readonly PlannedSimulationAction[];
@@ -192,6 +200,18 @@ export function scheduledActionRowsFor(input: {
 }): ScheduledActionRow[] {
   return input.actions
     .filter((action) => action.notBeforeOffsetMs > 0)
+    // Only what a dispatcher can actually perform. A scheduled `fault-clear` is
+    // recovery's work, not a dispatcher's -- the translation refuses it by
+    // design -- so enqueueing one produced a row whose lookup could never
+    // succeed: it failed, retried to its attempt limit and was recorded as a
+    // failed action on every netem run, describing a dispatcher fault where
+    // there was none.
+    //
+    // Leaving it out does not clear the impairment at the planned end. Nothing
+    // does today; the wrapper's own TTL ends it, `duration + 120 s` after it
+    // began. That overshoot is real and is recorded in the roadmap; what this
+    // removes is the false failure, not the overshoot.
+    .filter((action) => DISPATCHABLE_ACTION_KINDS.has(action.kind))
     .map((action) => ({
       actionId: action.actionId,
       runKey: input.runKey,

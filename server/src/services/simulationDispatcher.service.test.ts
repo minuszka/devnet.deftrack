@@ -157,6 +157,23 @@ describe('scheduledActionRowsFor', () => {
     expect(rows[0]!.expiresAtMs).toBe(LEASE_END);
   });
 
+  it('queues nothing for a kind the dispatcher cannot perform', () => {
+    // A scheduled fault-clear is recovery's work, and the translation refuses
+    // it by design -- so a queued row for one could only ever fail its lookup,
+    // retry to its attempt limit, and be recorded as a failed action on every
+    // netem run. It described a dispatcher fault where there was none.
+    const rows = scheduledActionRowsFor({
+      runKey: 'run-1',
+      actions: [
+        { ...action('clear-it', 30_000), kind: 'fault-clear', payload: { kind: 'fault-clear', scope: 'run' } },
+        action('stop-it', 30_000),
+      ] as never,
+      activatedAtMs: NOW,
+      faultLeaseExpiresAtMs: LEASE_END,
+    });
+    expect(rows.map((row) => row.actionId)).toEqual(['stop-it']);
+  });
+
   it('drops an action that would fall due after the run is over', () => {
     // It could not be undone within the run, so it is never queued at all rather
     // than queued and expired later.

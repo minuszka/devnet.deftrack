@@ -359,6 +359,34 @@ export function createSimulationAdminRouter(service: SimulationControlService): 
     sendData(res, { items, total: items.length });
   }));
 
+  /**
+   * Who holds the lab, and until when.
+   *
+   * `GET /runs?live=true` reads run projections, not the lock, so an incumbent
+   * that no run pointed at was invisible and the only symptom was every later
+   * start answering LIVE_RUN_LOCKED for hours.
+   */
+  router.get('/lock', controlRoute(async (_req, res) => {
+    sendData(res, await service.liveLockStatus());
+  }));
+
+  /**
+   * Give the lab back by hand, naming who is expected to hold it.
+   *
+   * Safety-admin only, and refused while the incumbent run is still live:
+   * forcing the slot open under a running experiment is how two faults end up
+   * on one lab. Naming the run is the second lock -- an operator who has not
+   * looked at the lock cannot clear the one they did not mean to.
+   */
+  router.post('/lock/release', controlRoute(async (req, res) => {
+    const admin = adminOf(res);
+    if (admin.role !== 'safety-admin') {
+      throw new SimulationControlError('APPROVAL_DENIED', `${admin.role} may not force the live lock open`);
+    }
+    const body = z.object({ expectedRunKey: runKeySchema }).strict().parse(req.body ?? {});
+    sendData(res, await service.forceReleaseLiveLock({ expectedRunKey: body.expectedRunKey }));
+  }));
+
   router.get('/runs/:runKey', controlRoute(async (req, res) => {
     sendData(res, await service.status(runKey(req)));
   }));

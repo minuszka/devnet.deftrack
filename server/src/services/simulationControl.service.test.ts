@@ -312,6 +312,53 @@ describe('simulation control service', () => {
     expect(after.state.abortRequested).toBe(false);
   });
 
+  it('reports who holds the lab, and refuses to force it open under a live run', async () => {
+    // The lock was invisible: GET /runs?live=true reads run projections, not the
+    // lock, so an incumbent no run pointed at could hold the lab for hours with
+    // LIVE_RUN_LOCKED as the only symptom.
+    const lockRepository = new MemoryLockRepository();
+    const { service } = harness(mnStop, 'safety-admin', new FakeExecutor(), undefined, lockRepository);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'lock-status-start' });
+
+    const held = await service.liveLockStatus();
+    expect(held).toMatchObject({ configured: true, blocking: true });
+    expect(held.lock).toMatchObject({ status: 'held', runKey });
+
+    // Forcing the slot open under a running experiment is how two faults end up
+    // on one lab, which is the single thing the lock exists to prevent.
+    await expect(service.forceReleaseLiveLock({ expectedRunKey: runKey }))
+      .rejects.toMatchObject({ code: 'INVALID_STATE' });
+
+    // And it will not release a slot the caller has misidentified.
+    await expect(service.forceReleaseLiveLock({ expectedRunKey: 'sim_' + 'f'.repeat(32) }))
+      .rejects.toMatchObject({ code: 'INVALID_STATE' });
+  });
+
+  it('lets a safety admin reclaim a slot orphaned by a finished run', async () => {
+    // The case this exists for: the run is over but the slot was never given
+    // back -- a release that failed, or a terminal path that never released.
+    // A clean recovery hands the slot back on its own, so the orphan has to be
+    // set up directly; that is what an operator finds, not how it is made.
+    const lockRepository = new MemoryLockRepository();
+    const { service } = harness(mnStop, 'safety-admin', new FakeExecutor(), undefined, lockRepository);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'lock-force-start' });
+    await service.recover({ runKey, idempotencyKey: 'lock-force-recover' });
+    await service.abort({ runKey, idempotencyKey: 'lock-force-abort-it' });
+    lockRepository.lock = {
+      scope: 'devnet-live', status: 'held', runKey, ownerId: actor.actorId,
+      acquiredAtMs: 1_000, leaseUntilMs: 9_000_000, revision: 99,
+    };
+
+    const before = await service.liveLockStatus();
+    expect(before).toMatchObject({ blocking: true });
+    expect(before.lock).toMatchObject({ status: 'held', runKey });
+
+    expect(await service.forceReleaseLiveLock({ expectedRunKey: runKey })).toEqual({ released: true });
+    expect((await service.liveLockStatus()).blocking).toBe(false);
+  });
+
   it('lets a live lab-network run through the boundary to the not-yet-built executor', async () => {
     const { service } = harness(mnStop);
     const runKey = await driveToLiveArmed(service, 'regtest');
