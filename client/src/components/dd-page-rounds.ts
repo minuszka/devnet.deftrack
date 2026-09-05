@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { QuorumRoundListItem } from '@devnet-deftrack/shared';
 import { api } from '../lib/api.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
+import { roundVerdict } from '../lib/roundVerdict.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 50;
@@ -41,6 +42,17 @@ export class DdPageRounds extends LitElement {
     tableStyles,
     pageStyles,
     css`
+      /* The punished cell is the incident. It carries weight only when there
+         was one; a round that punished nobody says so in words, because a bare
+         zero reads as a missing value rather than as an assertion. */
+      td.punished {
+        font-family: var(--font-mono);
+        font-weight: 700;
+        color: var(--warn);
+      }
+      td.muted-cell {
+        color: var(--ink-3);
+      }
       .filters {
         display: flex;
         gap: 14px;
@@ -275,17 +287,20 @@ export class DdPageRounds extends LitElement {
             .map((f) => `${f.operatorLabel ?? 'unattributed'} (${f.count})`)
             .join(', ');
 
+    // The one distinction this site exists to make. See lib/roundVerdict.
+    const verdict = roundVerdict({ status: r.status, punishedCount: r.punishedCount });
+
     return html`
       <tr>
         <td class="mono">${r.roundKey}</td>
         <td class="mono">${r.llmqName}</td>
         <td class="r mono">${num(r.expectedHeight)}</td>
-        <td class="c"><span class="pill ${r.status}">${r.status}</span></td>
+        <td class="c"><span class="pill ${verdict.tone}">${verdict.label}</span></td>
         <td class="r mono">
           ${r.numValidMembers === null ? '—' : `${num(r.numValidMembers)}/${num(r.effectiveSize)}`}
         </td>
         <td class="r mono">${ratio(r.healthRatio)}</td>
-        <td class="r mono">${num(r.punishedCount)}${this._warmup(r)}</td>
+        <td class="r ${verdict.incident ? 'punished' : 'muted-cell'}">${verdict.punished}${this._warmup(r)}</td>
         <td class="r mono">${num(r.maxPossibleBan)}</td>
         <td class="r mono">${r.consecutiveFailures > 0 ? num(r.consecutiveFailures) : '—'}</td>
         <td>${who}</td>

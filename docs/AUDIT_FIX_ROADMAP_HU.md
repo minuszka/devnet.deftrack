@@ -19,12 +19,12 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 8 | Kliens: a fő üzenet helyreállítása | nyitva |
+| 8 | Kliens: a fő üzenet helyreállítása | **RÉSZBEN KÉSZ** (2026-09-05) |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** 8. nap — a kliens: a fő üzenet helyreállítása.
-Tisztán repóbeli munka.
+**Következő pontos feladat:** a 8. nap maradéka — kör-részlet oldal,
+`PollController` és a fetch-versenyek, beavatkozás-jelvények, akadálymentesség.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -591,6 +591,35 @@ Feladatok:
 
 Elfogadási kapu: a nyitóoldal soha nem kever profilt, és egy sikertelen kör
 szövegesen azt mondja, hogy senkit nem büntetett.
+
+### Amit a 8. nap eddig elvégzett (2026-09-05)
+
+- **A nyitóoldal egy profilról szól, és megmondja, melyikről.** Eddig profil
+  nélkül kérte a health-timeline-t, a szerver pedig csak paraméterre szűr —
+  tehát a formation rate, a mediánok és a hibastreak **öt egymásba fésült
+  ütemezésen** számolódott (llmq_50_60 24 blokkonként, llmq_60_75 48-anként,
+  llmq_400_60 72-enként, llmq_400_85 576-onként, ami itt sosem formálódhat, és
+  llmq_defcon). Ez pontosan az a keverés, amit a projekt saját jegyzete tilt.
+  A betöltés most kétfázisú: előbb eldől, melyik profil ír alá a csúcson, és
+  csak utána kérünk számokat. Ha ez nem dönthető el, az oldal **kimondja**, és
+  nem mutat kevert számot — egy öt ütemezésre kiterjedő érték rosszabb, mint a
+  semmi, mert válasznak látszik.
+- **A kör háromállapotú lett.** Eddig a sikertelen kör piros pill volt egy `0`
+  mellett, a formálódott és tizenkettőt büntető kör pedig zöld pill egy sima
+  `12`-vel: **az incidens volt zöld és a nem-esemény piros**. Most
+  `formed · clean`, `formed · punished N` (borostyán, kiemelve) és
+  `did not form` semleges színnel — a büntetett cella pedig **szavakkal** felel
+  ott, ahol a puszta nulla félrevezet, mert az hiányzó értéknek olvasódik, nem
+  állításnak. Az `impossible` külön szöveget kap (`could not form`), mert a
+  gyűjtő komoly munkával különbözteti meg a bukástól, és az oldal nem
+  moshatja össze újra.
+- **Az első kliens-tesztek.** A workspace-nek eddig **egyetlen tesztje sem
+  volt**; most van futtatója, a gyökér `npm test` mindkét workspace-t futtatja,
+  és a két tiszta modul 11 teszttel van fedve.
+- **Közös `.err` és `.note`.** Az egyik egyetlen oldalon volt definiálva, a
+  másik egy másikon, miközben tizenhárom oldal rendereli — vagyis egy kivétellel
+  minden hibasáv stílus nélküli szövegtörzs volt, ami tartalomnak látszik, nem
+  hibának.
 
 ## 9. nap – CI és szerszám-hitelesítés
 
