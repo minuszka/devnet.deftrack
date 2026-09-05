@@ -268,6 +268,17 @@ Two corrections to what this entry said before, both verified at
   data before its failures are believed: ours had never once passed anywhere,
   and that alone should have indicted the tool, not the database.
 
+- **devnet2 runs a differently-named binary, and every roll has missed it.**
+  `defcond-devnet2.service` executes `/usr/local/bin/defcond-nobdb`, not
+  `/usr/local/bin/defcond` -- it is on the same host as the seed but needs the
+  `--without-bdb` artefact, the same one the fleet gets. So installing the seed
+  binary updates the seed and leaves devnet2 on whatever it had. Found on
+  2026-09-05 by asking each daemon what it held rather than reading its conf:
+  161 of 162 answered, and the one that could not was devnet2, still on a build
+  from three PRs earlier. A conf-only check would have called that roll
+  complete. `grep -l defcond-nobdb /etc/systemd/system/*.service` says who uses
+  it -- today, only that one unit.
+
 - **Check the firewall on every host, not one.** Two of the eight fullnodes run
   `ufw` with `-P INPUT DROP`; the other six have no filtering. Generalising
   from the first host cost 20 unreachable masternodes and a PoSe ban wave that
