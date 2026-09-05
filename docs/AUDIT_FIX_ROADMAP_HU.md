@@ -16,15 +16,16 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 2 | Chaos-biztonság: netem-sáv, szűrő, host-kötés | **KÓD KÉSZ**; takarítás **KÉSZ**; pilot-újratelepítés a merge után |
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
 | 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
-| 5 | Szimulátor: tervezett vég és live-lock | nyitva |
+| 5 | Szimulátor: tervezett vég és live-lock | **RÉSZBEN KÉSZ** (2026-09-05); a tervezett vég hátra |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | nyitva |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
 | 8 | Kliens: a fő üzenet helyreállítása | nyitva |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** 5. nap — a tervezett vég és a live-lock. Tisztán
-repóbeli munka, jóváhagyás nélkül végezhető.
+**Következő pontos feladat:** az 5. nap maradéka — a tervezett vég: az ütemezett
+`fault-clear` végrehajtása és a `recoveredTip` a wrapper visszaigazolásához
+kötése. Tisztán repóbeli munka.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -309,6 +310,49 @@ Feladatok:
 
 Elfogadási kapu: egy netem-futam magától tisztul a tervezett végén, és egyetlen
 futam sem tudja véglegesen elfoglalni a live slotot.
+
+### Amit az 5. nap eddig elvégzett (2026-09-05)
+
+A live-lock körüli hibacsokor, ami az „egy live futam egyszerre" garanciát ette.
+
+- **A lock elengedése a megszerző kísérlethez van kötve.** Két egyidejű `start`
+  ugyanarra a futamra mindkettő sikeresen „megszerzi" a lockot: az egyik
+  létrehozza, a másik állónak találja. A vesztes ezután az idempotencia-
+  ujjlenyomaton elbukik, és a `catch`-ben **puszta runKey alapján** engedte el a
+  lockot — vagyis a nyertesét, épp amikor az a faultot alkalmazta, és egy
+  harmadik futam elvihette a labort. Mostantól csak az engedhet el, aki
+  létrehozta.
+- **Az abort már nem ragasztja be a futamot.** A végrehajtó-hálózat ellenőrzése
+  a *perzisztált átmenetek után* futott, ezért egy live devnet futam abortja a
+  `recovery` állapotban maradt — ami se nem terminális, se nem rekoncilálható —,
+  és a preflight minden live, nem terminális futamot aktív kísérletnek számol.
+  Egyetlen abortált vázlat így **minden későbbi live futamot blokkolt** a
+  telepítésen, operátori kiúttal nem. Az ellenőrzés most minden írás előtt fut.
+- **A `create` elutasítja a live futamot bármely hálózaton, amit a végrehajtó
+  nem ér el.** Az egyetlen végrehajtó a Docker-labor, `regtest`-hez kötve, a
+  `network` alapértéke viszont `devnet` volt — tehát a puszta `{ mode: 'live' }`
+  ilyet gyártott.
+- **A lock csak bizonyítottan tiszta labor után jár vissza.** Sikertelen recovery
+  után a `faultMayBeActive` igaz marad; a slot átadása a következő futamnak épp
+  az, amit a lock megakadályozni hivatott. Ide ember kell, nem a következő
+  kísérlet.
+- **A finalizálás nem éhezik ki.** A jelölt-lekérdezés 50-es lapot húzott, és a
+  már riportoltakat *utólag* szűrte — de egy lezárt futam állapota többé nem
+  változik, tehát a legrégebbi 50 riportolt futam örökre kitöltötte a lapot, és
+  újabb futam sosem került sorra. A futam most megjegyzi, hogy a riportja
+  elkészült, és a lekérdezés eleve kizárja.
+- Négy negatív kontroll, mind ellenőrizve. A dupla `start` tesztjét **valódi
+  egyidejűségre** kellett átírni: sorosan futtatva a második kísérlet előbb
+  elbukik, és hozzá sem ér a lockhoz — az első változatom ezért zölden maradt a
+  javítás nélkül is.
+
+**Hátra az 5. napból:** a tervezett vég. Az ütemezett `fault-clear` ma bekerül a
+dispatcher táblájába, de a lookup kihagyja, tehát **a netem-fault sosem szűnik
+meg a tervezett végén**, csak kézi `recover`-re vagy a wrapper TTL-jére. Ezzel
+megy együtt, hogy a `recoveredTip` a wrapper visszaigazolásakor íródjon, ne az
+emberi `recover` pillanatában — ma a mérési ablak hossza az operátor
+reakcióidejétől függ. Ide tartozik még a `GET /admin/simulations/lock` és a
+safety-admin elengedés, hogy egy bennragadt slot látható és oldható legyen.
 
 ## 6. nap – mérés: anchor, ablak, küszöbök
 

@@ -101,6 +101,37 @@ describe('finalizing the measurement', () => {
     });
   });
 
+  it('marks the run reported, so the candidate query stops offering it', async () => {
+    // Without this the sweep fetched a page of candidates and filtered the
+    // reported ones out afterwards -- and a finalized run's state never changes
+    // again, so the oldest reported runs filled every page for ever and no
+    // newer run was ever finalized.
+    const markReported = vi.fn(async () => {});
+    const h = harness({
+      finalizeCandidates: ['run-1'],
+      state: { status: 'cooldown', faultActivatedTip: START, recoveredTip: END },
+      deps: { markReported },
+    });
+
+    await h.service.tick();
+
+    expect(markReported).toHaveBeenCalledWith({ runKey: 'run-1', nowMs: 5_000 });
+  });
+
+  it('does not mark a run reported when the finalize failed', async () => {
+    const markReported = vi.fn(async () => {});
+    const h = harness({
+      finalizeCandidates: ['run-1'],
+      state: { status: 'cooldown', faultActivatedTip: START, recoveredTip: END },
+      deps: { markReported },
+    });
+    h.finalize.mockRejectedValueOnce(new Error('mongo is away'));
+
+    await h.service.tick();
+
+    expect(markReported).not.toHaveBeenCalled();
+  });
+
   it('will not finalize on half a window', async () => {
     // One boundary invented is exactly the failure the anchors exist to stop.
     const h = harness({

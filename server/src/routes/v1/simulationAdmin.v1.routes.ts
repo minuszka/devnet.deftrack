@@ -51,11 +51,24 @@ import {
 } from '../../simulator/fleetInventoryManifest.js';
 
 const runKeySchema = z.string().regex(/^sim_[0-9a-f]{32}$/);
+/**
+ * A live run is refused outright on any network the executor cannot reach.
+ *
+ * The only executor is the Docker lab, gated to regtest by a constant, so a
+ * live devnet run could never do anything but fail -- yet `network` defaulted
+ * to devnet, so `{ mode: 'live' }` alone produced one. It then failed at a
+ * point where it had already been written, and a live non-terminal run is what
+ * the preflight counts as an active experiment. Refusing at creation is the
+ * only place the refusal costs nothing.
+ */
 const createSchema = z.object({
   network: z.enum(['regtest', 'devnet']).default('devnet'),
   mode: z.enum(['dry-run', 'live']).default('dry-run'),
   scenario: z.unknown(),
-}).strict();
+}).strict().refine(
+  (value) => value.mode !== 'live' || value.network === 'regtest',
+  { message: 'a live run is only possible on regtest; the executor reaches no other network' }
+);
 const armSchema = z.object({
   acknowledgedRiskClass: z.enum(['low', 'medium', 'high']),
 }).strict();

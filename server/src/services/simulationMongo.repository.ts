@@ -93,6 +93,14 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
    * already written would otherwise be recomputed on every tick for ever, and
    * `compute` re-reads the whole evidence set to do it.
    */
+  /** Records that this run's measurement report exists, so it is not offered again. */
+  async markMeasurementReported(input: { runKey: string; nowMs: number }): Promise<void> {
+    await SimulationRun.updateOne(
+      { runKey: input.runKey, measurementReportedAtMs: null },
+      { $set: { measurementReportedAtMs: input.nowMs } }
+    );
+  }
+
   /** Records, once, that a run's boundaries leave nothing to measure. */
   async markMeasurementUnavailable(input: { runKey: string; reason: string; nowMs: number }): Promise<void> {
     await SimulationRun.updateOne(
@@ -109,6 +117,10 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
       // decision is permanent -- its anchors cannot change -- so offering it
       // again would only be retrying a refusal.
       'measurement.unavailable': { $ne: true },
+      // Excluded in the query, not after it. Filtering a fetched page starves:
+      // a finalized run's state never changes again, so the oldest reported runs
+      // filled every page for ever and no newer run was ever offered.
+      measurementReportedAtMs: null,
     })
       .select('runKey')
       .sort({ 'state.updatedAtMs': 1 })
@@ -116,6 +128,8 @@ export class MongoSimulationPersistenceRepository implements SimulationPersisten
       .lean<{ runKey: string }[]>();
     if (rows.length === 0) return [];
     const runKeys = rows.map((row) => row.runKey);
+    // Still cross-checked against the reports themselves, so a run finalized
+    // before this field existed is not offered a second time.
     const reported = await SimulationMeasurementReportModel.find({ runKey: { $in: runKeys } })
       .select('runKey')
       .lean<{ runKey: string }[]>();

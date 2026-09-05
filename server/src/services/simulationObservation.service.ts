@@ -51,6 +51,12 @@ export interface ObservationSweepDeps {
    */
   markUnmeasurable?(input: { runKey: string; reason: string; nowMs: number }): Promise<void>;
   /**
+   * Records that a run's report now exists, so the candidate query can exclude
+   * it rather than fetching it and filtering it out. Optional for the same
+   * reason as above: a deployment without it keeps the old behaviour.
+   */
+  markReported?(input: { runKey: string; nowMs: number }): Promise<void>;
+  /**
    * Blocks after the fault lands that are deliberately not measured, because the
    * network is still reacting to it. Observation begins once they have passed.
    */
@@ -173,6 +179,9 @@ export class SimulationObservationService {
         // with one end invented, which is the failure the anchors exist to stop.
         if (anchor === null) continue;
         await this.measurement.finalize({ runKey, anchor, generatedAtMs: this.clock() });
+        if (this.deps.markReported !== undefined) {
+          await this.deps.markReported({ runKey, nowMs: this.clock() });
+        }
         this.logger.info(
           `${runKey} measurement finalized over [${anchor.faultStartHeight}, ${anchor.faultEndHeight}]`
         );
