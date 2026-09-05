@@ -42,6 +42,13 @@ const contextSchema = z
     currentHeight: z.number().int().nonnegative(),
     targets: z.array(targetSnapshotSchema).min(1).max(500),
     quorumMemberTargetIds: z.array(targetIdSchema).max(60),
+    quorumThresholds: z
+      .object({
+        dkg: z.number().int().positive().nullable(),
+        chainLock: z.number().int().positive().nullable(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -329,9 +336,22 @@ function estimateImpact(
   const quorumKnown = context.quorumMemberTargetIds.length > 0;
   const surviving = quorumKnown ? context.quorumMemberTargetIds.length - affectedQuorumMembers : null;
   const warnings: string[] = [];
+  // From the profile in force, not from Q60's numbers. Pinned to 44 and 41,
+  // every lab preview measured a devnet that was not there: on a 3/2/2 test
+  // profile the margin is always negative, so every report came back degraded
+  // whatever the fault actually did.
+  const dkgThreshold = context.quorumThresholds?.dkg ?? null;
+  const chainLockThreshold = context.quorumThresholds?.chainLock ?? null;
   if (!quorumKnown) warnings.push('Current quorum membership is unavailable; threshold margins are unknown.');
-  if (surviving !== null && surviving < 44) warnings.push('Planned fault falls below the Q60 DKG threshold (44).');
-  if (surviving !== null && surviving < 41) warnings.push('Planned fault falls below the Q60 ChainLock threshold (41).');
+  if (dkgThreshold === null || chainLockThreshold === null) {
+    warnings.push('Quorum thresholds for the active profile are unknown; margins are not computed.');
+  }
+  if (surviving !== null && dkgThreshold !== null && surviving < dkgThreshold) {
+    warnings.push(`Planned fault falls below the DKG threshold (${dkgThreshold}).`);
+  }
+  if (surviving !== null && chainLockThreshold !== null && surviving < chainLockThreshold) {
+    warnings.push(`Planned fault falls below the ChainLock threshold (${chainLockThreshold}).`);
+  }
 
   return {
     affectedTargetCount: selected.length,
@@ -341,10 +361,11 @@ function estimateImpact(
     affectedCurrentQuorumMembers: affectedQuorumMembers,
     currentQuorumSize: quorumKnown ? context.quorumMemberTargetIds.length : null,
     survivingCurrentQuorumMembers: surviving,
-    dkgThreshold: 44,
-    chainLockThreshold: 41,
-    dkgMarginAfterFault: surviving === null ? null : surviving - 44,
-    chainLockMarginAfterFault: surviving === null ? null : surviving - 41,
+    dkgThreshold,
+    chainLockThreshold,
+    dkgMarginAfterFault: surviving === null || dkgThreshold === null ? null : surviving - dkgThreshold,
+    chainLockMarginAfterFault:
+      surviving === null || chainLockThreshold === null ? null : surviving - chainLockThreshold,
     warnings,
   };
 }

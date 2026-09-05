@@ -4,6 +4,7 @@ import {
   anchorForNextWindow,
   blocksToGuaranteeWindows,
   contributionWindowFor,
+  roundWorkOverlaps,
   dkgWindowsCovered,
   dkgWindowsFromAnchor,
 } from './dkgWindows.js';
@@ -109,5 +110,45 @@ describe('anchorForNextWindow', () => {
       expect(anchor.startHeight).toBeGreaterThanOrEqual(height);
       expect(dkgWindowsFromAnchor({ ...anchor, profile: PROFILE })).toBe(1);
     }
+  });
+});
+
+describe('whether a round’s own work fell inside a range', () => {
+  const profile = { dkgPhaseBlocks: 2 };
+
+  it('sees the round an anchored fault was positioned to disturb', () => {
+    // The whole point. anchorForNextWindow puts the fault at cycleStart + phase,
+    // which is where the contribution window is -- and the round is NAMED by its
+    // cycle start, two blocks earlier. Asking for cycle starts inside the fault
+    // window therefore missed exactly the round the run existed to disturb, and
+    // every anchored run came back with nothing to evaluate.
+    const cycleStart = 8_064;
+    const anchored = anchorForNextWindow({
+      notBeforeHeight: cycleStart,
+      profile: { dkgInterval: 24, dkgPhaseBlocks: 2 } as never,
+    });
+    expect(anchored.startHeight).toBe(cycleStart + 2);
+
+    const fault = { fromHeight: anchored.startHeight, toHeight: anchored.startHeight + 6 };
+    expect(roundWorkOverlaps(cycleStart, profile, fault)).toBe(true);
+    // The old rule, for contrast: the cycle start is not inside the fault.
+    expect(cycleStart >= fault.fromHeight).toBe(false);
+  });
+
+  it('leaves out a round whose work ended before the fault began', () => {
+    // [8066, 8068) against a fault that starts at 8068.
+    expect(roundWorkOverlaps(8_064, profile, { fromHeight: 8_068, toHeight: 8_090 })).toBe(false);
+  });
+
+  it('leaves out a round whose work had not started when the fault ended', () => {
+    // [8090, 8092) against a fault that ends at 8089.
+    expect(roundWorkOverlaps(8_088, profile, { fromHeight: 8_070, toHeight: 8_089 })).toBe(false);
+    expect(roundWorkOverlaps(8_088, profile, { fromHeight: 8_070, toHeight: 8_090 })).toBe(true);
+  });
+
+  it('reports nothing for a profile with no phase layout', () => {
+    // A round whose profile the registry does not know carries phase 0. Claiming
+    // an overlap there would attribute a round to a fault on no evidence.
+    expect(roundWorkOverlaps(8_064, { dkgPhaseBlocks: 0 }, { fromHeight: 0, toHeight: 100_000 })).toBe(false);
   });
 });
