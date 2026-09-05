@@ -7,6 +7,7 @@ import type {
 import { api, type ChainLockReport, type ExperimentRow, type HealthSnapshot } from '../lib/api.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
+import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 import './dd-health-chart.js';
@@ -22,6 +23,7 @@ export class DdPageOverview extends LitElement {
     _mn: { state: true },
     _health: { state: true },
     _clocks: { state: true },
+    _profile: { state: true },
     _running: { state: true },
     _error: { state: true },
     _loading: { state: true },
@@ -34,6 +36,8 @@ export class DdPageOverview extends LitElement {
   private _mn: MasternodeTimelinePoint | null = null;
   private _health: HealthSnapshot | null = null;
   private _clocks: ChainLockReport | null = null;
+  /** Which profile every figure on this page is about, or why that is unknown. */
+  private _profile: PrimaryProfile = { known: false, reason: 'no-signers' };
   private _running: ExperimentRow[] = [];
   private _error = '';
   private _loading = true;
@@ -369,18 +373,34 @@ export class DdPageOverview extends LitElement {
 
   private async _load(): Promise<void> {
     try {
-      const [timeline, rounds, mn, health, clocks, running] = await Promise.all([
-        api.healthTimeline(24 * 7),
-        api.rounds({ limit: RECENT }),
-        api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
-        api.health().catch(() => null),
-        // Only for the switchover banner; a failure hides the banner rather
-        // than the page.
+      // Two phases on purpose. Which profile the figures are about has to be
+      // settled BEFORE they are asked for: without a profile the server does
+      // not filter, and the formation rate, the medians and the failure streak
+      // come back computed across every interleaved schedule this devnet runs
+      // -- llmq_50_60 every 24 blocks, llmq_60_75 every 48, llmq_400_60 every
+      // 72, llmq_400_85 every 576 which can never form here, and llmq_defcon.
+      // Blending them invents streaks no type ever had.
+      const [clocks, health] = await Promise.all([
+        // Both feed the profile decision, so neither failing may be swallowed
+        // into a blended answer; `primaryProfile` reports what it could not do.
         api.chainlocks(50).catch(() => null),
+        api.health().catch(() => null),
+      ]);
+      const profile = primaryProfile({
+        signers: clocks?.signers,
+        tipHeight: health?.chainTip,
+      });
+      this._profile = profile;
+
+      const llmqName = profile.known ? profile.llmqName : undefined;
+      const [timeline, rounds, mn, running] = await Promise.all([
+        api.healthTimeline(24 * 7, llmqName),
+        api.rounds({ limit: RECENT, llmqName }),
+        api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
         // Only for the running-experiment line; a failure hides the line.
         api.experiments({ status: 'running', limit: 5 }).catch(() => null),
       ]);
-      this._timeline = timeline;
+      this._timeline = profile.known ? timeline : null;
       this._rounds = rounds.items;
       this._total = rounds.total;
       this._mn = mn.points.at(-1) ?? null;
@@ -406,6 +426,30 @@ export class DdPageOverview extends LitElement {
     });
   }
 
+  /**
+   * Which profile these figures describe, said out loud.
+   *
+   * Every number on this page -- formation rate, medians, the failure streak --
+   * is about one LLMQ schedule. It used to be about all of them at once, which
+   * is the one reading this project's notes forbid: blending interleaved
+   * schedules invents streaks no type ever had. Saying which one is part of the
+   * fix, not decoration.
+   */
+  private _profileNote(): TemplateResult {
+    if (!this._profile.known) {
+      return html`<div class="note" role="status">
+        The signing profile could not be determined
+        ${this._profile.reason === 'no-signers' ? '(no ChainLock report)' : '(no chain tip)'}, so no
+        round figures are shown. A number covering every schedule at once would look like an answer
+        without being one.
+      </div>`;
+    }
+    return html`<div class="page-sub">
+      Round figures below are for
+      <b class="mono">${this._profile.llmqName}</b> only — the profile signing ChainLocks at the tip.
+    </div>`;
+  }
+
   override render(): TemplateResult {
     const s = this._timeline?.summary;
     const status = this._status();
@@ -418,6 +462,7 @@ export class DdPageOverview extends LitElement {
               Did the last rounds form, was anybody punished, and who failed — the three questions this
               devnet exists to answer.
             </div>
+            ${this._profileNote()}
           </div>
           <span class="refresh"><span class="live-dot" aria-hidden="true"></span>live · refreshes every 30 s</span>
         </div>

@@ -325,8 +325,13 @@ export const api = {
 
   round: (id: string) => get<QuorumRoundDetail>(`/quorum-rounds/${encodeURIComponent(id)}`),
 
-  healthTimeline: (hours: number) =>
-    get<HealthTimeline>('/quorum-rounds/health-timeline', { hours }),
+  /**
+   * Without `llmqName` the server does not filter, and the summary is computed
+   * across every interleaved schedule at once -- which invents streaks no type
+   * ever had. Callers should name the profile they mean.
+   */
+  healthTimeline: (hours: number, llmqName?: string) =>
+    get<HealthTimeline>('/quorum-rounds/health-timeline', { hours, llmqName }),
 
   masternodes: (params?: { limit?: number; offset?: number; banned?: boolean }) =>
     get<Page<MasternodeRow>>('/masternodes', params),

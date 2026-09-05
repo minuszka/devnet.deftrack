@@ -9,6 +9,32 @@ import { css } from 'lit';
 
 /** Base styles shared by every component (host reset + common utilities). */
 export const baseStyles = css`
+  /*
+   * The error and note banners, shared.
+   *
+   * The error class was defined on exactly one page and the note class on
+   * one other, while thirteen pages rendered both -- so every error banner but
+   * one was unstyled body text, which reads as ordinary content rather than as
+   * something having gone wrong.
+   */
+  .err {
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid color-mix(in srgb, var(--crit) 45%, transparent);
+    background: var(--crit-wash);
+    color: var(--crit);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+  }
+  .note {
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    border-radius: var(--radius-md);
+    font-size: var(--fs-sm);
+  }
+
   :host {
     display: block;
     font-family: var(--font-sans);
