@@ -375,7 +375,9 @@ export class DdSimulationControl extends LitElement {
           <div><span>Actions</span><b>${num(plan.actions.length)}</b></div>
         </div>
         ${impact.warnings.length ? html`<div class="alert">${impact.warnings.map((warning) => html`<div>${warning}</div>`)}</div>` : nothing}
-        <div class="card-body flush"><div class="twrap"><table><thead><tr><th>Target</th><th>Action</th><th class="r">Offset</th></tr></thead><tbody>
+        <div class="card-body flush">
+          <caption class="sr-only">The targets this scenario would act on.</caption>
+          <div class="twrap"><table><thead><tr><th scope="col">Target</th><th scope="col">Action</th><th scope="col" class="r">Offset</th></tr></thead><tbody>
           ${plan.actions.map((action) => html`<tr><td class="mono">${action.targetId}</td><td>${action.kind}</td><td class="r mono">${Math.round(action.notBeforeOffsetMs / 1_000)} s</td></tr>`)}
         </tbody></table></div></div>
         <div class="notice">${plan.assurances.join(' · ')}</div>

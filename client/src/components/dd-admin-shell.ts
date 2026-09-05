@@ -463,7 +463,8 @@ export class DdAdminShell extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
-              <thead><tr><th>Run</th><th>Scenario</th><th class="c">State</th><th class="c">Mode</th><th class="r">Entered</th></tr></thead>
+              <caption class="sr-only">Simulation runs and the state each is in.</caption>
+              <thead><tr><th scope="col">Run</th><th scope="col">Scenario</th><th scope="col" class="c">State</th><th scope="col" class="c">Mode</th><th scope="col" class="r">Entered</th></tr></thead>
               <tbody>
                 ${this._runs.length === 0
                   ? html`<tr><td class="empty" colspan="5">No simulation run has been recorded.</td></tr>`
@@ -521,7 +522,8 @@ export class DdAdminShell extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
-              <thead><tr><th>Target</th><th>Role</th><th>Network</th><th>Host</th><th class="c">Enabled</th><th class="c">Maintenance</th><th>Expected build</th></tr></thead>
+              <caption class="sr-only">The execution registry: which targets exist and whether each is enabled.</caption>
+              <thead><tr><th scope="col">Target</th><th scope="col">Role</th><th scope="col">Network</th><th scope="col">Host</th><th scope="col" class="c">Enabled</th><th scope="col" class="c">Maintenance</th><th scope="col">Expected build</th></tr></thead>
               <tbody>
                 ${this._targets.length === 0
                   ? html`<tr><td class="empty" colspan="7">No target is registered for simulation.</td></tr>`

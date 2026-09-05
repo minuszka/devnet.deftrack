@@ -123,12 +123,13 @@ export class DdPageMasternodes extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Masternodes grouped by the host they run on, with the bans and penalties of each.</caption>
               <thead>
                 <tr>
-                  <th>Host</th>
-                  <th class="r">Masternodes</th>
-                  <th class="r">Banned</th>
-                  <th class="r">Penalised</th>
+                  <th scope="col">Host</th>
+                  <th scope="col" class="r">Masternodes</th>
+                  <th scope="col" class="r">Banned</th>
+                  <th scope="col" class="r">Penalised</th>
                 </tr>
               </thead>
               <tbody>
@@ -162,16 +163,17 @@ export class DdPageMasternodes extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Every registered masternode with its PoSe state, penalty and Sentinel Layer ledger.</caption>
               <thead>
                 <tr>
-                  <th>ProTx</th>
-                  <th>Service</th>
-                  <th>Operator</th>
-                  <th class="c">State</th>
-                  <th class="r">PoSe penalty</th>
-                  <th class="r">Registered</th>
-                  <th class="r">Last paid</th>
-                  <th class="r">Seen</th>
+                  <th scope="col">ProTx</th>
+                  <th scope="col">Service</th>
+                  <th scope="col">Operator</th>
+                  <th scope="col" class="c">State</th>
+                  <th scope="col" class="r">PoSe penalty</th>
+                  <th scope="col" class="r">Registered</th>
+                  <th scope="col" class="r">Last paid</th>
+                  <th scope="col" class="r">Seen</th>
                 </tr>
               </thead>
               <tbody>

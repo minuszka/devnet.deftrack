@@ -220,13 +220,14 @@ export class DdPageDsl extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Recent Sentinel Layer epochs: whether a commitment landed, and how many masternodes it reported missing.</caption>
               <thead>
                 <tr>
-                  <th class="r">Epoch</th>
-                  <th class="r">Boundary</th>
-                  <th>Verdict</th>
-                  <th class="r">Missed</th>
-                  <th>Commitment</th>
+                  <th scope="col" class="r">Epoch</th>
+                  <th scope="col" class="r">Boundary</th>
+                  <th scope="col">Verdict</th>
+                  <th scope="col" class="r">Missed</th>
+                  <th scope="col">Commitment</th>
                 </tr>
               </thead>
               <tbody>

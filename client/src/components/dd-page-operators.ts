@@ -65,16 +65,17 @@ export class DdPageOperators extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Operators by DKG reliability: rounds selected, member slots, and the slots marked invalid.</caption>
               <thead>
                 <tr>
-                  <th>Operator</th>
-                  <th>Provider</th>
-                  <th>Country</th>
-                  <th class="r">Masternodes</th>
-                  <th class="r">Rounds</th>
-                  <th class="r">Member slots</th>
-                  <th class="r">Invalid</th>
-                  <th class="r">Failure rate</th>
+                  <th scope="col">Operator</th>
+                  <th scope="col">Provider</th>
+                  <th scope="col">Country</th>
+                  <th scope="col" class="r">Masternodes</th>
+                  <th scope="col" class="r">Rounds</th>
+                  <th scope="col" class="r">Member slots</th>
+                  <th scope="col" class="r">Invalid</th>
+                  <th scope="col" class="r">Failure rate</th>
                 </tr>
               </thead>
               <tbody>

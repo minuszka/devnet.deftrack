@@ -86,6 +86,13 @@ export class DdHealthChart extends LitElement {
       .pt {
         transition: r var(--t-fast) var(--ease);
       }
+      /* Focus has to be visible on a shape too, and SVG will not take a
+         border: the ring is drawn as a stroke. */
+      svg :focus-visible {
+        outline: none;
+        stroke: var(--accent);
+        stroke-width: 3;
+      }
       .empty {
         padding: var(--sp-6) var(--sp-4);
         text-align: center;
@@ -214,9 +221,28 @@ export class DdHealthChart extends LitElement {
     }
   }
 
-  private _onLeave(): void {
+  private _onLeave = (): void => {
     this._pendingHover = null;
     this._hover = null;
+  };
+
+  /**
+   * Keyboard focus reads a round the same way the pointer does. Without this
+   * the numbers behind the chart were reachable with a mouse and by no other
+   * means -- the tooltip was the only place they existed.
+   */
+  private _focusPoint(i: number): void {
+    this._pendingHover = i;
+    this._hover = i;
+  }
+
+  private _pointLabel(p: HealthTimelinePoint): string {
+    const verdict = roundVerdict({ status: p.status, punishedCount: p.punishedCount });
+    const health =
+      typeof p.healthRatio === 'number'
+        ? `health ${ratio(p.healthRatio)}, ${num(p.numValidMembers)} of ${num(p.effectiveSize)} members valid`
+        : 'no commitment mined';
+    return `Round at height ${num(p.expectedHeight)}: ${verdict.label}, ${health}, punished ${verdict.punished}.`;
   }
 
   override render(): TemplateResult {
@@ -275,7 +301,7 @@ export class DdHealthChart extends LitElement {
         viewBox="0 0 ${W} ${H}"
         width=${W}
         height=${H}
-        role="img"
+        role="group"
         aria-label="Health ratio per DKG round. ${summary}."
         @mousemove=${this._onMove}
         @mouseleave=${this._onLeave}
@@ -307,13 +333,17 @@ export class DdHealthChart extends LitElement {
           ({ p, i }) =>
             svg`<circle class="pt" cx=${x(i)} cy=${y(p.healthRatio)} r=${i === hi ? 6 : p.punishedCount > 0 ? 4.5 : 3}
                         fill=${p.punishedCount > 0 ? 'var(--warn)' : 'var(--s1)'}
-                        stroke=${i === hi ? 'var(--bg)' : 'none'} stroke-width="2" />`
+                        stroke=${i === hi ? 'var(--bg)' : 'none'} stroke-width="2"
+                        tabindex="0" role="img" aria-label=${this._pointLabel(p)}
+                        @focus=${() => this._focusPoint(i)} @blur=${this._onLeave} />`
         )}
 
         <line x1=${PAD_L} x2=${W - PAD_R} y1=${RAIL_Y} y2=${RAIL_Y} stroke="var(--line)" stroke-width="1" />
         ${failed.map(
-          ({ i }) => svg`<line x1=${x(i)} x2=${x(i)} y1=${RAIL_Y - (i === hi ? 13 : 9)} y2=${RAIL_Y + (i === hi ? 13 : 9)}
-                                stroke="var(--ink-3)" stroke-width=${i === hi ? 4 : 2.5} />`
+          ({ p, i }) => svg`<line x1=${x(i)} x2=${x(i)} y1=${RAIL_Y - (i === hi ? 13 : 9)} y2=${RAIL_Y + (i === hi ? 13 : 9)}
+                                stroke="var(--ink-3)" stroke-width=${i === hi ? 4 : 2.5}
+                                tabindex="0" role="img" aria-label=${this._pointLabel(p)}
+                                @focus=${() => this._focusPoint(i)} @blur=${this._onLeave} />`
         )}
         <text class="rail-label" x=${PAD_L} y=${RAIL_Y - 18} text-anchor="start">did not form</text>
 

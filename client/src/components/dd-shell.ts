@@ -307,9 +307,19 @@ export class DdShell extends LitElement {
              rather than as two different things. -->
         <span><i>indexed through</i><b>${num(h.indexedHeight)}</b></span>
         ${h.behind > 0 ? html`<span class="lag"><i>behind</i><b>${num(h.behind)}</b></span>` : nothing}
+        <!--
+          A count, not a scoreboard. This figure is every profile at once --
+          five interleaved schedules -- and it carried no health beside it, so
+          "900 formed / 12 failed" on every page read as a formation rate for a
+          network that has none: the two numbers may only be shown together, and
+          only within one profile. The front page does that properly; the header
+          says how much has been recorded and stops there.
+        -->
         <span
           ><i>DKG rounds</i
-          ><b>${num(h.rounds.formed)} <span class="dimb">formed</span> / ${num(h.rounds.failed)} <span class="dimb">failed</span></b></span
+          ><b>${num(h.rounds.formed + h.rounds.failed + h.rounds.pending + h.rounds.impossible)}
+            <span class="dimb">recorded, all profiles</span></b
+          ></span
         >
       </div>
     `;

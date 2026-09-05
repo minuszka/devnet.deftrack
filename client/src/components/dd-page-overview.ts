@@ -837,6 +837,7 @@ export class DdPageOverview extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">The last DKG rounds of the profile signing ChainLocks at the tip: whether each formed, and whether it punished anybody.</caption>
               <thead>
                 <tr>
                   <th scope="col">Round</th>

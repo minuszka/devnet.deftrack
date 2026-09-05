@@ -237,8 +237,9 @@ export class DdPageChainLocks extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Runs of blocks in the window that carry no ChainLock.</caption>
               <thead>
-                <tr><th class="r">From</th><th class="r">To</th><th class="r">Blocks</th></tr>
+                <tr><th scope="col" class="r">From</th><th scope="col" class="r">To</th><th scope="col" class="r">Blocks</th></tr>
               </thead>
               <tbody>
                 ${d.gaps.length === 0

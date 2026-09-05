@@ -168,15 +168,16 @@ export class DdPagePose extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Episodes in which several masternodes were PoSe-banned close together.</caption>
               <thead>
                 <tr>
-                  <th>Started</th>
-                  <th class="r">Duration</th>
-                  <th class="r">Size</th>
-                  <th class="r">Ceiling then</th>
-                  <th class="r">Heights</th>
-                  <th>By host</th>
-                  <th>By operator</th>
+                  <th scope="col">Started</th>
+                  <th scope="col" class="r">Duration</th>
+                  <th scope="col" class="r">Size</th>
+                  <th scope="col" class="r">Ceiling then</th>
+                  <th scope="col" class="r">Heights</th>
+                  <th scope="col">By host</th>
+                  <th scope="col">By operator</th>
                 </tr>
               </thead>
               <tbody>
@@ -218,14 +219,15 @@ export class DdPagePose extends LitElement {
         <div class="card-body flush">
           <div class="twrap">
             <table>
+              <caption class="sr-only">Recent masternode state transitions: bans, revivals and penalty increases.</caption>
               <thead>
                 <tr>
-                  <th>When</th>
-                  <th>Event</th>
-                  <th class="r">Height</th>
-                  <th>Masternode</th>
-                  <th>Host</th>
-                  <th class="r">Penalty</th>
+                  <th scope="col">When</th>
+                  <th scope="col">Event</th>
+                  <th scope="col" class="r">Height</th>
+                  <th scope="col">Masternode</th>
+                  <th scope="col">Host</th>
+                  <th scope="col" class="r">Penalty</th>
                 </tr>
               </thead>
               <tbody>
