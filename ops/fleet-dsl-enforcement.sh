@@ -133,7 +133,14 @@ for c in $PATTERN; do
   seen=$((seen+1))
   grep -q "^dslenforcementheight=$H\$" "$c" && conf_ok=$((conf_ok+1))
   d=$(dirname "$c")
-  got=$($CLI -conf="$c" -datadir="$d" dslstatus 2>/dev/null         | sed -n 's/.*"enforcementheight" *: *\([0-9]*\).*//p' | head -1)
+  # One long line, no backslash continuation, no sed backreference: this
+  # extraction has now been corrupted twice by tooling rewriting the file,
+  # once turning a backreference into a literal 0x01 and once turning a
+  # line continuation into the two characters backslash and n. Both times
+  # the verifier called every daemon wrong while every daemon was right,
+  # which is the worst failure a checking tool can have. Keep it simple
+  # enough that there is nothing left to mangle.
+  got=$($CLI -conf="$c" -datadir="$d" dslstatus 2>/dev/null | grep -a enforcementheight | grep -o '[0-9][0-9]*' | head -1)
   if [ -z "$got" ]; then
     rpc_silent=$((rpc_silent+1))
   elif [ "$got" = "$H" ]; then
