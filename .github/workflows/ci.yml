@@ -51,6 +51,20 @@ jobs:
       - name: Install
         run: npm ci
 
+      # Fails on high and critical, prints everything else.
+      #
+      # The three moderate findings here are all `qs`, reached through
+      # body-parser's `~6.15.1` pin, and this server is not on that code path at
+      # all: there is no express.urlencoded and the query parser is `simple`.
+      # An `overrides` entry would violate a declared range to fix a
+      # vulnerability we do not have -- tried, and reverted. So moderate is
+      # reported and high is refused, rather than the whole thing being waved
+      # through with `|| true`.
+      - name: Audit dependencies
+        run: |
+          npm audit || true
+          npm audit --audit-level=high
+
       # Pinned by version and checksum, not `apt-get install shellcheck`. The
       # runner image ships 0.9, which reports SC2015 on six `A && B || die`
       # validations that 0.11 knows are fine because `die` exits -- so the same

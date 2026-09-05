@@ -20,13 +20,13 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 8 | Kliens: a fő üzenet helyreállítása | **KÉSZ** (2026-09-05) |
-| 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
+| 9 | CI és szerszám-hitelesítés (negatív kontrollok) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** a 9. nap — shellcheck és `node --check` az
-ops-szkriptekre, gitleaks, negatív kontrollok (netns 100 %-os loss,
-rollback `null` RPC-vel), integrációs tesztek az öt írószolgáltatásra, és a
-rossz viselkedést rögzítő négy teszt javítása.
+**Következő pontos feladat:** a 10. nap — dokumentáció-drift és runbook:
+`CONTRACTS_HU.md`, `ARCHITECTURE_HU.md`, `CONTROL_API_HU.md`,
+`PERSISTENCE_HU.md`/`THREAT_MODEL_HU.md`, és a `CLAUDE.md` két elavult
+bekezdése.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -708,6 +708,93 @@ Feladatok:
 
 Elfogadási kapu: minden mérő- és ellenőrző útvonalhoz tartozik teszt, ami a
 javítás visszavonásával bukik.
+
+### Amit a 9. nap elvégzett (2026-09-05)
+
+- **Minden shell-szkript ellenőrzés alá került, shebang alapján** (#98). A két
+  legfontosabb fájl — `defcon-chaos` és `defcon-chaos-ssh`, root parancs és SSH
+  forced-command production hosztokon — nem `.sh`-ra végződik, tehát a `*.sh`
+  glob pont őket hagyta ki. 13 szkript, alapértelmezett szigorúsággal (info is
+  számít); minden elnyomás egy `# shellcheck disable=` a során, indoklással.
+  Amit talált: két SC2087 (`fleet-deploy.sh` heredocjai — szándékos helyi
+  behelyettesítés, most le van írva, melyik változó melyik oldalé), egy SC2029,
+  egy SC2209, hat SC2016, és egy **SC2015 az SSH-wrapper netem-argumentum-
+  validációjában**: az `A && B && C || die` if-then-else-nek olvasódik és nem az.
+  Helyes volt, de root alatt futó parancs argumentum-ellenőrzése ne igényeljen
+  második olvasást — ciklus lett belőle.
+- **A shellcheck verziója rögzítve, checksummal** (#98). A runner-image 0.9-et
+  hoz, ami hat `A && B || die` validációra panaszkodik, amit a 0.11 rendben
+  talál (`die` kilép). Ugyanaz a fa helyben átment, CI-ben bukott — egy kapu,
+  aminek a jelentése a hónap runner-image-étől függ, nem kapu.
+- **`node --check`, `py_compile`, és egy valódi import-ellenőrzés** (#98). A
+  lab-szkriptek a `server/dist`-ből importálnak: egy átnevezés `server/src`-ben
+  hibátlanul elemezhető és futásidőben törött szkriptet hagy maga után.
+  `ops/check-imports.mjs` minden relatív specifikálót felold és az ES-modulokat
+  be is tölti, hogy a névvel importált kötéseket ellenőrizze. Negatív kontroll:
+  a `labNodeName` átnevezése a buildben mind a nyolc hívási helyet megnevezve
+  bukik.
+- **gitleaks a fán, nem a történeten** (#98). A történet rotációs döntés, nem
+  build-lépés — a repó egy ilyen nyitott döntést már hordoz —, és egy kapu, ami
+  minden push-on bukik, amíg valaki meg nem hozza, olyan kapu, amit megtanulnak
+  figyelmen kívül hagyni. A fában egyetlen találat volt: az upstream publikált
+  regtest spork-kulcsa (ott van a DeFCoN saját `feature_sporks.py`-jában),
+  **pontos értékre** engedélyezve, indoklással.
+- **És a kapu bizonyítja, hogy tud bukni** (#98). `ops/check-secret-gate.sh`
+  kétszer fut: a fa legyen tiszta, és egy **véletlenszerűen generált** beültetett
+  hitelesítő adat buktassa meg. Az első változat `ghp_` + ábécé + számjegyek
+  volt, amit a gitleaks helyesen kihagy placeholderként — vagyis egy negatív
+  kontroll, ami sosem bukhatott volna, pont az a hibaosztály, amiért ez a nap
+  létezik.
+- **A chaos-teszt megkérdezi a kernelt** (#99). Eddig hamis `tc` ellen futott, és
+  **0 %-os losszal**: nem tudta megkülönböztetni a működő faultot a semmitől.
+  Most két netns, veth-pár, a valódi wrapper az egyikben, datagramok számolva a
+  másikban. Mérve: 100 % loss a célportról 0/20; **más forrásportról 20/20** — ez
+  az a tulajdonság, ami miatt egyszer az operátor SSH-ja szakadt meg; `clear`
+  után 20/20 és visszaáll a deklarált baseline (új handle-lel, ahogy a `plan.md`
+  írja). A hoszt saját telepítését nem érinti: privát mount-namespace-ben tmpfs
+  és bind-mount áll a valódi útvonalak helyén. Negatív kontroll: a wrappert
+  `loss 0%`-ra rontva a teszt kimondja, hogy a fault nem érkezik meg.
+- **A rossz viselkedést rögzítő tesztek** (#99). Ötből három már a 4-7. nappal
+  megszűnt (partíció címmel és előzetes elutasítással; lejárt lease karanténban,
+  sosem nyugtázva; küszöbök a hatályos profilból, az ismeretlen ismeretlenként).
+  A mérési fixture **11 blokkos faultot** használt 6 blokkos plafon mellett — most
+  a `SCENARIO_LIMITS`-ből származik, és kiderült, miért volt hosszú: hat blokknál
+  a kör, amire a fault irányult, kiesett az ablakból, mert **egy kört a
+  contribution-fázisa** — `[start+2, start+4)` — azonosít, nem az a magasság,
+  amiről el van nevezve. A `failed` mint végleges ítélet mellé pedig odakerült,
+  mi teszi biztonságossá (a write-oldal három szabálya) és mit nem fed le (egy
+  reorg a bányászati ablak alatt).
+- **Megkérdezzük az adatbázist és az útvonalakat** (#100). Három állítás, ami
+  MongoDB-ről és HTTP-ről szól, nem a kódunkról, és egyiket sem ellenőrizte
+  semmi: a kör egyszer íródik, az első megfigyelés megváltoztathatatlan, és
+  egyetlen publikus végpont sem ad ki hosztcímet. Fake repository egyiket sem
+  tudja megbuktatni — nincs egyedi indexe. Valódi MongoDB (CI-ben 8.0
+  service container, helyben eldobható példány), **nulla új npm-függőség**.
+  A söprés az első futásán talált egy éles veszélyt: a `/peers/propagation`
+  nyersen adta ki a megfigyelő-azonosítókat hat mezőben, azok pedig az
+  `OBSERVER_HOST` értékei, amit az ingest-séma IPv4-címként is elfogad. A mai
+  telepítés címkéket használ, tehát semmi nem volt kint; egyetlen IP-re
+  keresztelt observer publikálta volna. Az ajtóban redaktálunk azóta, és
+  `redactHostId` megtartja az olvasható címkét, mert az nem cím.
+- **A gyűjtő teljes írási útja valódi DB felett** (#101). Az egységtesztjei
+  `vi.fn()`-ekre cserélik a modelleket — a döntéseket jól mérik, de nem tudják
+  elkapni azt, ami itt a legtöbbe kerül: **a Mongoose strict módban szó nélkül
+  eldobja az ismeretlen mezőket**. Egy séma-átnevezés után a gyűjtő ugyanazt az
+  update-et építi, a driver elfogadja, az érték sosem landol, és az API örökre
+  null-t felel. Negatív kontroll: a `punishedCount` séma-útvonalát átnevezve a
+  dokumentum `undefined`-dal jön vissza, és két integrációs teszt bukik,
+  miközben minden egységteszt zöld marad.
+- **`npm audit` a CI-ben** (#101): high és critical bukik, minden más
+  kiírásra kerül. A három moderate találat mind `qs`, a `body-parser`
+  `~6.15.1` pinjén keresztül, és ez a szerver nincs rajta azon a kódúton —
+  `overrides` egy nem létező sebezhetőségért sértene deklarált tartományt.
+
+**Átsorolva:** a másik négy írószolgáltatás (`sync`, `masternodePoller`,
+`mnListDiff`, `chainLock`) teljes írási útja valódi DB felett. A
+repository-szintű állítások — egyediség, `$setOnInsert`, egyidejű írás — most
+már mind fedve vannak, és a `quorumRound` végponttól végpontig is; a maradék
+négy ugyanezt a mintát követi, önálló fake-RPC-forgatókönyvekkel, és nem fér
+bele ebbe a napba anélkül, hogy a többi tétel csúszna.
 
 ## 10. nap – dokumentáció-drift és runbook
 
