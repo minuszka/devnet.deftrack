@@ -42,6 +42,8 @@ INVENTORY="${FLEET_INVENTORY:-/root/fleet-nodes-all.txt}"
 CONF_GLOB='/opt/defcon-devnet/mn*/defcon.conf'
 SEED_CONFS='/home/defcon/.defcon/defcon.conf /home/defcon/.defcon2/defcon.conf'
 SEED_CLI='sudo -n defcon-cli -conf=/home/defcon/.defcon/defcon.conf -datadir=/home/defcon/.defcon'
+FLEET_CLI='/opt/defcon-devnet/bin/defcon-cli'
+SEED_BIN_CLI='defcon-cli'
 
 mode="${1:?usage: fleet-dsl-enforcement.sh --check|--write|--restart|--verify [height]}"
 H="${2:-}"
@@ -105,18 +107,44 @@ echo "    confs=$seen changed=$ok already=$skip refused=$bad"
 [ "$bad" = 0 ]
 REMOTE
 
+# Two checks, and the second is the one that matters.
+#
+# The conf is the INPUT. Reading it back proves the file was written, and
+# nothing more -- a conf is not proof that the daemon read it, and until the
+# daemons are restarted every one of them is still running on its old
+# configuration while the file on disk already says otherwise.
+#
+# dslstatus.enforcementheight is the STATE: what the running daemon actually
+# holds. That field exists because nothing observable on the chain can separate
+# a daemon that took the height from one that did not -- below it, and above it
+# while nobody is delinquent, the two behave identically, and by the time they
+# diverge the split has already happened.
+#
+# Three outcomes are kept apart because they mean different things: holding H,
+# holding something else (conf written, daemon not yet restarted), and unable to
+# answer at all (a binary older than the field).
 read -r -d '' VERIFY_BODY <<'REMOTE' || true
 set -u
-# H and PATTERN arrive as a prelude; see the note in CONF_BODY about why the
-# glob is expanded here and not before sudo.
-have=0; seen=0
+# H, PATTERN and CLI arrive as a prelude; see the note in CONF_BODY about why
+# the glob is expanded here and not before sudo.
+seen=0; conf_ok=0; rpc_ok=0; rpc_silent=0; rpc_other=0
 for c in $PATTERN; do
   [ -f "$c" ] || continue
   seen=$((seen+1))
-  grep -q "^dslenforcementheight=$H\$" "$c" && have=$((have+1))
+  grep -q "^dslenforcementheight=$H\$" "$c" && conf_ok=$((conf_ok+1))
+  d=$(dirname "$c")
+  got=$($CLI -conf="$c" -datadir="$d" dslstatus 2>/dev/null         | sed -n 's/.*"enforcementheight" *: *\([0-9]*\).*//p' | head -1)
+  if [ -z "$got" ]; then
+    rpc_silent=$((rpc_silent+1))
+  elif [ "$got" = "$H" ]; then
+    rpc_ok=$((rpc_ok+1))
+  else
+    echo "    HOLDS $got, not $H: $d"
+    rpc_other=$((rpc_other+1))
+  fi
 done
-echo "    confs=$seen carrying=$have"
-[ "$seen" = "$have" ]
+echo "    instances=$seen conf=$conf_ok daemon=$rpc_ok stale=$rpc_other cannot-answer=$rpc_silent"
+[ "$seen" = "$conf_ok" ] && [ "$seen" = "$rpc_ok" ]
 REMOTE
 
 read -r -d '' RESTART_BODY <<'REMOTE' || true
@@ -187,39 +215,49 @@ case "$mode" in
   fi
   echo "==> tip $tip, target $H ($((H - tip)) blocks ahead, roughly $(( (H - tip) * 162 / 60 )) minutes)"
   what=check; [ "$mode" = "--write" ] && what=write
+  # Neither half may abort the other. Under `set -e` a failing fleet exits
+  # before the seed is even looked at, and the run then reports a total that
+  # silently omits the two nodes a reader would least expect to be missing --
+  # measured: a verify run reported 160 instances on a network of 162.
+  rc=0
   echo "==> fleet ($INVENTORY)"
   fleet_run "$(b64 "MODE=$what; H=$H; PATTERN='$CONF_GLOB'
-$CONF_BODY")"
+$CONF_BODY")" || rc=1
   echo "==> seed and devnet2"
   seed_run "$(b64 "MODE=$what; H=$H; PATTERN='$SEED_CONFS'
-$CONF_BODY")"
+$CONF_BODY")" || rc=1
   echo
   if [ "$mode" = "--write" ]; then
     echo "==> written. NOTHING HAS BEEN RESTARTED -- every running daemon still holds"
     echo "    its old configuration, and the height is not in force until they do."
   fi
+  exit $rc
   ;;
 
 --restart)
+  rc=0
   echo "==> restarting the fleet"
-  fleet_run "$(b64 "$RESTART_BODY")"
+  fleet_run "$(b64 "$RESTART_BODY")" || rc=1
   echo "==> restarting the seed and devnet2"
   ssh -o ConnectTimeout=20 -o BatchMode=yes "$SEED" \
-    'sudo -n systemctl restart defcond-devnet defcond-devnet2; sleep 8; systemctl is-active defcond-devnet defcond-devnet2'
+    'sudo -n systemctl restart defcond-devnet defcond-devnet2; sleep 8; systemctl is-active defcond-devnet defcond-devnet2' || rc=1
+  exit $rc
   ;;
 
 --verify)
-  echo "==> every conf carries $H"
-  fleet_run "$(b64 "H=$H; PATTERN='$CONF_GLOB'
-$VERIFY_BODY")"
+  echo "==> every conf carries $H, and every daemon holds it"
+  rc=0
+  fleet_run "$(b64 "H=$H; PATTERN='$CONF_GLOB'; CLI='$FLEET_CLI'
+$VERIFY_BODY")" || rc=1
   echo "==> seed and devnet2"
-  seed_run "$(b64 "H=$H; PATTERN='$SEED_CONFS'
-$VERIFY_BODY")"
+  seed_run "$(b64 "H=$H; PATTERN='$SEED_CONFS'; CLI='$SEED_BIN_CLI'
+$VERIFY_BODY")" || rc=1
   echo "==> and the network still agrees"
   ssh -o ConnectTimeout=20 -o BatchMode=yes "$SEED" "$SEED_CLI getblockcount; $SEED_CLI masternode count"
   echo
   echo "    A conf count is not a fork check. Run ops/fleet-chain-check2.sh on the"
   echo "    jump host as well: one active chain across every instance is the only"
   echo "    thing that proves nobody was left behind."
+  exit $rc
   ;;
 esac
