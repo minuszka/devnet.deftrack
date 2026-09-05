@@ -108,11 +108,18 @@ const restartFlappingSchema = z
         role: z.enum(['masternode', 'staker']),
         count: z.number().int().min(1).max(10),
         cycles: z.number().int().min(1).max(SCENARIO_LIMITS.maxFlapCycles),
+        // `count` is bounded again below, against maxStakers when the role is
+        // staker: block production rests on those daemons, and flapping ten of
+        // them is a different experiment from flapping ten masternodes.
         downSeconds: z.number().int().min(5).max(60),
         upSeconds: z.number().int().min(5).max(120),
         targetIds: targetIdsSchema.optional(),
       })
-      .strict(),
+      .strict()
+      .refine(
+        (value) => value.role !== 'staker' || value.count <= SCENARIO_LIMITS.maxStakers,
+        { message: `at most ${SCENARIO_LIMITS.maxStakers} stakers may be flapped at once` }
+      ),
   })
   .strict();
 
@@ -122,7 +129,12 @@ const networkDegradationSchema = z
     ...scenarioHeader,
     parameters: z
       .object({
-        role: z.enum(['masternode', 'staker', 'seed']),
+        // No 'seed'. The seed is where the explorer's RPC and ZMQ evidence
+        // comes from, so impairing it degrades the measurement rather than the
+        // network under test -- and the result would look like a network
+        // finding. A seed fault, if it is ever wanted, needs its own scenario
+        // that says what it is doing to the observer.
+        role: z.enum(['masternode', 'staker']),
         count: z.number().int().min(1).max(10),
         durationSeconds: durationSchema,
         latencyMs: z.number().int().min(0).max(SCENARIO_LIMITS.maxLatencyMs),

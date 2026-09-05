@@ -46,7 +46,8 @@ function healthyInput(): SimulationPreflightInput {
       maxExplorerLagBlocks: 2,
       maxExplorerAgeMs: 60_000,
       maxObserverAgeMs: 60_000,
-      maxTargetSnapshotAgeMs: 60_000,
+      maxTargetSnapshotLagBlocks: 2,
+    maxTargetSnapshotAgeMs: 60_000,
       minObserverCoveragePercent: 95,
       maxStaleTargets: 0,
       maxWorkerAgeMs: 30_000,
@@ -316,5 +317,38 @@ describe('freshness is judged only on being too old', () => {
     input.observer.lastObservationAtMs = null;
     const result = evaluateSimulationPreflight(input);
     expect(result.checks.find((item) => item.checkId === 'observer-fresh')?.passed).toBe(false);
+  });
+});
+
+describe('how far the chain may have moved since the draft', () => {
+  // The check consults `explorer.indexedHeight` too, so the explorer is moved
+  // with the tip; the subject here is the snapshot lag, not explorer lag.
+  const atTip = (blocks: number, capturedAtHeight: number): SimulationPreflightInput => {
+    const input = healthyInput();
+    input.chain.blocks = blocks;
+    input.chain.headers = blocks;
+    input.explorer.indexedHeight = blocks;
+    input.targetInventory.capturedAtHeight = capturedAtHeight;
+    return input;
+  };
+  const chainSynced = (input: SimulationPreflightInput) =>
+    evaluateSimulationPreflight(input).checks.find((item) => item.checkId === 'chain-synced');
+
+  it('accepts a tip a block or two past the snapshot', () => {
+    // It used to demand equality, so validate and arm both had to finish inside
+    // one block -- 150 seconds on devnet, less in practice -- and a run that
+    // took longer was rejected for a reason that had nothing to do with the
+    // network. The snapshot's age bound already limits staleness.
+    expect(chainSynced(atTip(HEIGHT + 2, HEIGHT))).toMatchObject({ passed: true });
+  });
+
+  it('still refuses a tip that has drifted well past it', () => {
+    expect(chainSynced(atTip(HEIGHT + 20, HEIGHT))).toMatchObject({ passed: false });
+  });
+
+  it('refuses a node BELOW the height the draft was taken at', () => {
+    // Not the same fault as being past it: a node under the snapshot height
+    // cannot have seen what the draft describes, whatever the bound says.
+    expect(chainSynced(atTip(HEIGHT - 1, HEIGHT))).toMatchObject({ passed: false });
   });
 });

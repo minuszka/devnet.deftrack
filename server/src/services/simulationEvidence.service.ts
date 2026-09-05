@@ -406,6 +406,11 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         maxExplorerAgeMs: 2 * 60_000,
         maxObserverAgeMs: OBSERVATION_MAX_AGE_MS,
         maxTargetSnapshotAgeMs: 5 * 60_000,
+        // Two blocks, the same slack the explorer is allowed. Five minutes of
+        // snapshot age is roughly two devnet blocks, so the two bounds agree;
+        // the block form is the one that matters, because what goes stale is
+        // the height the targets were resolved at, not the wall clock.
+        maxTargetSnapshotLagBlocks: 2,
         minObserverCoveragePercent: 100,
         maxStaleTargets: 0,
         maxWorkerAgeMs: 60_000,
