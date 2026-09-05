@@ -15,7 +15,7 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 1 | A rekord védelme: fail-closed rollback, ítélet sosem hibából | **KÉSZ** (2026-09-05) |
 | 2 | Chaos-biztonság: netem-sáv, szűrő, host-kötés | **KÓD KÉSZ**; takarítás **KÉSZ**; pilot-újratelepítés a merge után |
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
-| 4 | Szimulátor: a csendes no-op osztály lezárása | nyitva |
+| 4 | Szimulátor: a csendes no-op osztály lezárása | **RÉSZBEN KÉSZ** (2026-09-05); a parancs-visszaigazolás hátra |
 | 5 | Szimulátor: tervezett vég és live-lock | nyitva |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | nyitva |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
@@ -23,8 +23,8 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** 4. nap — a szimulátor csendes no-op osztályának
-lezárása. Tisztán repóbeli munka, jóváhagyás nélkül végezhető.
+**Következő pontos feladat:** a 4. nap maradéka — parancsonkénti wrapper-
+visszaigazolás, hogy a `succeeded` alkalmazást jelentsen. Utána 5. nap.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -234,6 +234,39 @@ Feladatok:
 
 Elfogadási kapu: egy olyan parancs, amit a wrapper nem alkalmazott, **nem
 rögzíthető** alkalmazottként; a hozzá tartozó teszt a javítás nélkül bukik.
+
+### Amit a 4. nap eddig elvégzett (2026-09-05)
+
+- **A lejárt lease már parse-hiba.** `assertLeaseInstant` eddig csak a plafont
+  nézte, a padlót nem: egy lejárt lease átment, a tervező „elutasította" azzal,
+  hogy nem adott akciót, a runner mégis jobId-t adott vissza, és a ciklus
+  nyugtázta és `dispatched`-ként számolta. A futam `fault_active`-ot hitt, holott
+  semmi nem történt. Ehhez elég a sorban állás: egy `docker stop -t 30` előtte.
+- **A `planApply` és a `planServiceStop` most dob, nem üres tervet ad.** Az üres
+  akciólista így egyetlen dolgot jelent: nincs mit tenni. Eddig ugyanazt jelezte
+  a visszautasítás és az idempotens eset, és a hívó nem tudta megkülönböztetni.
+- **A ciklus injektálható órát kapott.** A parse eddig faliórával döntött,
+  miközben a tervező injektált órát használ; élesben egyeznek, de így nem
+  csúszhatnak szét, és a viselkedés tesztelhető.
+- **A végrehajtó a wrapper saját szabályával validál, enqueue előtt.** Egy közös
+  `assertFaultArgs` exportált a `netemLease`-ből, két hívóval. Eddig egy olyan
+  terv, amit a wrapper garantáltan elutasított, végigment az armon és az
+  aktiváláson: a parancs kiíródott, a wrapper dobott, a sor ötször újrapróbálta
+  és karanténba tette, a futam meg aktív faultot hitt. Két konkrét eset: az
+  `1e-7%` alakú veszteség és a konténernevet tartalmazó peer-lista.
+- **A dispatcher elvesztett lease-e már nyomot hagy.** A `settle` eredménye eddig
+  a földre esett, tehát egy dupla dispatch teljesen nyomtalan volt.
+- Négy negatív kontroll, mind ellenőrizve: a javítások visszavonásakor pontosan
+  ezek buknak. Két teszt átírva, amelyek eddig a hibás viselkedést rögzítették
+  (a lejárt lease „nem parse-hiba", és a konténernevet peer-ként használó
+  partíció).
+
+**Hátra a 4. napból:** parancsonkénti kimeneti fájl a wrappertől
+(`applied`/`noop`/`rejected` + jobId), amire a `dispatchScheduledAction` és az
+`activateFault` vár. Ez az egyetlen, ami a `succeeded`-et *bizonyítottan*
+alkalmazássá teszi; a mostani javítások az odáig vezető csendes utakat zárták le.
+Ezzel megy együtt a lease-megújítás a `dispatch` körül és az `actionId`-alapú
+parancsfájlnév.
 
 ## 5. nap – tervezett vég és live-lock
 

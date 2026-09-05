@@ -39,13 +39,22 @@ export async function runWrapperCycle(input: {
    * recovery guarantee depends on, so it must not be able to break a cycle.
    */
   publish?: () => Promise<void>;
+  /**
+   * The clock the lease is judged against. The runner already takes one, and
+   * the parse has to agree with it: they are both deciding whether the same
+   * lease is still alive, and a cycle whose parse used wall time while its
+   * planner used an injected clock could accept a command the planner would
+   * then refuse. Defaults to the wall clock, which is what production uses.
+   */
+  clock?: () => number;
 }): Promise<{ dispatched: number; failed: number; cleared: number }> {
+  const now = input.clock ?? Date.now;
   let dispatched = 0;
   let failed = 0;
   for (const claimed of await input.queue.claim()) {
     let command;
     try {
-      command = parseWrapperCommand(claimed.payload);
+      command = parseWrapperCommand(claimed.payload, now());
     } catch (error) {
       // Malformed: no number of retries will make it parse, so it is quarantined
       // rather than left to circle.
