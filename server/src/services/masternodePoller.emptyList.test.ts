@@ -57,7 +57,7 @@ function masternode(proTxHash: string) {
       PoSePenalty: 0,
       PoSeBanHeight: -1,
       registeredHeight: 100,
-    },
+    } as Record<string, unknown>,
   };
 }
 
@@ -106,17 +106,70 @@ describe('an empty protx list', () => {
   });
 });
 
+describe('who owns which event', () => {
+  it('writes no chain transition the walker also reports', async () => {
+    // Both writers used to record the same transitions, and their keys agreed
+    // for only some of them. `banned`, `revived` and `registered` collided on an
+    // exact chain height, so this poller's row won and the walker's block-exact
+    // one was a silent no-op. `penalty_up`, `service_changed` and `removed` did
+    // not collide -- keyed here on whatever height the poll landed on -- so
+    // every one of those was written TWICE, and every closed experiment counted
+    // them twice.
+    state.previous = [
+      { proTxHash: 'a'.repeat(64), active: true, banned: false, poSePenalty: 0, service: '203.0.113.7:19799' },
+    ];
+    const changed = masternode('a'.repeat(64));
+    changed.state.PoSePenalty = 66;
+    changed.state.service = '203.0.113.9:19799';
+    changed.state.PoSeBanHeight = 8_000;
+    state.call.mockResolvedValue([changed]);
+
+    await new MasternodePollerService().collect();
+
+    const written = state.eventBulkWrite.mock.calls.flatMap(([ops]) =>
+      (ops as { updateOne: { update: any } }[]).map((op) => op.updateOne.update.$setOnInsert?.type)
+    );
+    for (const chainTransition of ['banned', 'revived', 'registered', 'penalty_up', 'service_changed', 'removed']) {
+      expect(written).not.toContain(chainTransition);
+    }
+  });
+
+  it('still writes the Sentinel ledger, which listdiff does not carry', async () => {
+    // The positive control for the split: `MnStateDiff` has no DSL fields at
+    // all, so if the poller stopped writing these nothing would.
+    state.previous = [
+      { proTxHash: 'a'.repeat(64), active: true, banned: false, poSePenalty: 0, missedServiceEpochs: 0 },
+    ];
+    const missed = masternode('a'.repeat(64));
+    missed.state.missedServiceEpochs = 2;
+    state.call.mockResolvedValue([missed]);
+
+    await new MasternodePollerService().collect();
+
+    const written = state.eventBulkWrite.mock.calls.flatMap(([ops]) =>
+      (ops as { updateOne: { update: any } }[]).map((op) => op.updateOne.update.$setOnInsert?.type)
+    );
+    expect(written).toContain('service_missed');
+  });
+});
+
 describe('a list the node could answer', () => {
-  it('still records a masternode that really left', async () => {
+  it('still marks a masternode that really left', async () => {
     // The positive control: the removal sweep is disabled by the guard only
     // when the answer itself is unusable, never when it is merely bad news.
+    //
+    // The `removed` EVENT is the walker's -- it sees the removal at its own
+    // height, where this poller could only key it on whatever height it landed
+    // on, so the two never collided and every removal was written twice. What
+    // the poller still owns is the state: without the mark the row stays in the
+    // current-state view for ever and keeps being counted as live.
     state.call.mockResolvedValue([masternode('a'.repeat(64))]);
 
     await new MasternodePollerService().collect();
 
-    expect(state.eventBulkWrite).toHaveBeenCalled();
-    const [ops] = state.eventBulkWrite.mock.calls[0] as [{ updateOne: { update: any } }[]];
-    const kinds = ops.map((op) => op.updateOne.update.$setOnInsert?.type).filter(Boolean);
-    expect(kinds).toContain('removed');
+    expect(state.stateBulkWrite).toHaveBeenCalled();
+    const [ops] = state.stateBulkWrite.mock.calls[0] as [{ updateOne: { filter: any; update: any } }[]];
+    const deactivated = ops.filter((op) => op.updateOne.update.$set?.active === false);
+    expect(deactivated.map((op) => op.updateOne.filter.proTxHash)).toEqual(['b'.repeat(64)]);
   });
 });

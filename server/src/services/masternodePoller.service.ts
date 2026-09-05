@@ -152,6 +152,23 @@ export class MasternodePollerService {
       if (penalty > 0) penalised++;
 
       const prev = previous.get(entry.proTxHash);
+      /**
+       * The poller writes only what `protx listdiff` cannot report.
+       *
+       * Both writers used to record the same chain transitions, and their keys
+       * agreed for only some of them. `banned`, `revived` and `registered`
+       * collided on an exact chain height, so the poller's row won and the
+       * walker's block-exact one was a silent no-op. `penalty_up`,
+       * `service_changed` and `removed` did not collide -- the poller keys them
+       * on the height it happened to poll at -- so every one of those was
+       * written TWICE, and every closed experiment counted them twice.
+       *
+       * The walker owns the chain transitions: it reads them from the chain at
+       * their own heights, and the reorg rollback drops them again when the
+       * blocks that carried them are abandoned. Nothing here can say either of
+       * those things. What is left for the poller is the Sentinel ledger, which
+       * `MnStateDiff` does not carry at all.
+       */
       const push = (type: MasternodeEventType, keyPart: number | string, extra: object): void => {
         eventOps.push({
           updateOne: {
@@ -176,38 +193,7 @@ export class MasternodePollerService {
         });
       };
 
-      if (!prev) {
-        push('registered', st.registeredHeight ?? height, {
-          serviceAfter: service,
-          penaltyAfter: penalty,
-        });
-      } else {
-        if (isBanned && !prev.banned) {
-          push('banned', banHeight, { penaltyBefore: prev.poSePenalty, penaltyAfter: penalty });
-        }
-        if (!isBanned && prev.banned) {
-          push('revived', revivedHeight === -1 ? height : revivedHeight, {
-            penaltyBefore: prev.poSePenalty,
-            penaltyAfter: penalty,
-          });
-        }
-        // Only an increase. PoSe penalty decays by one per block, so a
-        // penalised node produces a row in every single poll: one ban wave
-        // arrived here as 11 bans buried under 247 decay events. The decay is
-        // the node serving its sentence, and the current value is already in
-        // MasternodeState -- nothing is lost by not logging each step of it.
-        if (penalty > prev.poSePenalty) {
-          push('penalty_up', `${height}:${penalty}`, {
-            penaltyBefore: prev.poSePenalty,
-            penaltyAfter: penalty,
-          });
-        }
-        if (service !== prev.service) {
-          push('service_changed', `${height}:${service ?? 'none'}`, {
-            serviceBefore: prev.service,
-            serviceAfter: service,
-          });
-        }
+      if (prev) {
 
         // Sentinel Layer transitions. A masternode can miss at most one epoch
         // per epoch (hourly), so unlike the PoSe penalty decay every step is
@@ -280,27 +266,12 @@ export class MasternodePollerService {
     const listed = new Set(list.map((e) => e.proTxHash));
     for (const prev of findRemoved(previous.values(), listed)) {
       const proTxHash = prev.proTxHash;
-      eventOps.push({
-        updateOne: {
-          filter: { eventKey: `${proTxHash}:removed:${height}` },
-          update: {
-            $setOnInsert: {
-              eventKey: `${proTxHash}:removed:${height}`,
-              proTxHash,
-              type: 'removed' as MasternodeEventType,
-              height,
-              operatorLabel: prev.operatorLabel ?? null,
-              hostIp: prev.hostIp ?? null,
-              source: 'poll' as const,
-              serviceBefore: prev.service ?? null,
-              penaltyBefore: prev.poSePenalty,
-              detectedAt: now,
-            },
-          },
-          upsert: true,
-        },
-      });
-
+      // The `removed` EVENT belongs to the walker, which sees the removal at
+      // its own height; this one was keyed on whatever height the poll happened
+      // to land on, so the two never collided and every removal was recorded
+      // twice. What still belongs here is the state: nothing in the loop above
+      // would touch this row again, so without the mark it stays in the
+      // current-state view for ever and keeps being counted as live.
       stateOps.push({
         updateOne: {
           filter: { proTxHash },

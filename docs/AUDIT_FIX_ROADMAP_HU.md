@@ -18,13 +18,14 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
 | 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
+| 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **RÉSZBEN KÉSZ** (2026-09-05) |
 | 8 | Kliens: a fő üzenet helyreállítása | nyitva |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** 7. nap — a gyűjtő: egy igazságforrás, a kör-rekord
-a commitment-indexből. Tisztán repóbeli munka.
+**Következő pontos feladat:** a 7. nap maradéka — a kör-rekord egyeztetése a
+commitment-indexből, `minedHeight` visszatöltés, walker-tartósság,
+`effectiveSize` a kör alapmagasságán, ZMQ-felügyelet.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -479,6 +480,28 @@ Feladatok:
 
 Elfogadási kapu: egy egy hetes explorer-kiesés után a kör-rekord hiánytalanul
 újraépíthető a láncból, és ezt teszt mutatja.
+
+### Amit a 7. nap eddig elvégzett (2026-09-05)
+
+- **Egy eseményíró típusonként.** Két írónk volt ugyanazokra a lánc-átmenetekre,
+  és a kulcsaik csak részben egyeztek. A `banned`, `revived` és `registered`
+  pontos lánc-magasságon ütközött, ezért a poller sora nyert, és a walker
+  blokk-pontos sora **csendben elveszett**. A `penalty_up`, a `service_changed`
+  és a `removed` viszont nem ütközött — a poller azon a magasságon kulcsolta
+  őket, ahol épp pollozott —, tehát **mindegyik kétszer íródott**, és minden
+  lezárt kísérlet kétszer számolta őket.
+
+  A lánc-átmenetek mostantól a walkeré: a saját magasságukon olvassa őket a
+  láncból, és a reorg-visszagörgetés újra eldobja őket, ha az őket hordozó
+  blokkok elvesznek. A poller egyiket sem tudja. Ami nála marad, az a Sentinel-
+  főkönyv, amit a `MnStateDiff` egyáltalán nem hordoz — plusz a `removed`
+  *állapotjelölés*, mert enélkül a sor örökre élőként számolódna.
+- **A `quorumHeight` nem a bányászati magasság többé.** A konszenzus a
+  `qcTx.height`-et `pindexPrev+1`-re állítja (`commitment.cpp:201`), vagyis a
+  bányászat magasságára — így a mező a nevével ellentétes értéket hordozott, és
+  **minden sorban `quorumHeight === minedHeight`** volt. Most a ciklusból
+  származik. Ismeretlen profilnál a node saját mezője marad, mert kitalálni
+  rosszabb lenne, mint pontatlanul megnevezni.
 
 ## 8. nap – kliens: a fő üzenet
 

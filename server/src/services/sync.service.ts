@@ -13,6 +13,7 @@ import { QuorumRound } from '../models/QuorumRound.js';
 import { QuorumCommitment } from '../models/QuorumCommitment.js';
 import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { closedEpochAt, epochKeyFor, isCommittable } from '../domain/dslSchedule.js';
+import { currentRoundHeight } from '../domain/dkgSchedule.js';
 import { commitmentPunishedCount } from '../domain/commitmentPunishment.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
 import {
@@ -528,12 +529,28 @@ export class SyncService {
       if (tx.type !== TRANSACTION_QUORUM_COMMITMENT || !tx.qcTx?.commitment) continue;
       const c = tx.qcTx.commitment;
       const llmqType = c.llmqType ?? -1;
-      const quorumHeight = tx.qcTx.height ?? block.height;
       const quorumHash = c.quorumHash ?? null;
+      const profileForHeight = Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType);
+      // `qcTx.height` is NOT the height the quorum was formed for. Consensus
+      // sets it to `pindexPrev->nHeight + 1` (commitment.cpp:201) -- the height
+      // the commitment is mined at -- so this field held the mined height under
+      // a name that says otherwise, and every row read quorumHeight ===
+      // minedHeight. The key survived only because the quorum hash is in it.
+      //
+      // The real one is the cycle the commitment belongs to. A commitment is
+      // mined inside its own cycle's mining window, so the cycle start of the
+      // mined height is that cycle -- and for a profile whose layout is not
+      // known here there is nothing to derive it from, so the node's own field
+      // is kept rather than a number invented for it.
+      const quorumHeight =
+        profileForHeight === undefined
+          ? tx.qcTx.height ?? block.height
+          : currentRoundHeight(block.height, profileForHeight.dkgInterval);
+      
       const commitmentKey = `${llmqType}:${quorumHeight}:${quorumHash ?? 'null'}`;
       const valid = c.validMembersCount ?? 0;
       const signers = c.signersCount ?? 0;
-      const profile = Object.values(LLMQ_PROFILES).find((p) => p.llmqType === llmqType);
+      const profile = profileForHeight;
       // How many members the DKG actually selected. Core punishes over this list
       // (`for i < members.size()`), and neither the profile size nor the
       // validMembers bitfield gives it: llmq_400_60 seats 400 nominally, forms
