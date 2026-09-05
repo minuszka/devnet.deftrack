@@ -24,8 +24,8 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
 **Következő pontos feladat:** a 7. nap maradéka — a kör-rekord egyeztetése a
-commitment-indexből, `minedHeight` visszatöltés, walker-tartósság,
-`effectiveSize` a kör alapmagasságán, ZMQ-felügyelet.
+commitment-indexből, `minedHeight` visszatöltés, `effectiveSize` a kör
+alapmagasságán, ZMQ-felügyelet.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -502,6 +502,23 @@ Elfogadási kapu: egy egy hetes explorer-kiesés után a kör-rekord hiánytalan
   **minden sorban `quorumHeight === minedHeight`** volt. Most a ciklusból
   származik. Ismeretlen profilnál a node saját mezője marad, mert kitalálni
   rosszabb lenne, mint pontatlanul megnevezni.
+- **A walker nem gyárt hamis büntetést.** Két úton tehette. A büntetés-térkép
+  magasságonként lép előre, a kurzor viszont csak a batch végén íródik ki, tehát
+  egy közbeni hiba a térképet a kurzor **elé** vitte — és a PoSe-büntetés
+  blokkonként egyet csökken, így az újrajátszás minden büntetett node-ot frissen
+  büntetettnek olvasott. Ez ugyanaz a kitalált mulasztás, amit a magvetés
+  megelőzni hivatott, csak más úton. Most a hiba eldobja a magvetést, ami egy
+  extra listdiff a következő körben, cserébe a térkép pontosan a kurzorhoz
+  igazodik.
+
+  A másik: a blokk-szinkron reorg-visszagörgetése hívja a `reset`-et, és ezt
+  menet közben is megteheti. Az a walk aztán üres térképpel ment tovább — ahol
+  minden node első látásnak tűnik, tehát minden büntetett növekedésnek — és a
+  végén a **saját kurzorát írta a visszagörgetett fölé**. Generációszámláló
+  került rá: aki alatt közben megfordult a lánc, eldobja a batch-ét.
+
+  Ez most fontosabb, mint korábban volt: a walker lett az egyetlen írója
+  ezeknek az eseményeknek, tehát amit kitalál, az maga a rekord.
 
 ## 8. nap – kliens: a fő üzenet
 
