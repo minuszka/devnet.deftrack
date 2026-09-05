@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { BLOCK_SECONDS } from '../domain/dkgWindows.js';
+import { SCENARIO_LIMITS } from './scenarioRegistry.js';
 import type { DryRunImpactEstimate } from './scenarioTypes.js';
 import {
   computeSimulationMeasurementReport,
@@ -7,6 +9,21 @@ import {
 } from './simulationMeasurement.js';
 
 const GENERATED_AT_MS = 2_000_000;
+
+/**
+ * The fault windows below are the longest the registry will accept, taken from
+ * the registry rather than typed out.
+ *
+ * They used to be eleven blocks, and one was seven, against a ceiling of six --
+ * so every assertion in this file was made about a fault no scenario can ask
+ * for. The pipeline is a pure function and the arithmetic was still right, but
+ * nothing here covered the shape the system actually produces, and a reader
+ * calibrates on the fixture. Derived, so raising or lowering MAX_OUTAGE_BLOCKS
+ * moves the fixture with it instead of leaving it stale and plausible.
+ */
+const MAX_FAULT_BLOCKS = SCENARIO_LIMITS.maxDurationSeconds / BLOCK_SECONDS;
+const FAULT_START = 1_000;
+const FAULT_END = FAULT_START + MAX_FAULT_BLOCKS - 1;
 
 function impact(surviving = 44): DryRunImpactEstimate {
   return {
@@ -71,13 +88,20 @@ function completeEvidence(): SimulationMeasurementEvidence {
   return {
     primaryLlmqName: 'llmq_defcon',
     blocks,
-    rounds: [928, 952, 976, 1_004].map((expectedHeight) => ({
+    // Three rounds in the baseline (the policy's minimum) and one the fault is
+    // aimed at. A round is attributed by its CONTRIBUTION phase, [start+2,
+    // start+4), not by the height it is named after -- so the round the fault
+    // disturbs is the one whose phase falls inside the window, and at a legal
+    // six-block fault that is the round named 1000, not 1004. With 1004 here
+    // the fixture only had a round in the window because the window was eleven
+    // blocks long, which no scenario can ask for.
+    rounds: [928, 952, 976, FAULT_START].map((expectedHeight) => ({
       llmqName: 'llmq_defcon',
       dkgInterval: 24,
       dkgPhaseBlocks: 2,
       expectedHeight,
       status: 'formed' as const,
-      healthRatio: expectedHeight === 1_004 ? 0.95 : 1,
+      healthRatio: expectedHeight === FAULT_START ? 0.95 : 1,
       invalidMembers: [],
     })),
     poseEvents: [{
@@ -112,11 +136,19 @@ function reversedEvidence(evidence: SimulationMeasurementEvidence): SimulationMe
 }
 
 describe('simulation measurement pipeline', () => {
+  // The fixture is only evidence if the system can produce it. Before this,
+  // every window here was eleven blocks against a registry ceiling of six.
+  it('measures a fault the registry would actually accept', () => {
+    expect(FAULT_END - FAULT_START + 1).toBe(MAX_FAULT_BLOCKS);
+    expect(MAX_FAULT_BLOCKS).toBeLessThanOrEqual(SCENARIO_LIMITS.maxDurationSeconds / BLOCK_SECONDS);
+    expect(Number.isInteger(MAX_FAULT_BLOCKS)).toBe(true);
+  });
+
   it('recomputes a complete synthetic report byte-for-byte from reordered evidence', () => {
     const evidence = completeEvidence();
     const input = {
-      faultStartHeight: 1_000,
-      faultEndHeight: 1_010,
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
       generatedAtMs: GENERATED_AT_MS,
       impact: impact(),
     };
@@ -166,7 +198,7 @@ describe('simulation measurement pipeline', () => {
 
     const report = computeSimulationMeasurementReport({
       faultStartHeight: cycleStart + 2,
-      faultEndHeight: cycleStart + 8,
+      faultEndHeight: cycleStart + 2 + MAX_FAULT_BLOCKS - 1,
       generatedAtMs: GENERATED_AT_MS,
       impact: impact(),
       evidence,
@@ -186,8 +218,8 @@ describe('simulation measurement pipeline', () => {
     evidence.hosts[0]!.reportedAtMs = GENERATED_AT_MS - 10 * 60_000;
     evidence.observationGaps.push({ topic: 'hashchainlock', missed: 2, detectedAtMs: 2_005_000 });
     const report = computeSimulationMeasurementReport({
-      faultStartHeight: 1_000,
-      faultEndHeight: 1_010,
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
       generatedAtMs: GENERATED_AT_MS,
       impact: impact(),
       evidence,
@@ -201,8 +233,8 @@ describe('simulation measurement pipeline', () => {
 
   it('keeps threshold expectations non-evaluable when the dry-run quorum was unknown', () => {
     const report = computeSimulationMeasurementReport({
-      faultStartHeight: 1_000,
-      faultEndHeight: 1_010,
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
       generatedAtMs: GENERATED_AT_MS,
       impact: { ...impact(), survivingCurrentQuorumMembers: null },
       evidence: completeEvidence(),
@@ -222,8 +254,8 @@ describe('simulation measurement pipeline', () => {
       })),
     ];
     const report = computeSimulationMeasurementReport({
-      faultStartHeight: 1_000,
-      faultEndHeight: 1_010,
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
       generatedAtMs: GENERATED_AT_MS,
       impact: impact(),
       evidence,
@@ -236,8 +268,8 @@ describe('simulation measurement pipeline', () => {
   it('answers the same for the same evidence however long after the window it is asked', () => {
     const evidence = completeEvidence();
     const at = (generatedAtMs: number) => computeSimulationMeasurementReport({
-      faultStartHeight: 1_000,
-      faultEndHeight: 1_010,
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
       generatedAtMs,
       impact: impact(),
       evidence,
@@ -282,8 +314,8 @@ describe('simulation measurement pipeline', () => {
       ...evidence.rounds.filter((round) => round.expectedHeight === 1_004),
     ];
     const report = computeSimulationMeasurementReport({
-      faultStartHeight: 1_000,
-      faultEndHeight: 1_010,
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
       generatedAtMs: GENERATED_AT_MS,
       impact: impact(),
       evidence,
@@ -303,8 +335,8 @@ describe('simulation measurement pipeline', () => {
 
 describe('observation gap correlation', () => {
   const input = {
-    faultStartHeight: 1_000,
-    faultEndHeight: 1_010,
+    faultStartHeight: FAULT_START,
+    faultEndHeight: FAULT_END,
     generatedAtMs: GENERATED_AT_MS,
     impact: impact(),
   };
