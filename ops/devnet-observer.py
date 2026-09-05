@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 import requests
 
-AGENT_VERSION = "1.5.0"
+AGENT_VERSION = "1.6.0"
 
 DATADIR = os.environ.get("OBSERVER_DATADIR", "/opt/defcon-devnet/mn11")
 CLI = os.environ.get("OBSERVER_CLI", "/opt/defcon-devnet/bin/defcon-cli")
@@ -108,7 +108,11 @@ def build_id():
             with open(DAEMON, "rb") as f:
                 for chunk in iter(lambda: f.read(1 << 20), b""):
                     h.update(chunk)
-            _build_id = h.hexdigest()[:12]
+            # `SimulationTarget.expectedBuild` and the ingest schema both use a
+            # complete SHA-256. A display may shorten this value, but telemetry
+            # must not: a 12-character prefix cannot be the evidence that the
+            # simulator compares before it allows a target into a run.
+            _build_id = h.hexdigest()
         except OSError:
             # Not fatal and not guessed at: a host whose binary cannot be read
             # reports nothing rather than something plausible.
