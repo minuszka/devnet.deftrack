@@ -12,7 +12,7 @@ import {
   UnsupportedLiveFaultError,
   type LabRecoveryTarget,
 } from './liveExecutorPlan.js';
-import type { CommandQueue } from './netemWrapperHost.js';
+import type { CommandQueue, OutcomeStore } from './netemWrapperHost.js';
 import type { DryRunPlan } from './scenarioTypes.js';
 
 /**
@@ -71,6 +71,18 @@ export interface LabExecutorOptions {
    * allowed to guess, and the executor is opt-in already.
    */
   allowedContainerProject: string;
+  /**
+   * How long to wait for the wrapper to report on a command.
+   *
+   * Generous against the wrapper's own cycle: the command has to be claimed,
+   * applied and written back, and a `docker stop -t 30` ahead of it in the
+   * queue can hold the runner for its whole SIGTERM grace. Too short and a
+   * fault that really was applied is reported as not applied -- safe, because
+   * recovery then clears it, but a wasted run.
+   */
+  outcomeTimeoutMs: number;
+  /** How often to look for the outcome while waiting. */
+  outcomePollMs: number;
 }
 
 const DEFAULT_OPTIONS: LabExecutorOptions = {
@@ -79,6 +91,8 @@ const DEFAULT_OPTIONS: LabExecutorOptions = {
   recoveryPollAttempts: 30,
   recoveryPollIntervalMs: 1_000,
   allowedContainerProject: '',
+  outcomeTimeoutMs: 60_000,
+  outcomePollMs: 250,
 };
 
 export const systemLabClock: LabExecutorClock = {
@@ -93,9 +107,56 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     private readonly queue: CommandQueue,
     private readonly probes: LabProbes,
     private readonly clock: LabExecutorClock = systemLabClock,
-    options: Partial<LabExecutorOptions> = {}
+    options: Partial<LabExecutorOptions> = {},
+    /**
+     * Where the wrapper reports what it did. Omitted, this executor goes back to
+     * reporting an enqueue as an applied fault -- so the lab wiring always
+     * passes one, and only the tests that are not about outcomes leave it out.
+     */
+    private readonly outcomes?: OutcomeStore
   ) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+  }
+
+  /**
+   * Block until the wrapper has reported on every command, or give up.
+   *
+   * Enqueueing is not applying. The command file lands in a directory another
+   * process drains on its own cycle, and that process can still refuse the
+   * command -- a spent lease, an argument it will not take, a container it does
+   * not own. Returning at the enqueue told the run a fault was on when it might
+   * never be, and recovery then had nothing to clear while the probes read
+   * clean: a measurement of an impairment that never existed.
+   *
+   * Fail-closed in both directions. A refusal throws, and so does silence: a
+   * wrapper that never answers is indistinguishable from one that is not
+   * running, and neither is evidence that a fault is on.
+   */
+  private async awaitOutcomes(commandIds: readonly string[]): Promise<void> {
+    const store = this.outcomes;
+    if (store === undefined || commandIds.length === 0) return;
+    const deadline = this.clock.now() + this.options.outcomeTimeoutMs;
+    const pending = new Set(commandIds);
+    for (;;) {
+      for (const commandId of [...pending]) {
+        const outcome = await store.read(commandId);
+        if (outcome === null) continue;
+        if (outcome.status === 'rejected') {
+          throw new UnsupportedLiveFaultError(
+            `the wrapper refused ${commandId}: ${outcome.detail ?? 'no reason given'}`
+          );
+        }
+        pending.delete(commandId);
+      }
+      if (pending.size === 0) return;
+      if (this.clock.now() >= deadline) {
+        throw new UnsupportedLiveFaultError(
+          `the wrapper did not report on ${[...pending].join(', ')} within ` +
+            `${this.options.outcomeTimeoutMs} ms; treating the fault as not applied`
+        );
+      }
+      await this.clock.delay(this.options.outcomePollMs);
+    }
   }
 
   async activateFault(input: {
@@ -138,6 +199,8 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     for (const fault of faults) await this.assertContainerIsOurs(fault.container);
     for (const action of scheduled) await this.assertContainerIsOurs(action.container);
     for (const command of commands) await this.queue.enqueue(command);
+    // The run reaches fault_active only once the wrapper says the faults are on.
+    await this.awaitOutcomes(commands.map((command) => command.commandId).filter((id): id is string => id !== null));
   }
 
   /**
@@ -166,6 +229,9 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     }
     await this.assertContainerIsOurs(action.container);
     await this.queue.enqueue(action.command);
+    // Same rule for a scheduled action: the dispatcher records `applied`, and
+    // that word has to mean the wrapper applied it.
+    if (action.command.commandId !== null) await this.awaitOutcomes([action.command.commandId]);
   }
 
   /**

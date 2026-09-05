@@ -338,9 +338,9 @@ export { LabFaultRunner as NetemFaultRunner };
  * recovery path stays the same for both fault classes.
  */
 export type WrapperCommand =
-  | { op: 'apply'; container: string; kind: NetemKind; args: string[]; runTag: string; expiresAtMs: number }
-  | { op: 'service-stop'; container: string; runTag: string; expiresAtMs: number }
-  | { op: 'clear'; jobId: string };
+  | { op: 'apply'; container: string; kind: NetemKind; args: string[]; runTag: string; expiresAtMs: number; commandId: string | null }
+  | { op: 'service-stop'; container: string; runTag: string; expiresAtMs: number; commandId: string | null }
+  | { op: 'clear'; jobId: string; commandId: string | null };
 
 /**
  * Validate a decoded command. The channel is the orchestrator's, but a malformed
@@ -350,9 +350,13 @@ export type WrapperCommand =
 export function parseWrapperCommand(raw: unknown, nowMs: number = Date.now()): WrapperCommand {
   if (raw === null || typeof raw !== 'object') throw new Error('wrapper command must be an object');
   const value = raw as Record<string, unknown>;
+  // Optional, and deliberately not validated beyond its type: the id is the
+  // orchestrator's handle on this command, and a wrapper that refuses a command
+  // for a bad id could not report the refusal against it.
+  const commandId = typeof value.commandId === 'string' && value.commandId.length > 0 ? value.commandId : null;
   if (value.op === 'clear') {
     if (typeof value.jobId !== 'string' || value.jobId.length === 0) throw new Error('clear command needs a jobId');
-    return { op: 'clear', jobId: value.jobId };
+    return { op: 'clear', jobId: value.jobId, commandId };
   }
   if (value.op === 'service-stop') {
     if (typeof value.container !== 'string' || value.container.length === 0) {
@@ -360,7 +364,7 @@ export function parseWrapperCommand(raw: unknown, nowMs: number = Date.now()): W
     }
     if (typeof value.runTag !== 'string' || value.runTag.length === 0) throw new Error('service-stop command needs a runTag');
     assertLeaseInstant(value.expiresAtMs, nowMs);
-    return { op: 'service-stop', container: value.container, runTag: value.runTag, expiresAtMs: value.expiresAtMs };
+    return { op: 'service-stop', container: value.container, runTag: value.runTag, expiresAtMs: value.expiresAtMs, commandId };
   }
   if (value.op === 'apply') {
     if (typeof value.container !== 'string' || value.container.length === 0) throw new Error('apply command needs a container');
@@ -375,6 +379,7 @@ export function parseWrapperCommand(raw: unknown, nowMs: number = Date.now()): W
       args: value.args as string[],
       runTag: value.runTag,
       expiresAtMs: value.expiresAtMs,
+      commandId,
     };
   }
   throw new Error(`unknown wrapper command op: ${String(value.op)}`);

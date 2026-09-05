@@ -116,8 +116,10 @@ describe('faultApplyCommandsForPlan', () => {
       action('mn-2', netemPayload({ latencyMs: 50, jitterMs: 0, lossPercent: 0, correlationPercent: 0 }), 2),
     ]);
     expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 })).toEqual([
-      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', expiresAtMs: 30_000 },
-      { op: 'apply', container: 'mn02', kind: 'netem', args: ['delay', '50ms'], runTag: 'run-1', expiresAtMs: 30_000 },
+      // commandId is the job id: derived from the plan, so a re-enqueue keys to
+      // the same outcome the wrapper already wrote.
+      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', expiresAtMs: 30_000, commandId: netemJobId('run-1', { container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'] }) },
+      { op: 'apply', container: 'mn02', kind: 'netem', args: ['delay', '50ms'], runTag: 'run-1', expiresAtMs: 30_000, commandId: netemJobId('run-1', { container: 'mn02', kind: 'netem', args: ['delay', '50ms'] }) },
     ]);
   });
 
@@ -128,8 +130,8 @@ describe('faultApplyCommandsForPlan', () => {
       action('mn-2', stopPayload, 2),
     ]);
     expect(faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 })).toEqual([
-      { op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 30_000 },
-      { op: 'service-stop', container: 'mn02', runTag: 'run-1', expiresAtMs: 30_000 },
+      { op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 30_000, commandId: serviceJobId('run-1', 'mn01') },
+      { op: 'service-stop', container: 'mn02', runTag: 'run-1', expiresAtMs: 30_000, commandId: serviceJobId('run-1', 'mn02') },
     ]);
   });
 
@@ -153,6 +155,7 @@ describe('faultApplyCommandsForPlan', () => {
         args: ['203.0.113.12'],
         runTag: 'run-1',
         expiresAtMs: 30_000,
+        commandId: netemJobId('run-1', { container: 'mn01', kind: 'partition', args: ['203.0.113.12'] }),
       },
     ]);
   });
@@ -247,13 +250,13 @@ describe('faultRecoveryTargetsForPlan', () => {
     const payload = netemPayload();
     const { targets: recovery } = faultRecoveryTargetsForPlan({ plan: planWith([action('mn-1', payload)]), targetsById: targets, runTag: 'run-1' });
     const expectedJobId = netemJobId('run-1', { container: 'mn01', kind: 'netem', args: composeNetemArgs(payload) });
-    expect(recovery).toEqual([{ targetId: 'mn-1', container: 'mn01', faultClass: 'netem', clear: { op: 'clear', jobId: expectedJobId } }]);
+    expect(recovery).toEqual([{ targetId: 'mn-1', container: 'mn01', faultClass: 'netem', clear: { op: 'clear', jobId: expectedJobId, commandId: expectedJobId } }]);
   });
 
   it('clears a service fault by the same job id the stop used', () => {
     const { targets: recovery } = faultRecoveryTargetsForPlan({ plan: planWith([action('mn-1', stopPayload)]), targetsById: targets, runTag: 'run-1' });
     expect(recovery).toEqual([
-      { targetId: 'mn-1', container: 'mn01', faultClass: 'service', clear: { op: 'clear', jobId: serviceJobId('run-1', 'mn01') } },
+      { targetId: 'mn-1', container: 'mn01', faultClass: 'service', clear: { op: 'clear', jobId: serviceJobId('run-1', 'mn01'), commandId: serviceJobId('run-1', 'mn01') } },
     ]);
   });
 
@@ -299,7 +302,7 @@ describe('faultRecoveryTargetsForPlan', () => {
         targetId: 'mn-1',
         container: 'mn01',
         faultClass: 'service',
-        clear: { op: 'clear', jobId: serviceJobId('run-1', 'mn01') },
+        clear: { op: 'clear', jobId: serviceJobId('run-1', 'mn01'), commandId: serviceJobId('run-1', 'mn01') },
       },
     ]);
     expect(skipped).toBe(0);
@@ -335,10 +338,16 @@ describe('scheduledLabActionsForPlan', () => {
       [20_000, 'service-stop'],
       [30_000, 'clear'],
     ]);
-    expect(scheduled[0]!.command).toEqual({ op: 'clear', jobId: serviceJobId('run-1', 'mn01') });
-    expect(scheduled[1]!.command).toEqual({
-      op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 60_000,
+    // A scheduled action keys its outcome on the ACTION, not the job: a flapping
+    // cycle stops and starts the same container in the same run, so the job id is
+    // identical for both ends and could not tell their outcomes apart.
+    expect(scheduled[0]!.command).toEqual({
+      op: 'clear', jobId: serviceJobId('run-1', 'mn01'), commandId: scheduled[0]!.actionId,
     });
+    expect(scheduled[1]!.command).toEqual({
+      op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 60_000, commandId: scheduled[1]!.actionId,
+    });
+    expect(scheduled[0]!.actionId).not.toBe(scheduled[2]!.actionId);
   });
 
   it('orders by offset so a dispatcher can walk them forwards', () => {

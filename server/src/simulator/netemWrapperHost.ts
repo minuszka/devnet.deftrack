@@ -180,6 +180,80 @@ export interface CommandQueue {
   recoverInflight(): Promise<number>;
 }
 
+/**
+ * What the wrapper actually did with one command.
+ *
+ * The orchestrator used to record a scheduled action as `applied` the moment
+ * the command file was written, and `activateFault` returned as soon as the
+ * last enqueue landed. Neither had heard from the wrapper. So a command the
+ * wrapper went on to refuse -- a spent lease, an argument it could not read, a
+ * container it did not own -- was recorded as an applied fault, and the run
+ * measured an impairment that was never on.
+ *
+ * This is the missing half: the wrapper writes what happened, keyed by the
+ * command's own id, and the executor waits for it. `succeeded` means the
+ * wrapper handled it, not that a file was created.
+ */
+export interface WrapperOutcome {
+  commandId: string;
+  /** `applied` covers the idempotent case: the node is in the asked-for state. */
+  status: 'applied' | 'rejected';
+  jobId: string | null;
+  detail: string | null;
+  atMs: number;
+}
+
+export interface OutcomeStore {
+  record(outcome: WrapperOutcome): Promise<void>;
+  read(commandId: string): Promise<WrapperOutcome | null>;
+}
+
+function parseOutcome(raw: string): WrapperOutcome | null {
+  const value: unknown = JSON.parse(raw);
+  if (value === null || typeof value !== 'object') return null;
+  const o = value as Partial<WrapperOutcome>;
+  if (typeof o.commandId !== 'string') return null;
+  if (o.status !== 'applied' && o.status !== 'rejected') return null;
+  return {
+    commandId: o.commandId,
+    status: o.status,
+    jobId: typeof o.jobId === 'string' ? o.jobId : null,
+    detail: typeof o.detail === 'string' ? o.detail : null,
+    atMs: Number.isFinite(o.atMs) ? (o.atMs as number) : 0,
+  };
+}
+
+/**
+ * Outcomes as one file per command id, beside the queue.
+ *
+ * Written tmp-then-rename like the queue's own envelopes, so a reader never
+ * sees half a record. Keyed by command id and never overwritten with a
+ * different verdict: a command that was applied stays applied even if a later
+ * boot re-claims and re-applies it, which is exactly what idempotence means.
+ */
+export function fileOutcomeStore(dir: string): OutcomeStore {
+  const outcomeDir = join(dir, 'outcomes');
+  return {
+    async record(outcome: WrapperOutcome): Promise<void> {
+      await mkdir(outcomeDir, { recursive: true });
+      const name = `${encodeURIComponent(outcome.commandId)}.json`;
+      const tmp = join(outcomeDir, `.${name}.tmp`);
+      await writeFile(tmp, JSON.stringify(outcome), 'utf8');
+      await rename(tmp, join(outcomeDir, name));
+    },
+    async read(commandId: string): Promise<WrapperOutcome | null> {
+      try {
+        return parseOutcome(await readFile(join(outcomeDir, `${encodeURIComponent(commandId)}.json`), 'utf8'));
+      } catch (error) {
+        if ((error as { code?: string }).code === 'ENOENT') return null;
+        // A corrupt record is not an outcome. Waiting on it times out, which
+        // fails closed; treating it as applied would not.
+        return null;
+      }
+    },
+  };
+}
+
 /** Attempts beyond this and the command is quarantined rather than retried for ever. */
 export const MAX_COMMAND_ATTEMPTS = 5;
 

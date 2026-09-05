@@ -6,8 +6,8 @@ import {
   type LabProbes,
 } from './dockerLiveExecutor.js';
 import { InvalidNetemTargetError, UnsupportedLiveFaultError } from './liveExecutorPlan.js';
-import { serviceJobId } from './netemLease.js';
-import type { CommandQueue } from './netemWrapperHost.js';
+import { netemJobId, serviceJobId } from './netemLease.js';
+import type { CommandQueue, OutcomeStore, WrapperOutcome } from './netemWrapperHost.js';
 import type { PlannedActionPayload, PlannedSimulationAction, DryRunPlan } from './scenarioTypes.js';
 import type { SimulationRunProjection } from '../services/simulationPersistence.service.js';
 import type { SimulationTargetSnapshot } from '../models/SimulationRun.js';
@@ -22,6 +22,23 @@ class FakeQueue implements CommandQueue {
     }));
   }
   async recoverInflight(): Promise<number> { return 0; }
+}
+
+/** The wrapper's side of the conversation, answered by hand. */
+class FakeOutcomes implements OutcomeStore {
+  readonly written = new Map<string, WrapperOutcome>();
+  reads = 0;
+  async record(outcome: WrapperOutcome): Promise<void> { this.written.set(outcome.commandId, outcome); }
+  async read(commandId: string): Promise<WrapperOutcome | null> {
+    this.reads++;
+    return this.written.get(commandId) ?? null;
+  }
+  applied(commandId: string): void {
+    this.written.set(commandId, { commandId, status: 'applied', jobId: null, detail: null, atMs: 0 });
+  }
+  rejected(commandId: string, detail: string): void {
+    this.written.set(commandId, { commandId, status: 'rejected', jobId: null, detail, atMs: 0 });
+  }
 }
 
 class FakeClock implements LabExecutorClock {
@@ -85,13 +102,68 @@ function run(targets: SimulationTargetSnapshot[]): SimulationRunProjection {
 }
 const planWith = (actions: PlannedSimulationAction[]): DryRunPlan => ({ actions } as unknown as DryRunPlan);
 
+describe('waiting for the wrapper to say what it did', () => {
+  const netemCommandId = netemJobId('run-1', {
+    container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'],
+  });
+
+  it('does not report a fault active until the wrapper has applied it', async () => {
+    // Enqueueing is not applying. The command lands in a directory another
+    // process drains on its own cycle, and that process can still refuse it.
+    // Returning at the enqueue told the run a fault was on when it might never
+    // be, and recovery then had nothing to clear while the probes read clean.
+    const queue = new FakeQueue();
+    const outcomes = new FakeOutcomes();
+    const clock = new FakeClock();
+    const executor = new DockerLiveExecutor(
+      queue, new FakeProbes(), clock, { allowedContainerProject: LAB_PROJECT }, outcomes
+    );
+    // The wrapper answers on the third look, as it would after a cycle or two.
+    let looks = 0;
+    clock.onDelay = () => { if (++looks >= 2) outcomes.applied(netemCommandId); };
+
+    await executor.activateFault({
+      run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000,
+    });
+
+    expect(queue.enqueued).toHaveLength(1);
+    expect(outcomes.reads).toBeGreaterThan(1);
+  });
+
+  it('throws when the wrapper refuses the command', async () => {
+    const queue = new FakeQueue();
+    const outcomes = new FakeOutcomes();
+    outcomes.rejected(netemCommandId, 'the lease is spent');
+    const executor = new DockerLiveExecutor(
+      queue, new FakeProbes(), new FakeClock(), { allowedContainerProject: LAB_PROJECT }, outcomes
+    );
+
+    await expect(executor.activateFault({
+      run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000,
+    })).rejects.toThrow(/refused/);
+  });
+
+  it('throws when the wrapper never answers, rather than assuming it worked', async () => {
+    // Silence and a running wrapper look identical from here, and neither is
+    // evidence that a fault is on. Fail closed.
+    const queue = new FakeQueue();
+    const executor = new DockerLiveExecutor(
+      queue, new FakeProbes(), new FakeClock(), { allowedContainerProject: LAB_PROJECT }, new FakeOutcomes()
+    );
+
+    await expect(executor.activateFault({
+      run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000,
+    })).rejects.toThrow(/did not report/);
+  });
+});
+
 describe('DockerLiveExecutor.activateFault', () => {
   it('enqueues a composed apply with the lease as its TTL', async () => {
     const queue = new FakeQueue();
     const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', netemPayload)]), faultLeaseExpiresAtMs: 31_000 });
     expect(queue.enqueued).toEqual([
-      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', expiresAtMs: 31_000 },
+      { op: 'apply', container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'], runTag: 'run-1', expiresAtMs: 31_000, commandId: netemJobId('run-1', { container: 'mn01', kind: 'netem', args: ['delay', '100ms', '20ms', 'loss', '5%', '25%'] }) },
     ]);
   });
 
@@ -99,7 +171,7 @@ describe('DockerLiveExecutor.activateFault', () => {
     const queue = new FakeQueue();
     const executor = mkExecutor(queue, new FakeProbes(), new FakeClock());
     await executor.activateFault({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]), faultLeaseExpiresAtMs: 31_000 });
-    expect(queue.enqueued).toEqual([{ op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 31_000 }]);
+    expect(queue.enqueued).toEqual([{ op: 'service-stop', container: 'mn01', runTag: 'run-1', expiresAtMs: 31_000, commandId: serviceJobId('run-1', 'mn01') }]);
   });
 
   it('passes the lease instant of the run through, untouched', async () => {
@@ -167,7 +239,7 @@ describe('DockerLiveExecutor.proveRecovery', () => {
 
     const result = await executor.proveRecovery({ run: run([target()]), plan: planWith([action('mn-1', stopPayload)]) });
 
-    expect(queue.enqueued).toEqual([{ op: 'clear', jobId: serviceJobId('run-1', 'mn01') }]);
+    expect(queue.enqueued).toEqual([{ op: 'clear', jobId: serviceJobId('run-1', 'mn01'), commandId: serviceJobId('run-1', 'mn01') }]);
     expect(result.allClear).toBe(true);
     // For a service fault, "the fault is no longer in force" IS the container running.
     expect(result.targets[0]).toMatchObject({ faultStateClear: true, expectedServiceRunning: true, observerFresh: true });

@@ -15,7 +15,7 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 1 | A rekord védelme: fail-closed rollback, ítélet sosem hibából | **KÉSZ** (2026-09-05) |
 | 2 | Chaos-biztonság: netem-sáv, szűrő, host-kötés | **KÓD KÉSZ**; takarítás **KÉSZ**; pilot-újratelepítés a merge után |
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
-| 4 | Szimulátor: a csendes no-op osztály lezárása | **RÉSZBEN KÉSZ** (2026-09-05); a parancs-visszaigazolás hátra |
+| 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
 | 5 | Szimulátor: tervezett vég és live-lock | nyitva |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | nyitva |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
@@ -23,8 +23,8 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** a 4. nap maradéka — parancsonkénti wrapper-
-visszaigazolás, hogy a `succeeded` alkalmazást jelentsen. Utána 5. nap.
+**Következő pontos feladat:** 5. nap — a tervezett vég és a live-lock. Tisztán
+repóbeli munka, jóváhagyás nélkül végezhető.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -261,12 +261,30 @@ rögzíthető** alkalmazottként; a hozzá tartozó teszt a javítás nélkül b
   (a lejárt lease „nem parse-hiba", és a konténernevet peer-ként használó
   partíció).
 
-**Hátra a 4. napból:** parancsonkénti kimeneti fájl a wrappertől
-(`applied`/`noop`/`rejected` + jobId), amire a `dispatchScheduledAction` és az
-`activateFault` vár. Ez az egyetlen, ami a `succeeded`-et *bizonyítottan*
-alkalmazássá teszi; a mostani javítások az odáig vezető csendes utakat zárták le.
-Ezzel megy együtt a lease-megújítás a `dispatch` körül és az `actionId`-alapú
-parancsfájlnév.
+**A parancs-visszaigazolás is elkészült (2026-09-05).** A wrapper minden
+parancsról ír egy rekordot a sor mellé (`applied` vagy `rejected`, a parancs
+saját azonosítójára kulcsolva), a végrehajtó pedig megvárja: az `activateFault`
+csak akkor tér vissza, ha a wrapper azt mondta, hogy a fault fent van, és a
+`dispatchScheduledAction` ugyanígy. Mindkét irányban fail-closed: az elutasítás
+dob, és a hallgatás is, mert egy nem futó és egy néma wrapper innen nézve
+egyforma, és egyik sem bizonyíték.
+
+Az azonosító a tervből származik: azonnali faultnál a jobId, ütemezett akciónál
+az actionId. Az utóbbi azért kell, mert egy flapping ciklus ugyanazt a konténert
+állítja le és indítja el ugyanabban a futamban, tehát a jobId a ciklus két végén
+azonos, és nem tudná megkülönböztetni a két kimenetet.
+
+Két dolog szándékosan nem outcome: a **retry** (mert a wrapper még alkalmazhatja),
+és a **hiányzó azonosító** (kézzel hajtott wrappernél nincs, aki várna rá).
+Az elutasítás azonosítója a nyers payloadról olvasódik, mert épp a parse bukott
+el; enélkül egy hibás parancs csendben karanténba kerülne, és a hívó kivárná a
+teljes időtúllépést egy válaszra, ami sosem jönne.
+
+**Amit ez nem bizonyít:** a csatorna **laborban még nem futott**. A Docker-labor
+nem elérhető, ezért csak unit tesztek fedik, három negatív kontrollal. Ez
+ugyanaz a helyzet, mint a `plan.md` §2 tételei: a kód kész, a bizonyíték hátra.
+Első labor-menetnél ezt kell nézni: az `outcomes/` könyvtár feltöltődik-e, és
+egy szándékosan hibás parancs valóban megbuktatja-e az aktiválást.
 
 ## 5. nap – tervezett vég és live-lock
 
