@@ -51,7 +51,8 @@ export class SeedStatusService {
     this.timer = null;
   }
 
-  private async tick(): Promise<void> {
+  /** One pass. Public like every sibling poller's tick, so it can be driven. */
+  async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
@@ -66,16 +67,21 @@ export class SeedStatusService {
   }
 
   private async report(): Promise<void> {
+    // null means the node did not answer, which is not the same fact as an
+    // empty answer. Writing the empty case would report zero peers, zero
+    // verified masternodes and no payout scripts for a seed that is simply
+    // busy -- and the measurement then reads its blocks as unattributed for as
+    // long as the row stands.
     const [unspent, peers, height] = await Promise.all([
-      rpc.call<Unspent[]>('listunspent', [0, 9_999_999]).catch(() => [] as Unspent[]),
-      rpc.call<PeerInfo[]>('getpeerinfo').catch(() => [] as PeerInfo[]),
+      rpc.call<Unspent[]>('listunspent', [0, 9_999_999]).catch(() => null),
+      rpc.call<PeerInfo[]>('getpeerinfo').catch(() => null),
       rpc.getBlockCount().catch(() => null),
     ]);
 
     const scripts = new Set<string>();
     let lookups = 0;
 
-    for (const u of unspent) {
+    for (const u of unspent ?? []) {
       // Outside the stakeable range this output can never produce a block, so
       // its script is not a payout script and asking about it is wasted work.
       if (u.amount < config.stake.minValue || u.amount > config.stake.maxValue) continue;
@@ -97,39 +103,39 @@ export class SeedStatusService {
       if (pubkey && pubkey.length === 66) scripts.add(`21${pubkey.toLowerCase()}ac`);
     }
 
-    const pings = peers
-      .map((p) => p.pingtime)
-      .filter((v): v is number => typeof v === 'number')
-      .map((v) => v * 1000)
-      .sort((a, b) => a - b);
-    const mid = pings.length / 2;
-    const medianPingMs = pings.length
-      ? pings.length % 2 === 1
-        ? pings[(pings.length - 1) / 2]!
-        : (pings[mid - 1]! + pings[mid]!) / 2
-      : null;
+    // Only what was actually read is written. A field whose source did not
+    // answer is left out of the $set entirely, so the previous observation
+    // stands until a real one replaces it.
+    const update: Record<string, unknown> = {
+      host: 'seed',
+      clockOffsetMs: await localClockService.current(),
+      agentVersion: 'explorer',
+      reportedAt: new Date(),
+    };
 
-    await HostStatus.updateOne(
-      { host: 'seed' },
-      {
-        $set: {
-          host: 'seed',
-          peers: peers.length,
-          inbound: peers.filter((p) => p.inbound).length,
-          verifiedMasternodes: peers.filter((p) => p.verified_proregtx_hash).length,
-          medianPingMs,
-          maxPingWaitMs: peers.length
-            ? Math.max(...peers.map((p) => (p.pingwait ?? 0) * 1000))
-            : 0,
-          height,
-          stakeScripts: [...scripts].sort(),
-          clockOffsetMs: await localClockService.current(),
-          agentVersion: 'explorer',
-          reportedAt: new Date(),
-        },
-      },
-      { upsert: true }
-    );
+    if (peers !== null) {
+      const pings = peers
+        .map((p) => p.pingtime)
+        .filter((v): v is number => typeof v === 'number')
+        .map((v) => v * 1000)
+        .sort((a, b) => a - b);
+      const mid = pings.length / 2;
+      update.medianPingMs = pings.length
+        ? pings.length % 2 === 1
+          ? pings[(pings.length - 1) / 2]!
+          : (pings[mid - 1]! + pings[mid]!) / 2
+        : null;
+      update.peers = peers.length;
+      update.inbound = peers.filter((p) => p.inbound).length;
+      update.verifiedMasternodes = peers.filter((p) => p.verified_proregtx_hash).length;
+      update.maxPingWaitMs = peers.length
+        ? Math.max(...peers.map((p) => (p.pingwait ?? 0) * 1000))
+        : 0;
+    }
+    if (height !== null) update.height = height;
+    if (unspent !== null) update.stakeScripts = [...scripts].sort();
+
+    await HostStatus.updateOne({ host: 'seed' }, { $set: update }, { upsert: true });
 
     // Append-only, alongside the current-view overwrite above: this is the
     // immutable half the measurement attributes blocks from, so the same window
@@ -152,7 +158,10 @@ export class SeedStatusService {
       );
     }
 
-    logger.info(`Seed self-report: ${peers.length} peers, ${scripts.size} payout script(s)`);
+    logger.info(
+      `Seed self-report: ${peers === null ? 'peers unavailable' : `${peers.length} peers`}, ` +
+        `${unspent === null ? 'unspent unavailable' : `${scripts.size} payout script(s)`}`
+    );
   }
 }
 
