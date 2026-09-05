@@ -908,6 +908,14 @@ copied there by hand -- which happened for two days, during which every client
 change appeared to have silently failed to take effect. The script rsyncs and
 re-checks which bundle the webroot actually serves.
 
+The VPS `.env` carries the simulator's chain identity pins
+(`SIMULATION_EXPECTED_CHAIN`, `SIMULATION_EXPECTED_GENESIS_HASH`) since
+2026-09-05, read from the node's own `getblockchaininfo` and `getblockhash 0`.
+Without them every simulator evidence call -- draft, preflight, the
+forming-quorum view -- answers 500 with `simulator chain identity pins are not
+configured`, and nothing had asked before, so the gap went unnoticed for weeks.
+A fresh deployment must set them before the simulator is touched.
+
 ### Every binary rollout gets an Experiments entry that says what changed
 
 Whenever DeFCoN code is changed, built and shipped to the fleet, the run
