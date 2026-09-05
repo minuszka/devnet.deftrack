@@ -21,6 +21,18 @@ Last updated 2026-09-05.
 argument forks. Same mechanism as `dslactivationheight`. Height = tip + 100
 rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
 
+## 1b. Owed on the next fleet roll
+
+- **M-02 comes off the devnet** (defcon-project/defcon#194). `CDevNetParams` no
+  longer sets `nStrictBLSSigSizeActivationHeight`, so the rule is unset on every
+  network -- the devnet is kept identical to what v23 ships, and M-02 is not in
+  v23. **Until a binary carrying this reaches the fleet the change exists only
+  in git:** every running daemon still enforces M-02 from height 5250.
+  No urgency and no deadline -- unsetting a stricter rule is a relaxation, so
+  the chain stays valid, there is no gate height to hit and no reindex. Ride the
+  next binary rollout rather than making it an event of its own, and give that
+  rollout its Experiments entry as usual.
+
 ## 2. In the binary, not proven on-chain
 
 | Change | State |
@@ -117,6 +129,16 @@ on a port number.
   before the poll could see it; scored naively that is a false "no lock". The
   probe must treat block inclusion as its own outcome, and should read the
   notification rather than poll.
+- **`medianBlockIntervalSec` must not be compared against the target spacing.**
+  Block intervals are a Poisson process, so they are exponentially distributed
+  and the median is `mean x ln2` = 0.693 of the mean, never the mean itself.
+  Measured over 40 blocks on 2026-09-05: mean 161.6 s, median 112 s, min 8 s,
+  max 818 s -- and 161.6 x 0.693 = 112.0, an exact fit. The target governs the
+  **mean**, so the settled chain is within 8 % of its 150 s target while the
+  median makes it look 25 % too fast. `stake-redistribution-2026-09-05` named
+  the median in its expected outcome and would have been read as a miss on that
+  half. Either publish the mean beside it, or state the 0.693 factor wherever
+  the median is compared to a target.
 - **`distinctStakers` in the experiment outcome invites a wrong reading.** It
   counts distinct kernel scripts, not concentration: 42 distinct producers while
   one script took 44 % of 250 blocks. A concentration figure (top-1 share, or a
