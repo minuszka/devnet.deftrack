@@ -55,3 +55,45 @@ export function roundVerdict(input: {
   }
   return { label: 'pending', tone: 'accent', punished: '—', incident: false };
 }
+
+/**
+ * The same verdict as a sentence, for the places that have room for one.
+ *
+ * A pill and a number are the compact form; a detail page can afford to say
+ * the thing outright. Both come from here so the table and the page can never
+ * disagree about what a round did -- which is exactly how the site came to
+ * show a failed round in red beside a punishing round in green.
+ */
+export function roundSentence(input: {
+  status: RoundStatus;
+  punishedCount: number;
+  effectiveSize: number | null;
+  maxPossibleBan: number | null;
+}): string {
+  const of = input.effectiveSize === null ? '' : ` of ${input.effectiveSize}`;
+
+  if (input.status === 'formed') {
+    if (input.punishedCount === 0) return 'This round formed and punished nobody.';
+    const ceiling =
+      input.maxPossibleBan === null
+        ? ''
+        : ` A single round of this profile can punish at most ${input.maxPossibleBan}.`;
+    return `This round formed and punished ${input.punishedCount}${of} members.${ceiling}`;
+  }
+
+  if (input.status === 'failed') {
+    return (
+      'No commitment was mined for this round, so nobody was PoSe-punished: the ' +
+      "node's punishment loop is guarded by a mined commitment."
+    );
+  }
+
+  if (input.status === 'impossible') {
+    return (
+      'No DKG session could run at this height — it is below the profile\u2019s ' +
+      'formation gate. This is a rule of the node, not a failure of the network.'
+    );
+  }
+
+  return 'This round is still inside its window. Nothing about it is decided yet.';
+}

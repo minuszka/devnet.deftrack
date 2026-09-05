@@ -10,6 +10,8 @@ import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
 import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
+import { roundVerdict } from '../lib/roundVerdict.js';
+import { roundHref } from '../lib/router.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 import './dd-health-chart.js';
@@ -272,9 +274,15 @@ export class DdPageOverview extends LitElement {
       td.health.bad {
         color: var(--crit);
       }
+      /* The incident colour, and only when there was an incident. A bare zero
+         beside a red "failed" pill told the reader the opposite of the truth:
+         the round that punished twelve masternodes was the green one. */
       td.punished.some {
-        color: var(--crit);
+        color: var(--warn);
         font-weight: 700;
+      }
+      td.punished.none {
+        color: var(--ink-3);
       }
       td.evidence {
         color: var(--ink-2);
@@ -737,6 +745,54 @@ export class DdPageOverview extends LitElement {
    * an accusation the data cannot support -- during bootstrap the honest answer
    * is that a quorum was arithmetically impossible.
    */
+  /**
+   * The front page's own round table. It carried its own reading of a round --
+   * a red `failed` pill and a bare `0` beside a green `formed` and a bare `12`
+   * -- so the most-read table on the site painted the incident green and the
+   * non-event red, months after the rule was written down. It now asks the same
+   * function every other surface asks.
+   */
+  private _roundRow(r: QuorumRoundListItem, status: NetworkStatus): TemplateResult {
+    const verdict = roundVerdict(r);
+    return html`
+    <tr>
+      <td class="mono strong">
+        <a href=${roundHref(r.roundKey)}>${r.roundKey}</a>
+      </td>
+      <td class="r mono">${num(r.expectedHeight)}</td>
+      <td class="c">
+        <span class="pill ${verdict.tone}">${verdict.label}</span>
+      </td>
+      <td class="r mono">
+        ${r.numValidMembers === null
+          ? '—'
+          : `${num(r.numValidMembers)}/${num(r.effectiveSize)}`}
+      </td>
+      <td class="r mono ${this._healthClass(r)}">${ratio(r.healthRatio)}</td>
+      <td class="r punished ${verdict.incident ? 'some' : 'none'}">
+        ${verdict.punished}
+      </td>
+      <td class="evidence">${this._evidence(r, status)}</td>
+      <td>
+        ${r.quorumHash
+          ? html`<span class="hashcell">
+              <span class="hash" title=${r.quorumHash}>${shortHash(r.quorumHash, 10, 8)}</span>
+              <button
+                class="copy ${this._copied === r.roundKey ? 'done' : ''}"
+                type="button"
+                aria-label="Copy quorum hash ${r.quorumHash}"
+                @click=${() => void this._copy(r.quorumHash ?? '', r.roundKey)}
+              >
+                ${this._copied === r.roundKey ? 'copied' : 'copy'}
+              </button>
+            </span>`
+          : html`<span class="subtle">—</span>`}
+      </td>
+      <td class="r mono subtle">${ago(r.detectedAt)}</td>
+    </tr>
+    `;
+  }
+
   private _evidence(r: QuorumRoundListItem, status: NetworkStatus): string {
     if (r.failuresByOperator.length > 0) {
       return r.failuresByOperator
@@ -797,39 +853,7 @@ export class DdPageOverview extends LitElement {
               <tbody>
                 ${this._rounds.length === 0
                   ? html`<tr><td class="empty" colspan="9">No rounds recorded yet.</td></tr>`
-                  : this._rounds.map(
-                      (r) => html`
-                        <tr>
-                          <td class="mono strong">${r.roundKey}</td>
-                          <td class="r mono">${num(r.expectedHeight)}</td>
-                          <td class="c"><span class="pill ${r.status}">${r.status}</span></td>
-                          <td class="r mono">
-                            ${r.numValidMembers === null
-                              ? '—'
-                              : `${num(r.numValidMembers)}/${num(r.effectiveSize)}`}
-                          </td>
-                          <td class="r mono ${this._healthClass(r)}">${ratio(r.healthRatio)}</td>
-                          <td class="r mono punished ${r.punishedCount > 0 ? 'some' : ''}">${num(r.punishedCount)}</td>
-                          <td class="evidence">${this._evidence(r, status)}</td>
-                          <td>
-                            ${r.quorumHash
-                              ? html`<span class="hashcell">
-                                  <span class="hash" title=${r.quorumHash}>${shortHash(r.quorumHash, 10, 8)}</span>
-                                  <button
-                                    class="copy ${this._copied === r.roundKey ? 'done' : ''}"
-                                    type="button"
-                                    aria-label="Copy quorum hash ${r.quorumHash}"
-                                    @click=${() => void this._copy(r.quorumHash ?? '', r.roundKey)}
-                                  >
-                                    ${this._copied === r.roundKey ? 'copied' : 'copy'}
-                                  </button>
-                                </span>`
-                              : html`<span class="subtle">—</span>`}
-                          </td>
-                          <td class="r mono subtle">${ago(r.detectedAt)}</td>
-                        </tr>
-                      `
-                    )}
+                  : this._rounds.map((r) => this._roundRow(r, status))}
               </tbody>
             </table>
           </div>

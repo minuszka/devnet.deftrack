@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { roundVerdict } from './roundVerdict.js';
+import { roundSentence, roundVerdict } from './roundVerdict.js';
 
 /**
  * The single most important thing this site says is the difference between a
@@ -60,5 +60,46 @@ describe('how a round reads', () => {
     const verdict = roundVerdict({ status: 'failed', punishedCount: 7 });
     expect(verdict.incident).toBe(false);
     expect(verdict.punished).toBe('nobody punished');
+  });
+});
+
+describe('roundSentence', () => {
+  it('says what a punishing round did, and against what ceiling', () => {
+    const s = roundSentence({
+      status: 'formed',
+      punishedCount: 12,
+      effectiveSize: 50,
+      maxPossibleBan: 20,
+    });
+    expect(s).toContain('punished 12 of 50');
+    expect(s).toContain('at most 20');
+  });
+
+  it('never leaves a clean round sounding like an incident', () => {
+    expect(
+      roundSentence({ status: 'formed', punishedCount: 0, effectiveSize: 50, maxPossibleBan: 20 })
+    ).toBe('This round formed and punished nobody.');
+  });
+
+  // The sentence this whole site exists to be able to say.
+  it('says outright that a failed round punished nobody', () => {
+    const s = roundSentence({
+      status: 'failed',
+      punishedCount: 0,
+      effectiveSize: null,
+      maxPossibleBan: null,
+    });
+    expect(s).toContain('nobody was PoSe-punished');
+  });
+
+  it('keeps could-not-form apart from did-not-form', () => {
+    const s = roundSentence({
+      status: 'impossible',
+      punishedCount: 0,
+      effectiveSize: null,
+      maxPossibleBan: null,
+    });
+    expect(s).toContain('formation gate');
+    expect(s).not.toContain('punished');
   });
 });

@@ -4,6 +4,7 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
+import { roundHref } from '../lib/router.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 50;
@@ -243,7 +244,7 @@ export class DdPageRounds extends LitElement {
 
     return html`
       <tr>
-        <td class="mono">${r.roundKey}</td>
+        <td class="mono"><a href=${roundHref(r.roundKey)}>${r.roundKey}</a></td>
         <td class="mono">${r.llmqName}</td>
         <td class="r mono">${num(r.expectedHeight)}</td>
         <td class="c"><span class="pill ${verdict.tone}">${verdict.label}</span></td>
