@@ -89,7 +89,18 @@ def clock_offset_ms():
 
 DAEMON = os.environ.get("OBSERVER_DAEMON", "/opt/defcon-devnet/bin/defcond")
 
-_build_id = None
+# (identity of the file that was hashed, hash). The identity is what the cache
+# is keyed on, not the process lifetime -- see build_id().
+_build_id = (None, "")
+
+
+def _daemon_identity():
+    """What `stat` says the daemon file is: inode, size, mtime. Cheap per poll."""
+    try:
+        st = os.stat(DAEMON)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
 
 
 def build_id():
@@ -98,26 +109,45 @@ def build_id():
     `-version` cannot answer this: two builds carrying different consensus code
     report the same string, which is how eight hosts once ran a binary three days
     older than the seed's with nothing on any screen to say so. Hash the file
-    instead. Cached because it only changes when someone deploys, and reading 17MB
-    every poll to learn the same answer would be wasteful.
+    instead.
+
+    Cached, but keyed on the file's identity, not on the process. The first
+    version cached for the lifetime of the observer, and every observer on the
+    fleet had been started before the rollouts that followed: on 2026-09-05 all
+    sixteen hosts held one binary while seven observers reported the hash of the
+    binary from 2026-08-26 and one the hash from 2026-09-01. A cache that
+    outlives the file it describes turns the one field that exists to expose a
+    binary drift into a generator of phantom ones. A `stat` per poll costs
+    nothing; the 17 MB read happens once per deploy.
     """
     global _build_id
-    if _build_id is None:
-        try:
-            h = hashlib.sha256()
-            with open(DAEMON, "rb") as f:
-                for chunk in iter(lambda: f.read(1 << 20), b""):
-                    h.update(chunk)
-            # `SimulationTarget.expectedBuild` and the ingest schema both use a
-            # complete SHA-256. A display may shorten this value, but telemetry
-            # must not: a 12-character prefix cannot be the evidence that the
-            # simulator compares before it allows a target into a run.
-            _build_id = h.hexdigest()
-        except OSError:
-            # Not fatal and not guessed at: a host whose binary cannot be read
-            # reports nothing rather than something plausible.
-            _build_id = ""
-    return _build_id
+    identity = _daemon_identity()
+    if identity is None:
+        # Not fatal and not guessed at: a host whose binary cannot be read
+        # reports nothing rather than something plausible -- and forgets any
+        # earlier answer, because that answer described a file that is gone.
+        _build_id = (None, "")
+        return ""
+    if _build_id[0] == identity:
+        return _build_id[1]
+    try:
+        h = hashlib.sha256()
+        with open(DAEMON, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        # `SimulationTarget.expectedBuild` and the ingest schema both use a
+        # complete SHA-256. A display may shorten this value, but telemetry
+        # must not: a 12-character prefix cannot be the evidence that the
+        # simulator compares before it allows a target into a run.
+        digest = h.hexdigest()
+    except OSError:
+        _build_id = (None, "")
+        return ""
+    # Re-read the identity after hashing: a deploy that replaced the file
+    # mid-read would otherwise be cached under the new identity with a hash of
+    # neither binary. The next poll then simply hashes again.
+    _build_id = (identity if _daemon_identity() == identity else None, digest)
+    return digest
 
 
 def peer_status():
