@@ -295,6 +295,23 @@ describe('simulation control service', () => {
       .rejects.toMatchObject({ code: 'EXECUTOR_NETWORK_FORBIDDEN' });
   });
 
+  it('refuses an abort on an unreachable network without stranding the run', async () => {
+    // The refusal used to come after the run had been moved to `recovery`,
+    // which is neither terminal nor reconcilable -- and the preflight counts
+    // every live non-terminal run as an active experiment. So one aborted
+    // devnet draft blocked every later live run on the deployment for good,
+    // with no operator action able to clear it. The run must stay where it was.
+    const { service } = harness(mnStop);
+    const runKey = await driveToLiveArmed(service, 'devnet');
+
+    await expect(service.abort({ runKey, idempotencyKey: 'devnet-live-abort' }))
+      .rejects.toMatchObject({ code: 'EXECUTOR_NETWORK_FORBIDDEN' });
+
+    const after = await service.status(runKey);
+    expect(after.state.status).toBe('armed');
+    expect(after.state.abortRequested).toBe(false);
+  });
+
   it('lets a live lab-network run through the boundary to the not-yet-built executor', async () => {
     const { service } = harness(mnStop);
     const runKey = await driveToLiveArmed(service, 'regtest');
@@ -343,6 +360,58 @@ describe('simulation control service', () => {
     const { run } = await service.recover({ runKey, idempotencyKey: 'recover-run-1' });
     expect(run.state.status).toBe('failed');
     expect(runRepository.recoveries.get(runKey)).toMatchObject({ allClear: false });
+  });
+
+  it('a losing duplicate start leaves the winning lock standing', async () => {
+    // Two concurrent starts of one run both acquire: the first creates the lock,
+    // the second finds it already standing. The second then loses the
+    // transition on the idempotency fingerprint and lands in the catch -- which
+    // released by run key alone, freeing the winning lock while its fault was
+    // being applied, so a third run could take the lab.
+    const lockRepository = new MemoryLockRepository();
+    const executor = new FakeExecutor();
+    const { service } = harness(mnStop, 'operator', executor, undefined, lockRepository);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+
+    // Concurrently, because that is the only way both attempts read `armed` and
+    // both reach the acquire. Run in sequence the second is refused earlier and
+    // never touches the lock at all.
+    const outcomes = await Promise.allSettled([
+      service.start({ runKey, idempotencyKey: 'duplicate-start-a' }),
+      service.start({ runKey, idempotencyKey: 'duplicate-start-b' }),
+    ]);
+
+    expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter((o) => o.status === 'rejected')).toHaveLength(1);
+    expect(lockRepository.lock).toMatchObject({ status: 'held', runKey });
+  });
+
+  it('keeps the lab locked when recovery could not prove it clean', async () => {
+    // faultMayBeActive is still true here. Handing the slot to the next run
+    // while a fault may be on is the one thing the lock exists to prevent.
+    const lockRepository = new MemoryLockRepository();
+    const executor = new FakeExecutor();
+    executor.allClear = false;
+    const { service } = harness(mnStop, 'operator', executor, undefined, lockRepository);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'start-run-1' });
+
+    const { run } = await service.recover({ runKey, idempotencyKey: 'recover-run-1' });
+
+    expect(run.state.status).toBe('failed');
+    expect(lockRepository.lock).toMatchObject({ status: 'held', runKey });
+  });
+
+  it('gives the lab back once recovery proves it clean', async () => {
+    // The positive control: the fence must not simply stop releasing.
+    const lockRepository = new MemoryLockRepository();
+    const { service } = harness(mnStop, 'operator', new FakeExecutor(), undefined, lockRepository);
+    const runKey = await driveToLiveArmed(service, 'regtest');
+    await service.start({ runKey, idempotencyKey: 'start-run-1' });
+
+    await service.recover({ runKey, idempotencyKey: 'recover-run-1' });
+
+    expect(lockRepository.lock).toMatchObject({ status: 'released' });
   });
 
   it('binds an idempotency key to one exact create request', async () => {

@@ -132,6 +132,16 @@ export interface SimulationRunDocument extends Document {
   dataQuality: SimulationDataQualitySnapshot | null;
   /** Set once when the run's boundaries leave nothing to measure; see the schema. */
   measurement: { unavailable: true; reason: string; decidedAtMs: number } | null;
+  /**
+   * When this run's measurement report was written, if it was.
+   *
+   * Kept on the run so the finalize sweep can EXCLUDE reported runs in its
+   * query instead of fetching a page and filtering it afterwards. Filtering
+   * afterwards starves: a finalized run's state never changes again, so the
+   * fifty oldest reported runs permanently filled the page and no newer run
+   * was ever offered.
+   */
+  measurementReportedAtMs: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -348,6 +358,7 @@ export const simulationRunSchema = new Schema<SimulationRunDocument>(
      * stateAfter, where an extra field would change what replay must reproduce.
      */
     measurement: { type: measurementOutcomeSchema, default: null },
+    measurementReportedAtMs: { type: Number, default: null },
   },
   { timestamps: true, strict: 'throw', versionKey: false }
 );

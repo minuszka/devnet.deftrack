@@ -94,6 +94,7 @@ async function main(): Promise<void> {
       },
       warmupBlocks: SIMULATION_CONTROL_POLICY.measurement.warmupBlocks,
       markUnmeasurable: (input) => reconcileRepository.markMeasurementUnavailable(input),
+      markReported: (input) => reconcileRepository.markMeasurementReported(input),
       logger,
     }
   );

@@ -642,7 +642,7 @@ export class SimulationControlService {
         // Taken before the fault, then recorded as an activation intent. If the
         // process dies after this point, the run says recovery is required rather
         // than leaving an unaccounted-for command in the wrapper queue.
-        await this.acquireLiveRunLock(run, request);
+        const acquiredHere = await this.acquireLiveRunLock(run, request);
         try {
           run = await this.runs.transitionRun({
             runKey: run.runKey,
@@ -650,7 +650,14 @@ export class SimulationControlService {
             actor: request.actor,
           });
         } catch (error) {
-          await this.releaseLiveRunLock(run.runKey);
+          // Only the attempt that created the lock may give it back. Two
+          // concurrent starts of one run both reach here: one wins the
+          // transition and goes on to apply the fault, the other loses on the
+          // idempotency fingerprint and lands in this catch. Releasing by run
+          // key alone -- which is all the lock knew -- freed the WINNER's lock
+          // from the loser's hands, and a third run could then take the lab
+          // while a fault was being applied.
+          if (acquiredHere) await this.releaseLiveRunLock(run.runKey);
           throw error;
         }
       } else {
@@ -711,6 +718,14 @@ export class SimulationControlService {
     let run = await this.runs.loadRun(input.runKey);
     if (run.state.status === 'aborted') return { run, idempotentReplay: true };
     ensureStatus(run, ['draft', 'preflight', 'scheduled', 'baseline', 'armed', 'activation_pending', 'fault_active', 'observing', 'aborting', 'cooldown', 'recovery']);
+    // Checked before ANY transition is written. It used to run after the run had
+    // already been moved to `recovery`, so a live run this executor can never
+    // touch -- and `create` defaulted the network to devnet -- was left parked
+    // there for ever: `recovery` is neither terminal nor reconcilable, and the
+    // preflight counts every live non-terminal run as an active experiment. One
+    // aborted draft therefore blocked every later live run on the deployment,
+    // with no operator action able to clear it.
+    if (run.state.live) this.assertExecutorNetwork(run);
     if (!run.state.abortRequested) {
       run = await this.runs.transitionRun({
         runKey: run.runKey,
@@ -726,7 +741,6 @@ export class SimulationControlService {
       });
     }
     if (run.state.live) {
-      this.assertExecutorNetwork(run);
       // The run is already held in recovery above; the executor now clears the
       // fault and proves the lab is clean, and the outcome is recorded atomically.
       const plan = await this.loadPlan(run);
@@ -744,7 +758,11 @@ export class SimulationControlService {
         recovery,
         actor: request.actor,
       });
-      await this.releaseLiveRunLock(run.runKey);
+      // Only a proven-clean lab gives the slot back. A failed recovery leaves
+      // faultMayBeActive true, and handing the lab to the next run while a
+      // fault may still be on is the one thing the lock exists to prevent --
+      // the threat model calls for a human here, not for the next experiment.
+      if (recovery.allClear) await this.releaseLiveRunLock(run.runKey);
       return { run, idempotentReplay: false };
     }
     run = await this.runs.transitionRun({
@@ -822,7 +840,10 @@ export class SimulationControlService {
         recovery,
         actor: request.actor,
       });
-      await this.releaseLiveRunLock(run.runKey);
+      // Same rule as abort: the slot comes back only when the lab is proven
+      // clean. Otherwise faultMayBeActive is still true and the next run would
+      // start on a lab that may still be faulted.
+      if (recovery.allClear) await this.releaseLiveRunLock(run.runKey);
       return { run };
     }
     run = await this.runs.transitionRun({
@@ -848,8 +869,8 @@ export class SimulationControlService {
   private async acquireLiveRunLock(
     run: SimulationRunProjection,
     request: SimulationControlRequestRecord
-  ): Promise<void> {
-    if (this.liveRunLock === undefined) return;
+  ): Promise<boolean> {
+    if (this.liveRunLock === undefined) return false;
     const result = await this.liveRunLock.acquire({
       runKey: run.runKey,
       ownerId: request.actor.actorId,
@@ -862,6 +883,11 @@ export class SimulationControlService {
         `another live run holds the lab: ${result.lock.runKey}`
       );
     }
+    // Whether THIS attempt created the lock, or found one already standing.
+    // The distinction is the fence: two concurrent starts of the same run both
+    // succeed here, one as `acquired` and one as `already-held`, and only the
+    // first may ever release it.
+    return result.disposition === 'acquired';
   }
 
   /** Best effort: a lock that outlives its run expires anyway, and must not mask the run's own outcome. */
