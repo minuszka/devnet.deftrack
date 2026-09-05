@@ -268,11 +268,22 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   undeclared. Built by `ops/fleet-inventory-collect.sh` (jump host, read-only)
   and `ops/fleet-inventory-manifest.py` (VPS, private operator map), verified
   with a negative control. It lives at `/root/fleet-manifest-devnet.json` on
-  the VPS and is never committed. Writing it into the registry is one
-  `PUT /admin/simulations/targets/:id` per target with `enabled: false`, and
-  needs the user's explicit go; enabling is a later, safety-admin act. Until it
-  is imported the forming-quorum view still stops at
-  `no unambiguous target mapping`.
+  the VPS and is never committed. **Imported the same evening with the user's
+  go:** 160 `PUT /admin/simulations/targets/:id` (paced -- the admin router
+  allows 30 a minute), all `enabled: false`; the preview then answered 160
+  unchanged, fingerprint identical. Enabling is a later, safety-admin act.
+
+  **What the import did not fix, by rule:** the forming-quorum view still
+  answers `no unambiguous target mapping`, now for a `roland-node-8` member.
+  The resolver drops every target whose host has no `HostStatus`
+  (`MISSING_HOST_OBSERVATION`, `targetResolver.ts`), and only the 8 DAO hosts
+  run an observer -- their 88 targets resolve (fresh, at tip, build hash the
+  full 64 hex equal to `expectedBuild`), the 72 on the 8 shared `roland-node-*`
+  hosts do not. A 60-member quorum drawn from 152 almost always contains one of
+  those 72, so resolution stays closed until either an observer runs on the
+  shared hosts (a decision -- they carry production services) or a policy
+  admits declared-but-unobserved targets, which the fail-closed design
+  deliberately does not.
 - Refresh the inherited-failing tests listed in `CLAUDE.md`. **Two of the three
   named there now pass**: `subsidy_tests` and `block_reward_reallocation_tests`
   both came back clean on the deployed commit, so that paragraph is stale.
