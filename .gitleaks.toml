@@ -1,0 +1,42 @@
+# gitleaks configuration for a repository that is public on purpose.
+#
+# The scan in CI runs with --no-git: it reads the files as they stand, not the
+# history. That is deliberate and it is not laziness. A secret that reached a
+# past commit cannot be un-leaked by a scanner, it has to be rotated, and this
+# repository already carries one such decision -- a real host address at
+# fb6bb7c, replaced at a2f86c6 -- whose resolution (rewrite the history, or
+# accept and firewall) belongs to the owner and not to a build step that would
+# then fail on every push until it was made.
+#
+# So this gate answers one question, every time, before the push: does the tree
+# I am about to publish contain a credential?
+
+title = "devnet.deftrack"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+Upstream's published regtest spork key.
+
+It is in DeFCoN's own functional test framework (test/functional/feature_sporks.py
+and test_framework.py) and it is valid only against the regtest spork address, so
+it signs nothing on any network anybody can reach. The finality lab needs the
+matching key to enable sporks on its throwaway regtest chain, and using a
+freshly generated one would mean generating the address too -- a private value in
+the same file, which is the thing this scanner exists to prevent.
+
+Allowlisted by exact value: any OTHER key-shaped string in these files still
+fails the scan.
+"""
+regexes = ['cP4EKFyJsHT39LDqgdcB43Y3YXjNyjb5Fuas1GQSeAtjnZWmZEQK']
+
+[[allowlists]]
+description = "Build output and dependencies: scanned at their source instead."
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)client/dist/''',
+  '''\.playwright-mcp/''',
+]

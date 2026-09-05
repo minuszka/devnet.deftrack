@@ -91,6 +91,9 @@ fi
 echo "    --without-bdb: yes"
 
 echo "==> staging on the jump host"
+# Client-side expansion, deliberately: $STAGE is this script's own path and
+# the jump host has no such variable.
+# shellcheck disable=SC2029
 ssh "$JUMP" "mkdir -p $STAGE"
 scp -q "$DAEMON" "$JUMP:$STAGE/defcond"
 scp -q "$CLI" "$JUMP:$STAGE/defcon-cli"
@@ -98,6 +101,13 @@ scp -q "$CLI" "$JUMP:$STAGE/defcon-cli"
 echo "==> does it run on a fleet host"
 # One host, no install. A missing shared library is invisible in the build log
 # and fatal on the target.
+# The heredoc is UNQUOTED on purpose, and the two kinds of variable are kept
+# apart by hand: $INVENTORY, $NODE_KEY and $STAGE are expanded here, because
+# they are this machine's knowledge of the fleet; everything the jump host
+# must evaluate for itself is escaped (\$first, \$SSH, \$missing). Quoting the
+# delimiter would send the local paths across as literals and the rollout
+# would look for an inventory that does not exist there.
+# shellcheck disable=SC2087
 ssh "$JUMP" "bash -s" <<REMOTE_CHECK
 set -euo pipefail
 first=\$(grep -v '^[[:space:]]*\(#\|$\)' "$INVENTORY" | head -1)
@@ -125,6 +135,13 @@ if [ "$check_only" = "1" ]; then
 fi
 
 echo "==> rolling out"
+# The heredoc is UNQUOTED on purpose, and the two kinds of variable are kept
+# apart by hand: $INVENTORY, $NODE_KEY and $STAGE are expanded here, because
+# they are this machine's knowledge of the fleet; everything the jump host
+# must evaluate for itself is escaped (\$first, \$SSH, \$missing). Quoting the
+# delimiter would send the local paths across as literals and the rollout
+# would look for an inventory that does not exist there.
+# shellcheck disable=SC2087
 ssh "$JUMP" "bash -s" <<REMOTE_DEPLOY
 set -uo pipefail
 # -n: without it ssh reads the loop's stdin and swallows the rest of the
