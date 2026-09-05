@@ -186,6 +186,27 @@ function assertComposedNetemArgs(args: readonly string[]): void {
   }
 }
 
+/**
+ * The one place a fault's arguments are judged, for both callers.
+ *
+ * The wrapper validated them and the executor did not, so a plan the wrapper
+ * was always going to refuse still went through arming and activation: the
+ * command was written, the wrapper threw, the queue retried it five times and
+ * quarantined it -- while the run sat in `fault_active` believing a fault was
+ * on. Recovery then cleared nothing, the probes read clean, and the measurement
+ * described a fault that never existed.
+ *
+ * Both sides call this now, so a refusal happens where it can still stop the
+ * run rather than after it has started.
+ */
+export function assertFaultArgs(kind: NetemKind, args: readonly string[]): void {
+  if (kind === 'partition') {
+    assertPartitionPeers(args);
+    return;
+  }
+  assertNetemArgs(kind, args);
+}
+
 /** Validate the netem arguments for a kind; throws on anything tc would reject. */
 function assertNetemArgs(kind: NetemKind, args: readonly string[]): void {
   if (kind === 'latency') {
@@ -290,7 +311,15 @@ export function planApply(
   // An expiry already in the past is refused rather than applied for a moment.
   // The lease is the recovery bound, so a fault whose bound has gone must not
   // start; the old relative TTL plus a floor could still activate one.
-  if (expiresAtMs <= nowMs) return { state, actions: [] };
+  //
+  // It throws rather than returning no actions. Returning none made a refusal
+  // indistinguishable from the idempotent case below, and the runner answered
+  // both with a jobId -- so a caller could not tell "already in this state"
+  // from "declined to act", and the wrapper acked a fault it never applied.
+  // An empty action list now means one thing only: nothing needed doing.
+  if (expiresAtMs <= nowMs) {
+    throw new Error(`lease for ${jobId} expired at ${expiresAtMs}, before it could be applied`);
+  }
   // Class-scoped: replacing the netem job on a container must not silently drop
   // a service job recorded against it, or a live fault would be applied that
   // nothing remembers -- the one way the superset invariant breaks across classes.
@@ -337,7 +366,11 @@ export function planServiceStop(
   expiresAtMs: number
 ): Plan {
   const jobId = serviceJobId(runTag, container);
-  if (expiresAtMs <= nowMs) return { state, actions: [] };
+  // Same rule, same reason as planApply: a spent lease is refused loudly, not
+  // by quietly doing nothing that a caller then reports as done.
+  if (expiresAtMs <= nowMs) {
+    throw new Error(`lease for ${jobId} expired at ${expiresAtMs}, before it could be applied`);
+  }
   const isSameSlot = (job: FaultJob): boolean =>
     job.container === container && faultClassOf(job) === 'service';
   const existing = state.jobs.find(isSameSlot);

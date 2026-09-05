@@ -146,7 +146,13 @@ export class SimulationActionDispatcher {
     nowMs: number,
     detail: string | null
   ): Promise<void> {
-    await this.actions.settle({
+    // The result of settling is evidence, not noise. `settle` returns false
+    // when this worker no longer holds the lease -- another worker reclaimed
+    // the action after its 30 s expired and is dispatching it too. Discarding
+    // that made a double dispatch leave no trace at all: in a flapping cycle a
+    // stale `stop` can land after the `start` and re-stop a node until the
+    // wrapper TTL clears it, and the only record said the action succeeded.
+    const settled = await this.actions.settle({
       actionId: claimed.actionId,
       claimedBy: this.deps.workerId,
       status,
@@ -160,6 +166,12 @@ export class SimulationActionDispatcher {
         finishedAtMs: nowMs,
       },
     });
+    if (!settled) {
+      this.logger.error(
+        `${claimed.runKey}: lease lost on ${claimed.actionId} before it could be settled as ` +
+          `${status}; another worker may have dispatched it as well`
+      );
+    }
   }
 }
 

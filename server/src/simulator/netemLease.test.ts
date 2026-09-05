@@ -92,13 +92,18 @@ describe('planApply', () => {
 });
 
 describe('a lease that has already gone', () => {
-  it('is refused rather than applied for a moment', () => {
+  it('is refused loudly, not by quietly planning nothing', () => {
     // The lease IS the recovery bound, so a fault whose bound has passed must not
     // start at all. The old relative TTL plus a one-second floor would still have
     // activated one -- a fault nothing was left to undo.
-    expect(planApply(emptyWrapperState(), latency, RUN, 40_000, 39_999).actions).toEqual([]);
-    expect(planApply(emptyWrapperState(), latency, RUN, 40_000, 40_000).actions).toEqual([]);
-    expect(planServiceStop(emptyWrapperState(), 'mn01', RUN, 40_000, 39_999).actions).toEqual([]);
+    //
+    // It throws rather than returning an empty plan. Returning none made a
+    // refusal indistinguishable from the idempotent "already in this state"
+    // case, and the runner answered both with a jobId -- so the wrapper acked,
+    // and counted as dispatched, a fault it had never applied.
+    expect(() => planApply(emptyWrapperState(), latency, RUN, 40_000, 39_999)).toThrow(/expired/);
+    expect(() => planApply(emptyWrapperState(), latency, RUN, 40_000, 40_000)).toThrow(/expired/);
+    expect(() => planServiceStop(emptyWrapperState(), 'mn01', RUN, 40_000, 39_999)).toThrow(/expired/);
     // A future instant still applies, and records exactly that instant.
     const ok = planApply(emptyWrapperState(), latency, RUN, 40_000, 40_001);
     expect(ok.actions).toHaveLength(1);

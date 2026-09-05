@@ -1,6 +1,6 @@
 import type { SimulationTargetCapability, SimulationTargetSnapshot } from '../models/SimulationRun.js';
 import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
-import { netemJobId, serviceJobId, type FaultClass } from './netemLease.js';
+import { assertFaultArgs, netemJobId, serviceJobId, type FaultClass } from './netemLease.js';
 import { MAX_TTL_MS, type WrapperCommand } from './netemRunner.js';
 import type { DryRunPlan } from './scenarioTypes.js';
 
@@ -178,6 +178,12 @@ export function labFaultsForPlan(input: {
       try {
         const target = requireLabTarget(input.targetsById, action.targetId, 'netem-p2p');
         const args = composeNetemArgs(payload);
+        // The wrapper's own rule, applied here so a refusal happens while it can
+        // still stop the run. `1e-7%` is the case that motivated it: Number's
+        // formatting turns a very small percentage into exponent notation, which
+        // the wrapper's percent pattern rejects -- after arming, after
+        // activation, with the run already believing a fault was on.
+        assertFaultArgs('netem', args);
         const jobId = netemJobId(input.runTag, { container: target.hostRef, kind: 'netem', args });
         if (seen.has(jobId)) continue;
         seen.add(jobId);
@@ -206,6 +212,11 @@ export function labFaultsForPlan(input: {
           const address = peer.chainHostRef ?? peer.hostRef;
           return address;
         });
+        // Same rule for the peer list: IPv4 only, unique, at most 32. Without
+        // this a plan naming container ids rather than addresses -- which the
+        // resolver will happily produce -- reached the wrapper and was refused
+        // there, five retries later, with the run already active.
+        assertFaultArgs('partition', peers);
         const jobId = netemJobId(input.runTag, { container: target.hostRef, kind: 'partition', args: peers });
         if (seen.has(jobId)) continue;
         seen.add(jobId);

@@ -52,12 +52,21 @@ describe('parseWrapperCommand', () => {
     expect(() => parseWrapperCommand({ op: 'service-stop', container: 'mn01', expiresAtMs: NOW + 1 }, NOW)).toThrow(/runTag/);
   });
 
-  it('takes a lease as an instant, and a past one is not a parse error', () => {
+  it('refuses a lease that has already run out', () => {
     // A duration was measured from whenever the wrapper got round to the command,
     // so queue time silently extended every fault past the instant the run had
-    // recorded. An instant that has already gone parses fine -- refusing it is the
-    // planner's job, and it refuses by applying nothing at all.
-    expect(parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: NOW - 5 }, NOW).op)
+    // recorded. An instant is right -- but an instant already in the past used to
+    // parse, and then the planner "refused" by producing no actions while the
+    // runner still returned a jobId and the cycle acked it as dispatched. The
+    // run believed a fault was active that had never been applied.
+    //
+    // Queue latency alone reaches this: one `docker stop -t 30` ahead of it.
+    expect(() => parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: NOW - 5 }, NOW))
+      .toThrow(/already passed/);
+    expect(() => parseWrapperCommand({ op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: NOW }, NOW))
+      .toThrow(/already passed/);
+    // One millisecond of lease left is still a lease.
+    expect(parseWrapperCommand({ op: 'service-stop', container: 'mn01', runTag: 'r', expiresAtMs: NOW + 1 }, NOW).op)
       .toBe('service-stop');
   });
 
@@ -110,14 +119,54 @@ describe('runWrapperCycle', () => {
       },
       async recoverInflight() { return 0; },
     };
-    const result = await runWrapperCycle({ runner, queue, logger: silent });
+    const result = await runWrapperCycle({ runner, queue, logger: silent, clock: () => now.ms });
     expect(result).toMatchObject({ dispatched: 2, failed: 1, cleared: 0 });
     expect(actions.filter((a) => a.op === 'apply').map((a) => a.container).sort()).toEqual(['mn01', 'mn02']);
 
     // A later cycle past the TTL: the watchdog clears the expired leases.
     now.ms = 40_000;
-    const swept = await runWrapperCycle({ runner, queue, logger: silent });
+    const swept = await runWrapperCycle({ runner, queue, logger: silent, clock: () => now.ms });
     expect(swept.cleared).toBe(2);
+  });
+
+  it('never acknowledges a command whose lease has already run out', () => {
+    // The whole point of the change. Before it, an expired lease parsed, the
+    // planner produced no actions, the runner still answered with a jobId, and
+    // the cycle acked the command and counted it as dispatched -- so a run sat
+    // in fault_active believing a fault was on that had never been applied.
+    // Recovery then cleared nothing and the probes read clean, which is the
+    // worst possible shape for a measurement.
+    return (async () => {
+      const { runner, actions, now } = fakeRunner();
+      const acked: string[] = [];
+      const rejected: string[] = [];
+      const drained = [
+        { op: 'apply', container: 'mn01', kind: 'latency', args: ['100ms'], runTag: 'r', expiresAtMs: now.ms - 1 },
+      ];
+      const queue = {
+        async enqueue() {},
+        async claim() {
+          return drained.splice(0).map((payload) => ({
+            payload,
+            attempts: 1,
+            ack: async () => { acked.push('acked'); },
+            retry: async () => {},
+            reject: async (reason: string) => { rejected.push(reason); },
+          }));
+        },
+        async recoverInflight() { return 0; },
+      };
+
+      const result = await runWrapperCycle({ runner, queue, logger: silent, clock: () => now.ms });
+
+      expect(result).toMatchObject({ dispatched: 0, failed: 1 });
+      expect(acked).toEqual([]);
+      expect(actions).toEqual([]);
+      // Quarantined rather than retried: no number of retries makes a spent
+      // lease live again, and the reason names what happened.
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]).toMatch(/already passed/);
+    })();
   });
 });
 

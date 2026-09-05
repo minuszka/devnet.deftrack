@@ -102,7 +102,12 @@ describe('composeNetemArgs', () => {
 });
 
 describe('faultApplyCommandsForPlan', () => {
-  const targets = indexTargetsById([target({ targetId: 'mn-1', hostRef: 'mn01' }), target({ targetId: 'mn-2', hostRef: 'mn02' })]);
+  // mn02 carries the address the chain sees, because that is what a partition
+  // filter needs; a container name here produced a command tc could not take.
+  const targets = indexTargetsById([
+    target({ targetId: 'mn-1', hostRef: 'mn01' }),
+    target({ targetId: 'mn-2', hostRef: 'mn02', chainHostRef: '203.0.113.12' }),
+  ]);
 
   it('turns each netem-apply into a composed apply and skips the scheduled clear', () => {
     const plan = planWith([
@@ -145,11 +150,36 @@ describe('faultApplyCommandsForPlan', () => {
         op: 'apply',
         container: 'mn01',
         kind: 'partition',
-        args: ['mn02'],
+        args: ['203.0.113.12'],
         runTag: 'run-1',
         expiresAtMs: 30_000,
       },
     ]);
+  });
+
+  it('refuses a percentage the wrapper could not read, before anything is enqueued', () => {
+    // Number's own formatting turns a very small percentage into exponent
+    // notation, and the wrapper's percent pattern rejects it. Validated only at
+    // the wrapper, that refusal arrived after arming and activation: the command
+    // was written, the queue retried it five times and quarantined it, and the
+    // run sat in fault_active with no fault on and nothing for recovery to undo.
+    const plan = planWith([action('mn-1', netemPayload({ latencyMs: 0, jitterMs: 0, lossPercent: 1e-7, correlationPercent: 0 }))]);
+    expect(() =>
+      faultApplyCommandsForPlan({ plan, targetsById: targets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 })
+    ).toThrow(/percentage/);
+  });
+
+  it('refuses a partition peer that is not an address, before anything is enqueued', () => {
+    // Same class: the resolver will happily hand back a container name, and the
+    // wrapper is the only thing that ever knew it had to be an IPv4 address.
+    const containerTargets = indexTargetsById([
+      target({ targetId: 'mn-1', hostRef: 'mn01' }),
+      target({ targetId: 'mn-2', hostRef: 'mn02' }),
+    ]);
+    const plan = planWith([action('mn-1', partitionPayload)]);
+    expect(() =>
+      faultApplyCommandsForPlan({ plan, targetsById: containerTargets, runTag: 'run-1', expiresAtMs: 30_000, nowMs: 0 })
+    ).toThrow(/IPv4/);
   });
 
   it('fails closed on a partition naming a peer it cannot resolve', () => {
@@ -206,7 +236,12 @@ describe('assertSingleFaultClass', () => {
 });
 
 describe('faultRecoveryTargetsForPlan', () => {
-  const targets = indexTargetsById([target({ targetId: 'mn-1', hostRef: 'mn01' }), target({ targetId: 'mn-2', hostRef: 'mn02' })]);
+  // mn02 carries the address the chain sees, because that is what a partition
+  // filter needs; a container name here produced a command tc could not take.
+  const targets = indexTargetsById([
+    target({ targetId: 'mn-1', hostRef: 'mn01' }),
+    target({ targetId: 'mn-2', hostRef: 'mn02', chainHostRef: '203.0.113.12' }),
+  ]);
 
   it('clears a netem fault by the same job id the apply used', () => {
     const payload = netemPayload();

@@ -45,6 +45,15 @@ function assertLeaseInstant(value: unknown, nowMs: number): asserts value is num
   if (remaining > MAX_TTL_MS) {
     throw new Error(`expiresAtMs is more than ${MAX_TTL_MS} ms ahead, beyond the lease ceiling`);
   }
+  // A lease that has already run out is refused here rather than downstream.
+  // The plan functions declined to act on one and returned no actions, but the
+  // runner still answered with a jobId and the cycle acked the command as
+  // dispatched -- so a fault that was never applied was recorded as applied,
+  // and the run went on believing it. Queue latency alone reaches this: a
+  // `docker stop -t 30` ahead of it in the queue is enough.
+  if (remaining <= 0) {
+    throw new Error(`expiresAtMs ${value as number} has already passed; the lease is spent`);
+  }
 }
 
 /**
