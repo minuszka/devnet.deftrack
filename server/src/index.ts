@@ -9,7 +9,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import cors from 'cors';
 import mongoose from 'mongoose';
-import { DEVNET_NAME, type ApiEnvelope } from '@devnet-deftrack/shared';
+import { DEVNET_NAME, type ApiEnvelope, type HealthSnapshot } from '@devnet-deftrack/shared';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './db.js';
@@ -110,22 +110,7 @@ app.get('/api/v1/health', async (_req, res) => {
     syncIntervalMs: config.sync.intervalMs,
   });
 
-  const body: ApiEnvelope<{
-    status: string;
-    failing: string[];
-    devnet: string;
-    uptimeSeconds: number;
-    mongo: string;
-    chainTip: number;
-    indexedHeight: number;
-    indexedBlocks: number;
-    behind: number;
-    rounds: { formed: number; failed: number; pending: number; impossible: number };
-    nodeVersion: string;
-    masternodes: { total: number; enabled: number };
-    stakers: { active: number; windowBlocks: number };
-    observation: { zmq: ReturnType<typeof zmqService.stats> };
-  }> = {
+  const body: ApiEnvelope<HealthSnapshot> = {
     // success reports whether the request was served, readiness whether the
     // service can be trusted -- they are different questions.
     success: true,

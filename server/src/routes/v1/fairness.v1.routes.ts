@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { SelectionFairness } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { QuorumRound } from '../../models/QuorumRound.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
@@ -80,7 +81,7 @@ router.get(
 
     const result = selectionFairness(memberships, known);
 
-    sendData(res, {
+    const body: SelectionFairness = {
       ...result,
       llmqName: q.llmqName ?? null,
       heightRange: rounds.length
@@ -90,7 +91,8 @@ router.get(
       nodes: result.nodes.slice(0, 200).map((n) => ({ ...n, proTxHash: n.proTxHash.slice(0, 16) })),
       neverSelected: result.neverSelected.slice(0, 200).map((h) => h.slice(0, 16)),
       neverSelectedCount: result.neverSelected.length,
-    });
+    };
+    sendData(res, body);
   })
 );
 

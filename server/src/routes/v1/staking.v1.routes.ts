@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { StakingHealth } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { Block } from '../../models/Block.js';
 import { Transaction } from '../../models/Transaction.js';
@@ -35,7 +36,8 @@ router.get(
 
     const tip = await Block.findOne().sort({ height: -1 }).select('height').lean();
     if (!tip) {
-      sendData(res, { ...stakingHealth([]), windowBlocks: q.blocks, stakers: [] });
+      const empty: StakingHealth = { ...stakingHealth([]), windowBlocks: q.blocks, stakers: [] };
+      sendData(res, empty);
       return;
     }
 
@@ -81,7 +83,9 @@ router.get(
 
     const health = stakingHealth(samples, owners);
 
-    sendData(res, {
+    // Annotated, not inferred: this is the shape the client compiles against,
+    // and an added or renamed field must fail here rather than on the page.
+    const body: StakingHealth = {
       ...health,
       windowBlocks: q.blocks,
       // The script is an identifier, not something to display in full.
@@ -90,7 +94,8 @@ router.get(
         payee: s.payee.slice(0, 16),
         host: owners.get(s.payee.toLowerCase()) ?? null,
       })),
-    });
+    };
+    sendData(res, body);
   })
 );
 

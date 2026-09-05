@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { ExperimentDetail, ExperimentRow } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { ExperimentRun, type ExperimentRunDocument } from '../../models/ExperimentRun.js';
 import { computeOutcome, compareOutcomes, currentParticipants } from '../../services/experiment.service.js';
@@ -43,7 +44,7 @@ type ExperimentViewSource = Pick<
 const EXPERIMENT_VIEW_FIELDS =
   'runKey title hypothesis expected status startedAt endedAt startHeight endHeight nodeVersion nodeGitSha llmqName llmqSize llmqMinSize llmqThreshold dkgInterval participants intervention baselineRunKey outcome notes';
 
-function view(r: ExperimentViewSource) {
+function view(r: ExperimentViewSource): ExperimentRow {
   return {
     runKey: r.runKey,
     title: r.title,
@@ -146,7 +147,14 @@ router.get(
       }
     }
 
-    sendData(res, { ...view(run), outcome: live, comparison, currentParticipants: current, tipHeight: tip });
+    const body: ExperimentDetail = {
+      ...view(run),
+      outcome: live,
+      comparison,
+      currentParticipants: current,
+      tipHeight: tip,
+    };
+    sendData(res, body);
   })
 );
 
