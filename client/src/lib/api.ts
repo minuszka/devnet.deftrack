@@ -39,9 +39,10 @@ function qs(params?: Params): string {
   return s ? `?${s}` : '';
 }
 
-async function get<T>(path: string, params?: Params): Promise<T> {
+async function request<T>(path: string, params?: Params, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${BASE}${path}${qs(params)}`, {
     headers: { Accept: 'application/json' },
+    signal: signal ?? null,
   });
 
   let body: ApiEnvelope<T>;
@@ -301,62 +302,85 @@ export interface DslEpochRow {
   detectedAt: string;
 }
 
-export const api = {
-  health: () => get<HealthSnapshot>('/health'),
+/**
+ * The whole API surface, optionally bound to one AbortSignal.
+ *
+ * Every page polls, and until now nothing cancelled the request a newer poll
+ * replaced: two responses could land in either order, and the older one won
+ * whenever it was slower -- a filter switched back to the previous filter's
+ * data with no way for the reader to tell. A run of the poller builds its own
+ * bound copy, so cancelling the run cancels every call it made.
+ */
+function makeApi(signal?: AbortSignal) {
+  const get = <T>(path: string, params?: Params): Promise<T> => request<T>(path, params, signal);
 
-  dslSummary: () => get<DslSummary>('/dsl/summary'),
-  dslEpochs: (params?: { limit?: number; offset?: number; status?: string }) =>
-    get<Page<DslEpochRow>>('/dsl/epochs', params),
+  return {
+    health: () => get<HealthSnapshot>('/health'),
 
-  stakingHealth: (blocks: number) => get<StakingHealth>('/staking/health', { blocks }),
+    dslSummary: () => get<DslSummary>('/dsl/summary'),
+    dslEpochs: (params?: { limit?: number; offset?: number; status?: string }) =>
+      get<Page<DslEpochRow>>('/dsl/epochs', params),
 
-  peerPropagation: (topic: 'block' | 'chainlock', events: number) =>
-    get<PeerPropagation>('/peers/propagation', { topic, events }),
+    stakingHealth: (blocks: number) => get<StakingHealth>('/staking/health', { blocks }),
 
-  selectionFairness: (rounds: number) =>
-    get<SelectionFairness>('/fairness/selection', { rounds }),
+    peerPropagation: (topic: 'block' | 'chainlock', events: number) =>
+      get<PeerPropagation>('/peers/propagation', { topic, events }),
 
-  experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
-    get<Page<ExperimentRow>>('/experiments', params),
-  experiment: (runKey: string) => get<ExperimentDetail>(`/experiments/${encodeURIComponent(runKey)}`),
+    selectionFairness: (rounds: number) =>
+      get<SelectionFairness>('/fairness/selection', { rounds }),
 
-  rounds: (params?: { limit?: number; offset?: number; status?: string; llmqName?: string }) =>
-    get<Page<QuorumRoundListItem>>('/quorum-rounds', params),
+    experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
+      get<Page<ExperimentRow>>('/experiments', params),
+    experiment: (runKey: string) => get<ExperimentDetail>(`/experiments/${encodeURIComponent(runKey)}`),
 
-  round: (id: string) => get<QuorumRoundDetail>(`/quorum-rounds/${encodeURIComponent(id)}`),
+    rounds: (params?: { limit?: number; offset?: number; status?: string; llmqName?: string }) =>
+      get<Page<QuorumRoundListItem>>('/quorum-rounds', params),
 
-  /**
-   * Without `llmqName` the server does not filter, and the summary is computed
-   * across every interleaved schedule at once -- which invents streaks no type
-   * ever had. Callers should name the profile they mean.
-   */
-  healthTimeline: (hours: number, llmqName?: string) =>
-    get<HealthTimeline>('/quorum-rounds/health-timeline', { hours, llmqName }),
+    round: (id: string) => get<QuorumRoundDetail>(`/quorum-rounds/${encodeURIComponent(id)}`),
 
-  masternodes: (params?: { limit?: number; offset?: number; banned?: boolean }) =>
-    get<Page<MasternodeRow>>('/masternodes', params),
+    /**
+     * Without `llmqName` the server does not filter, and the summary is computed
+     * across every interleaved schedule at once -- which invents streaks no type
+     * ever had. Callers should name the profile they mean.
+     */
+    healthTimeline: (hours: number, llmqName?: string) =>
+      get<HealthTimeline>('/quorum-rounds/health-timeline', { hours, llmqName }),
 
-  masternodeTimeline: (hours: number) =>
-    get<{ hours: number; points: MasternodeTimelinePoint[] }>('/masternodes/timeline', { hours }),
+    masternodes: (params?: { limit?: number; offset?: number; banned?: boolean }) =>
+      get<Page<MasternodeRow>>('/masternodes', params),
 
-  masternodeEvents: (params: { hours: number; limit?: number; type?: string }) =>
-    get<Page<MasternodeEventRow>>('/masternodes/events', params),
+    masternodeTimeline: (hours: number) =>
+      get<{ hours: number; points: MasternodeTimelinePoint[] }>('/masternodes/timeline', { hours }),
 
-  banWaves: (hours: number) => get<BanWaveReport>('/masternodes/ban-waves', { hours }),
+    masternodeEvents: (params: { hours: number; limit?: number; type?: string }) =>
+      get<Page<MasternodeEventRow>>('/masternodes/events', params),
 
-  chainlocks: (blocks: number) => get<ChainLockReport>('/chainlocks', { blocks }),
+    banWaves: (hours: number) => get<BanWaveReport>('/masternodes/ban-waves', { hours }),
 
-  blocks: (params?: { limit?: number; offset?: number }) => get<Page<BlockRow>>('/blocks', params),
+    chainlocks: (blocks: number) => get<ChainLockReport>('/chainlocks', { blocks }),
 
-  block: (id: string) => get<BlockDetail>(`/blocks/${encodeURIComponent(id)}`),
+    blocks: (params?: { limit?: number; offset?: number }) => get<Page<BlockRow>>('/blocks', params),
 
-  txs: (params?: { limit?: number; offset?: number }) => get<Page<TxRow>>('/txs', params),
+    block: (id: string) => get<BlockDetail>(`/blocks/${encodeURIComponent(id)}`),
 
-  tx: (txid: string) => get<TxDetail>(`/txs/${encodeURIComponent(txid)}`),
+    txs: (params?: { limit?: number; offset?: number }) => get<Page<TxRow>>('/txs', params),
 
-  operatorReliability: (hours: number) =>
-    get<{ hours: number; roundsConsidered: number; operators: OperatorReliabilityRow[] }>(
-      '/operators/reliability',
-      { hours }
-    ),
-};
+    tx: (txid: string) => get<TxDetail>(`/txs/${encodeURIComponent(txid)}`),
+
+    operatorReliability: (hours: number) =>
+      get<{ hours: number; roundsConsidered: number; operators: OperatorReliabilityRow[] }>(
+        '/operators/reliability',
+        { hours }
+      ),
+  };
+}
+
+/** The unbound client: for one-off calls that nothing will supersede. */
+export const api = makeApi();
+
+export type Api = ReturnType<typeof makeApi>;
+
+/** The same surface, cancelled together when the signal aborts. */
+export function apiWith(signal: AbortSignal): Api {
+  return makeApi(signal);
+}

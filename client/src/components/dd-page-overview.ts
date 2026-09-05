@@ -4,7 +4,9 @@ import type {
   MasternodeTimelinePoint,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
-import { api, type ChainLockReport, type ExperimentRow, type HealthSnapshot } from '../lib/api.js';
+import type { ChainLockReport, ExperimentRow, HealthSnapshot } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
 import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
@@ -42,7 +44,11 @@ export class DdPageOverview extends LitElement {
   private _error = '';
   private _loading = true;
   private _copied: string | null = null;
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -360,18 +366,7 @@ export class DdPageOverview extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
       // Two phases on purpose. Which profile the figures are about has to be
       // settled BEFORE they are asked for: without a profile the server does
@@ -383,9 +378,10 @@ export class DdPageOverview extends LitElement {
       const [clocks, health] = await Promise.all([
         // Both feed the profile decision, so neither failing may be swallowed
         // into a blended answer; `primaryProfile` reports what it could not do.
-        api.chainlocks(50).catch(() => null),
-        api.health().catch(() => null),
+        run.api.chainlocks(50).catch(() => null),
+        run.api.health().catch(() => null),
       ]);
+      if (run.stale) return;
       const profile = primaryProfile({
         signers: clocks?.signers,
         tipHeight: health?.chainTip,
@@ -394,12 +390,13 @@ export class DdPageOverview extends LitElement {
 
       const llmqName = profile.known ? profile.llmqName : undefined;
       const [timeline, rounds, mn, running] = await Promise.all([
-        api.healthTimeline(24 * 7, llmqName),
-        api.rounds({ limit: RECENT, llmqName }),
-        api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
+        run.api.healthTimeline(24 * 7, llmqName),
+        run.api.rounds({ limit: RECENT, llmqName }),
+        run.api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
         // Only for the running-experiment line; a failure hides the line.
-        api.experiments({ status: 'running', limit: 5 }).catch(() => null),
+        run.api.experiments({ status: 'running', limit: 5 }).catch(() => null),
       ]);
+      if (run.stale) return;
       this._timeline = profile.known ? timeline : null;
       this._rounds = rounds.items;
       this._total = rounds.total;
@@ -409,9 +406,10 @@ export class DdPageOverview extends LitElement {
       this._running = running?.items ?? [];
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     } finally {
-      this._loading = false;
+      if (!run.stale) this._loading = false;
     }
   }
 

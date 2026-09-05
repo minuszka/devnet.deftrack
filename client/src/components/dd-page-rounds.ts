@@ -1,9 +1,10 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { QuorumRoundListItem } from '@devnet-deftrack/shared';
-import { api } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
-import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
+import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 50;
 const REFRESH_MS = 60_000;
@@ -34,13 +35,18 @@ export class DdPageRounds extends LitElement {
   private _types: string[] = [];
   private _error = '';
   private _loading = true;
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
     cardStyles,
     tableStyles,
     pageStyles,
+    pagerStyles,
     css`
       /* The punished cell is the incident. It carries weight only when there
          was one; a round that punished nobody says so in words, because a bare
@@ -51,52 +57,6 @@ export class DdPageRounds extends LitElement {
         color: var(--warn);
       }
       td.muted-cell {
-        color: var(--ink-3);
-      }
-      .filters {
-        display: flex;
-        gap: 14px;
-        flex-wrap: wrap;
-      }
-      .group {
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-      }
-      button {
-        font-family: var(--font-mono);
-        font-size: var(--fs-xs);
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        background: var(--surface-2);
-        color: var(--ink-2);
-        border: 1px solid var(--line);
-        border-radius: var(--radius);
-        padding: 5px 11px;
-        cursor: pointer;
-      }
-      button:hover:not(:disabled) {
-        color: var(--ink);
-        border-color: var(--line-strong);
-      }
-      button[aria-pressed='true'] {
-        color: var(--accent);
-        border-color: var(--accent);
-        background: var(--accent-wash);
-      }
-      button:disabled {
-        opacity: 0.4;
-        cursor: default;
-      }
-      .pager {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 14px;
-        border-top: 1px solid var(--line-soft);
-        font-family: var(--font-mono);
-        font-size: var(--fs-sm);
         color: var(--ink-3);
       }
       /* Sits against the punished count, because that is the number a reader
@@ -116,18 +76,7 @@ export class DdPageRounds extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
       const params: { limit: number; offset: number; status?: string; llmqName?: string } = {
         limit: PAGE_SIZE,
@@ -135,34 +84,36 @@ export class DdPageRounds extends LitElement {
       };
       if (this._status) params.status = this._status;
       if (this._llmq) params.llmqName = this._llmq;
-      const p = await api.rounds(params);
+      const p = await run.api.rounds(params);
+      if (run.stale) return;
       this._rounds = p.items;
       this._total = p.total;
       const known = new Set([...this._types, ...p.items.map((r) => r.llmqName)]);
       this._types = [...known].sort();
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     } finally {
-      this._loading = false;
+      if (!run.stale) this._loading = false;
     }
   }
 
   private _setStatus(value: string): void {
     this._status = value;
     this._offset = 0;
-    void this._load();
+    this._poll.refresh();
   }
 
   private _setLlmq(value: string): void {
     this._llmq = value;
     this._offset = 0;
-    void this._load();
+    this._poll.refresh();
   }
 
   private _move(delta: number): void {
     this._offset = Math.max(0, this._offset + delta * PAGE_SIZE);
-    void this._load();
+    this._poll.refresh();
   }
 
   override render(): TemplateResult {

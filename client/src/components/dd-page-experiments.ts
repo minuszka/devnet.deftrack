@@ -1,5 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import { api, type ExperimentDetail, type ExperimentRow } from '../lib/api.js';
+import type { ExperimentDetail, ExperimentRow } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -18,7 +20,11 @@ export class DdPageExperiments extends LitElement {
   private _rows: ExperimentRow[] = [];
   private _detail: ExperimentDetail | null = null;
   private _error = '';
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -71,31 +77,28 @@ export class DdPageExperiments extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has('runKey')) void this._load();
+    // Only a real change. On the first update every initialised property is
+    // in the map, and the controller has already loaded once on connect --
+    // reloading here made every detail page fetch itself twice.
+    if (changed.has('runKey') && changed.get('runKey') !== undefined) this._poll.refresh();
   }
 
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
       if (this.runKey) {
-        this._detail = await api.experiment(this.runKey);
+        const detail = await run.api.experiment(this.runKey);
+        if (run.stale) return;
+        this._detail = detail;
       } else {
-        this._rows = (await api.experiments()).items;
+        const rows = (await run.api.experiments()).items;
+        if (run.stale) return;
+        this._rows = rows;
       }
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     }
   }
 

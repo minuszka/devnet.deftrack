@@ -1,5 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import { api, type PeerPropagation } from '../lib/api.js';
+import type { PeerPropagation } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -18,7 +20,11 @@ export class DdPagePeers extends LitElement {
   private _d: PeerPropagation | null = null;
   private _topic: 'block' | 'chainlock' = 'block';
   private _error = '';
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -52,29 +58,21 @@ export class DdPagePeers extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
-      this._d = await api.peerPropagation(this._topic, 30);
+      const d = await run.api.peerPropagation(this._topic, 30);
+      if (run.stale) return;
+      this._d = d;
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     }
   }
 
   private _setTopic(t: 'block' | 'chainlock'): void {
     this._topic = t;
-    void this._load();
+    this._poll.refresh();
   }
 
   /** The build most hosts agree on; anything else is drift worth seeing. */

@@ -1,40 +1,15 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { txKindLabel, type TxDetail, type TxRow } from '@devnet-deftrack/shared';
-import { api } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
-import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
+import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 25;
 const REFRESH_MS = 20_000;
 
+/** Transaction-kind chips. The pager and its buttons are shared styles. */
 const shared = css`
-  .pager {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--line-soft);
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--ink-3);
-  }
-  button {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    background: var(--surface-2);
-    color: var(--ink-2);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 5px 11px;
-    cursor: pointer;
-  }
-  button:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
   .kind {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
@@ -73,37 +48,32 @@ export class DdPageTxs extends LitElement {
   private _offset = 0;
   private _error = '';
   private _loading = true;
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
-  static override styles = [baseStyles, cardStyles, tableStyles, pageStyles, shared];
+  static override styles = [baseStyles, cardStyles, tableStyles, pageStyles, pagerStyles, shared];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
-      const p = await api.txs({ limit: PAGE_SIZE, offset: this._offset });
+      const p = await run.api.txs({ limit: PAGE_SIZE, offset: this._offset });
+      if (run.stale) return;
       this._rows = p.items;
       this._total = p.total;
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     } finally {
-      this._loading = false;
+      if (!run.stale) this._loading = false;
     }
   }
 
   private _move(delta: number): void {
     this._offset = Math.max(0, this._offset + delta * PAGE_SIZE);
-    void this._load();
+    this._poll.refresh();
   }
 
   override render(): TemplateResult {
@@ -188,6 +158,7 @@ export class DdPageTx extends LitElement {
     cardStyles,
     tableStyles,
     pageStyles,
+    pagerStyles,
     shared,
     css`
       dl {
@@ -211,23 +182,35 @@ export class DdPageTx extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-  }
+  /**
+   * A detail page polls too: its ChainLock flag can still change under it. And
+   * following a link from one of these to another starts a second load while
+   * the first is in flight -- without the controller the slower answer wins,
+   * and the page settles on the object the reader has just navigated away from.
+   */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has('param')) void this._load();
+    // Only a real change. On the first update every initialised property is
+    // in the map, and the controller has already loaded once on connect --
+    // reloading here made every detail page fetch itself twice.
+    if (changed.has('param') && changed.get('param') !== undefined) this._poll.refresh();
   }
 
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     if (!this.param) return;
     try {
-      this._tx = await api.tx(this.param);
+      const d = await run.api.tx(this.param);
+      if (run.stale) return;
+      this._tx = d;
       this._error = '';
     } catch (error) {
+      if (run.stale || isAbortError(error)) return;
       this._tx = null;
-      this._error = error instanceof Error ? error.message : String(error);
+      this._error = errorMessage(error);
     }
   }
 

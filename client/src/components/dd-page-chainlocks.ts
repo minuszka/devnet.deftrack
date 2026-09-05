@@ -1,5 +1,7 @@
 import { LitElement, css, html, nothing, svg, type TemplateResult } from 'lit';
-import { api, type ChainLockReport } from '../lib/api.js';
+import type { ChainLockReport } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -11,7 +13,11 @@ export class DdPageChainLocks extends LitElement {
 
   private _d: ChainLockReport | null = null;
   private _error = '';
-  private _timer: number | null = null;
+  /** Interval, visibility, cancellation and the sequence guard, in one place. */
+  private readonly _poll = new PollController(this, {
+    intervalMs: REFRESH_MS,
+    load: (run) => this._load(run),
+  });
 
   static override styles = [
     baseStyles,
@@ -46,23 +52,15 @@ export class DdPageChainLocks extends LitElement {
     `,
   ];
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    void this._load();
-    this._timer = window.setInterval(() => void this._load(), REFRESH_MS);
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    if (this._timer !== null) clearInterval(this._timer);
-  }
-
-  private async _load(): Promise<void> {
+  private async _load(run: PollRun): Promise<void> {
     try {
-      this._d = await api.chainlocks(500);
+      const d = await run.api.chainlocks(500);
+      if (run.stale) return;
+      this._d = d;
       this._error = '';
     } catch (error) {
-      this._error = error instanceof Error ? error.message : String(error);
+      if (run.stale || isAbortError(error)) return;
+      this._error = errorMessage(error);
     }
   }
 
