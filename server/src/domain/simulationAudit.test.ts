@@ -24,6 +24,7 @@ const metadata: SimulationRunMetadata = {
   parameters: { durationSeconds: 30, nested: { b: 2, a: 1 } },
   seed: 'seed-1',
   targetSnapshot: [],
+  quorumTargetSnapshot: null,
   experimentRunKey: null,
   baselineRunKey: null,
   requestedBy: actor,

@@ -22,6 +22,7 @@ const metadata = (scenarioId = 'dry-run'): SimulationRunMetadata => ({
   parameters: { durationSeconds: 30 },
   seed: 'seed-1',
   targetSnapshot: [],
+  quorumTargetSnapshot: null,
   experimentRunKey: null,
   baselineRunKey: null,
   requestedBy: actor,

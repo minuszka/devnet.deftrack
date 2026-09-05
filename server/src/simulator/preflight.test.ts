@@ -198,6 +198,17 @@ describe('simulation preflight', () => {
     });
   });
 
+  it('fails a quorum outage when the identified quorum changed after its snapshot', () => {
+    const input = healthyInput();
+    input.quorum.snapshotMatches = false;
+    const result = evaluateSimulationPreflight(input);
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((item) => item.checkId === 'quorum-stable')).toMatchObject({
+      passed: false,
+      severity: 'required',
+    });
+  });
+
   it('refuses to evaluate with no expected wrapper version only when recovery is checked', () => {
     const input = healthyInput(); // recovery.required = true
     input.policy.expectedWrapperVersion = '';

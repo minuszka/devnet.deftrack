@@ -87,6 +87,25 @@ describe('simulation draft preparation', () => {
     const snapshotted = new Set(prepared.metadata.targetSnapshot.map((target) => target.targetId));
     expect(peers.every((targetId) => snapshotted.has(targetId))).toBe(true);
   });
+
+  it('freezes an identified quorum mapping independently of observer member order', () => {
+    const input = validInput();
+    const members = input.currentQuorumMemberProTxHashes.slice(0, 3);
+    const currentQuorum = {
+      llmqType: 100, llmqName: 'llmq_test', quorumHash: 'f'.repeat(64),
+      expectedHeight: HEIGHT - 24, quorumIndex: 0, capturedAtHeight: HEIGHT,
+      memberProTxHashes: members,
+    };
+    const first = { ...input, currentQuorum, nextQuorumUnavailableReason: 'The next quorum has not formed.' };
+    const second = { ...first, currentQuorum: { ...currentQuorum, memberProTxHashes: [...members].reverse() } };
+
+    const prepared = prepareSimulationDraft(first);
+    const independentlyPrepared = prepareSimulationDraft(second);
+    expect(prepared.metadata.quorumTargetSnapshot?.current?.memberTargetIds).toEqual(['mn-0', 'mn-1', 'mn-2']);
+    expect(prepared.metadata.quorumTargetSnapshot?.current?.resolutionFingerprint)
+      .toBe(independentlyPrepared.metadata.quorumTargetSnapshot?.current?.resolutionFingerprint);
+    expect(prepared.metadata.quorumTargetSnapshot?.nextUnavailableReason).toMatch(/not formed/);
+  });
 });
 
 describe('inventory failure reporting', () => {

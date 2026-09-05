@@ -2,7 +2,7 @@ import mongoose, { Schema, type Document } from 'mongoose';
 import { simulationAuditActorSchema, type SimulationAuditActor } from './SimulationRun.js';
 import type { SimulationControlRole } from './SimulationControlRequest.js';
 
-export const SIMULATION_ARTIFACT_KINDS = ['dry-run', 'preflight', 'approval'] as const;
+export const SIMULATION_ARTIFACT_KINDS = ['dry-run', 'preflight', 'armed-target-snapshot', 'approval'] as const;
 export type SimulationArtifactKind = (typeof SIMULATION_ARTIFACT_KINDS)[number];
 
 export interface SimulationRunArtifactDocument extends Document {

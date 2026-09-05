@@ -56,7 +56,9 @@ export type TargetResolutionIssueCode =
   | 'NODE_BUILD_UNKNOWN'
   | 'NODE_BUILD_MISMATCH'
   | 'CAPABILITY_MISSING'
-  | 'INVALID_TARGET_MAPPING';
+  | 'INVALID_TARGET_MAPPING'
+  | 'FLEET_TARGET_LIMIT_EXCEEDED'
+  | 'HOST_TARGET_LIMIT_EXCEEDED';
 
 export interface TargetResolutionIssue {
   code: TargetResolutionIssueCode;
@@ -69,6 +71,10 @@ export interface TargetResolutionPolicy {
   maxHostObservationAgeMs: number;
   maxHostHeightLagBlocks: number;
   requireExpectedBuild: boolean;
+  /** Fail closed rather than silently growing the eligible fault population. */
+  maxEnabledTargetsTotal: number;
+  /** A single host cannot acquire an unreviewed number of faultable services. */
+  maxEnabledTargetsPerHost: number;
 }
 
 export interface TargetInventoryResolution {
@@ -84,6 +90,8 @@ const DEFAULT_POLICY: TargetResolutionPolicy = {
   maxHostObservationAgeMs: 2 * 60_000,
   maxHostHeightLagBlocks: 2,
   requireExpectedBuild: true,
+  maxEnabledTargetsTotal: 20,
+  maxEnabledTargetsPerHost: 10,
 };
 
 const MAX_RESOLVED_SELECTION = 20;
@@ -131,7 +139,11 @@ export function resolveSimulationTargetInventory(input: {
     policy.maxHostObservationAgeMs < 0 ||
     !Number.isSafeInteger(policy.maxHostObservationAgeMs) ||
     policy.maxHostHeightLagBlocks < 0 ||
-    !Number.isSafeInteger(policy.maxHostHeightLagBlocks)
+    !Number.isSafeInteger(policy.maxHostHeightLagBlocks) ||
+    policy.maxEnabledTargetsTotal < 1 ||
+    !Number.isSafeInteger(policy.maxEnabledTargetsTotal) ||
+    policy.maxEnabledTargetsPerHost < 1 ||
+    !Number.isSafeInteger(policy.maxEnabledTargetsPerHost)
   ) {
     throw new Error('target resolution policy is invalid');
   }
@@ -150,6 +162,34 @@ export function resolveSimulationTargetInventory(input: {
     issue(issues, code, targetId, publicMessage, privateDetail);
     if (targetId !== null) badTargetIds.add(targetId);
   };
+
+  if (candidates.length > policy.maxEnabledTargetsTotal) {
+    for (const target of candidates) {
+      mark(
+        'FLEET_TARGET_LIMIT_EXCEEDED',
+        target.targetId,
+        'The enabled fleet exceeds the approved target limit.',
+        `enabled=${candidates.length}, maximum=${policy.maxEnabledTargetsTotal}`
+      );
+    }
+  }
+  const candidatesByHost = new Map<string, SimulationTargetRegistryRecord[]>();
+  for (const target of candidates) {
+    const hostTargets = candidatesByHost.get(target.hostRef) ?? [];
+    hostTargets.push(target);
+    candidatesByHost.set(target.hostRef, hostTargets);
+  }
+  for (const [hostRef, hostTargets] of candidatesByHost) {
+    if (hostTargets.length <= policy.maxEnabledTargetsPerHost) continue;
+    for (const target of hostTargets) {
+      mark(
+        'HOST_TARGET_LIMIT_EXCEEDED',
+        target.targetId,
+        'A host exceeds the approved target limit.',
+        `host=${hostRef}, enabled=${hostTargets.length}, maximum=${policy.maxEnabledTargetsPerHost}`
+      );
+    }
+  }
 
   for (const targetId of duplicates(candidates.map((target) => target.targetId))) {
     mark('DUPLICATE_TARGET_ID', targetId, 'A target mapping is ambiguous.', `duplicate targetId ${targetId}`);

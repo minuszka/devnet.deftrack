@@ -28,6 +28,11 @@ import { prepareSimulationDraft, type PreparedSimulationDraft } from '../simulat
 import { planMeasurementWindowsForLlmqFault } from '../simulator/measurementWindows.js';
 import { evaluateSimulationPreflight, type SimulationPreflightEvaluation } from '../simulator/preflight.js';
 import { readWrapperHeartbeat, recoveryEvidenceFromHeartbeat } from '../simulator/wrapperHeartbeat.js';
+import {
+  freezeQuorumTargetSnapshot,
+  sameQuorumTargetSnapshot,
+  type QuorumMembershipObservation,
+} from '../simulator/quorumTargetSnapshot.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import {
   resolveSimulationTargetInventory,
@@ -50,6 +55,8 @@ interface EvidenceSnapshot {
   registry: SimulationTargetRegistryRecord[];
   masternodes: TargetMasternodeEvidence[];
   hosts: TargetHostEvidence[];
+  currentQuorum: QuorumMembershipObservation | null;
+  nextQuorumUnavailableReason: string;
   quorumMemberProTxHashes: string[];
   quorumStable: boolean;
   quorumProfile: ReturnType<typeof chainlockProfileAtHeight>;
@@ -125,7 +132,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       HostStatus.find().select('host height nodeBuild reportedAt').lean(),
       QuorumRound.findOne({ llmqName: profile.llmqName, formed: true, detailsComplete: true })
         .sort({ expectedHeight: -1 })
-        .select('members size numValidMembers')
+        .select('llmqType llmqName quorumHash expectedHeight quorumIndex members size numValidMembers')
         .lean(),
     ]);
     const registry = registryDocs.map((target) => ({
@@ -156,18 +163,31 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       nodeBuild: host.nodeBuild,
     })) as TargetHostEvidence[];
     const quorumMembers = quorum?.members?.map((member) => member.proTxHash) ?? [];
+    const currentQuorum = quorum === null || quorum.quorumHash === null || quorum.members.length === 0
+      ? null
+      : {
+          llmqType: quorum.llmqType,
+          llmqName: quorum.llmqName,
+          quorumHash: quorum.quorumHash,
+          expectedHeight: quorum.expectedHeight,
+          quorumIndex: quorum.quorumIndex,
+          capturedAtHeight: chain.blocks,
+          memberProTxHashes: quorumMembers,
+        };
     return {
       chain,
       genesisHash,
       registry,
       masternodes,
       hosts,
+      currentQuorum,
+      nextQuorumUnavailableReason: 'No verified next quorum membership is available.',
       quorumMemberProTxHashes: quorumMembers,
       quorumStable:
-        quorum !== null &&
+        currentQuorum !== null &&
         quorumMembers.length === profile.size &&
-        quorum.size === profile.size &&
-        quorum.numValidMembers === profile.size,
+        quorum?.size === profile.size &&
+        quorum?.numValidMembers === profile.size,
       quorumProfile: profile,
     };
   }
@@ -186,6 +206,8 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       registry: evidence.registry,
       masternodes: evidence.masternodes,
       hosts: evidence.hosts,
+      currentQuorum: evidence.currentQuorum,
+      nextQuorumUnavailableReason: evidence.nextQuorumUnavailableReason,
       currentQuorumMemberProTxHashes: evidence.quorumMemberProTxHashes,
     });
   }
@@ -342,14 +364,23 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     for (let height = measurementPlan.baseline.fromHeight; height <= measurementPlan.baseline.toHeight; height += 1) {
       if (!indexedSet.has(height) && height < notYetIndexedFrom) missingHeights.push(height);
     }
-    const targetIdsByProTx = new Map(
-      inventory.snapshots
-        .filter((target) => target.proTxHash !== null)
-        .map((target) => [target.proTxHash!.toLowerCase(), target.targetId])
-    );
-    const quorumTargetIds = evidence.quorumMemberProTxHashes
-      .map((hash) => targetIdsByProTx.get(hash.toLowerCase()))
-      .filter((targetId): targetId is string => targetId !== undefined);
+    let observedQuorumTargetSnapshot = null;
+    try {
+      observedQuorumTargetSnapshot = freezeQuorumTargetSnapshot({
+        targets: inventory.snapshots,
+        current: evidence.currentQuorum,
+        nextUnavailableReason: evidence.nextQuorumUnavailableReason,
+      });
+    } catch {
+      // Target-resolution preflight exposes the mapping failure with its own
+      // safe detail. Do not turn an expected fail-closed result into a 500.
+      observedQuorumTargetSnapshot = null;
+    }
+    const quorumTargetIds = observedQuorumTargetSnapshot?.current?.memberTargetIds ?? [];
+    const quorumSnapshotMatches =
+      input.run.metadata.quorumTargetSnapshot === null ||
+      (observedQuorumTargetSnapshot !== null &&
+        sameQuorumTargetSnapshot(input.run.metadata.quorumTargetSnapshot, observedQuorumTargetSnapshot));
 
     // Only a live run needs recovery evidence, and only a configured lab
     // publishes it; a dry run must not pay a file read for a check it skips.
@@ -423,6 +454,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
         stable: evidence.quorumStable,
         capturedAtHeight: evidence.chain.blocks,
         memberTargetIds: quorumTargetIds,
+        snapshotMatches: quorumSnapshotMatches,
       },
       baseline: {
         required: input.baselineRequired,
