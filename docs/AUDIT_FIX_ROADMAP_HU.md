@@ -16,16 +16,15 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 2 | Chaos-biztonság: netem-sáv, szűrő, host-kötés | **KÓD KÉSZ**; takarítás **KÉSZ**; pilot-újratelepítés a merge után |
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
 | 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
-| 5 | Szimulátor: tervezett vég és live-lock | **RÉSZBEN KÉSZ** (2026-09-05); a tervezett vég hátra |
+| 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | nyitva |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
 | 8 | Kliens: a fő üzenet helyreállítása | nyitva |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** az 5. nap maradéka — a tervezett vég: az ütemezett
-`fault-clear` végrehajtása és a `recoveredTip` a wrapper visszaigazolásához
-kötése. Tisztán repóbeli munka.
+**Következő pontos feladat:** 6. nap — a mérés: anchor, ablak, küszöbök,
+next-quorum. Tisztán repóbeli munka.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -346,13 +345,33 @@ A live-lock körüli hibacsokor, ami az „egy live futam egyszerre" garanciát 
   elbukik, és hozzá sem ér a lockhoz — az első változatom ezért zölden maradt a
   javítás nélkül is.
 
-**Hátra az 5. napból:** a tervezett vég. Az ütemezett `fault-clear` ma bekerül a
-dispatcher táblájába, de a lookup kihagyja, tehát **a netem-fault sosem szűnik
-meg a tervezett végén**, csak kézi `recover`-re vagy a wrapper TTL-jére. Ezzel
-megy együtt, hogy a `recoveredTip` a wrapper visszaigazolásakor íródjon, ne az
-emberi `recover` pillanatában — ma a mérési ablak hossza az operátor
-reakcióidejétől függ. Ide tartozik még a `GET /admin/simulations/lock` és a
-safety-admin elengedés, hogy egy bennragadt slot látható és oldható legyen.
+**A második menetben (2026-09-05):**
+
+- **A dispatcher nem sorol be olyat, amit végre sem tud hajtani.** Az ütemezett
+  `fault-clear` bekerült a táblába, de a fordítás szándékosan elutasítja, mert az
+  recovery dolga — így a sor lookupja sosem találta meg, elbukott, felment a
+  próbálkozási plafonig, és **minden netem-futam hamis „sikertelen akció" sorokat
+  hagyott maga után**, dispatcher-hibát írva le ott, ahol nem volt.
+- **A live lock láthatóvá és oldhatóvá vált.** Eddig semmi nem jelentette, ki
+  tartja a labort: a `GET /runs?live=true` futam-projekciókat olvas, nem a
+  lockot, tehát egy olyan birtokos, akire egy futam sem mutat, láthatatlan volt,
+  és az egyetlen tünet az volt, hogy órákon át minden indítás `LIVE_RUN_LOCKED`-öt
+  adott. Most van `GET /lock`, és van safety-admin `POST /lock/release`, ami
+  **megnevezteti a várt futamot** és **elutasít, ha a birtokos futam még él** —
+  egy futó kísérlet alól kinyitni a slotot pontosan az, ahogy két fault kerül egy
+  laborra.
+
+**Átsorolva a 6. utáni munkára, indoklással: a tervezett vég.** Ma a netem-fault
+nem a terv szerinti végén szűnik meg, hanem a wrapper saját TTL-jén,
+`időtartam + 120 s`-mal később. A túllógás valós, de a fault **magától elmúlik**,
+tehát nem marad a hoston. A rendes javítás nem mechanikus: a wrapper egyetlen
+`clear <jobId>` parancsot ismer, a terv `fault-clear`-je viszont `scope: 'run'`,
+és ugyanaz a fordító adja a recovery-célpontokat is, ahol a `fault-clear`
+felvétele korábban bizonyítottan hibát okozott. Ehhez tartozik a per-akció lease
+is, amit ma a futam-szintű lease felülír. Ezt együtt kell megcsinálni, és
+**laborban kell bizonyítani**, ami itt nem elérhető — ezért nem tákolom össze
+vakon. A `recoveredTip` wrapper-visszaigazoláshoz kötése ugyanennek a
+csomagnak a része.
 
 ## 6. nap – mérés: anchor, ablak, küszöbök
 

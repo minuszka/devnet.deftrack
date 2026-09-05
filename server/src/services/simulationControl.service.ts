@@ -1,7 +1,13 @@
 import { chainlockProfileAtHeight } from '../config/llmq.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { simulationRunKeyFor } from '../domain/simulationIdentity.js';
-import type { ChainAnchor, SimulationRunEvent, SimulationRunStatus } from '../domain/simulationRunState.js';
+import {
+  TERMINAL_SIMULATION_STATUSES,
+  type ChainAnchor,
+  type SimulationRunEvent,
+  type SimulationRunStatus,
+} from '../domain/simulationRunState.js';
+import type { LiveRunLock } from '../domain/liveRunLock.js';
 import type {
   SimulationAuditActor,
   SimulationNetwork,
@@ -888,6 +894,55 @@ export class SimulationControlService {
     // succeed here, one as `acquired` and one as `already-held`, and only the
     // first may ever release it.
     return result.disposition === 'acquired';
+  }
+
+  /**
+   * Who holds the lab, and until when.
+   *
+   * Nothing reported this. `GET /runs?live=true` reads run projections rather
+   * than the lock, so an incumbent that no run pointed at -- one whose release
+   * failed, or that outlived its run -- was invisible, and the only symptom was
+   * every later start answering LIVE_RUN_LOCKED for hours.
+   */
+  async liveLockStatus(): Promise<{
+    configured: boolean;
+    lock: LiveRunLock | null;
+    /** Whether the lease is still in force, which is what actually blocks. */
+    blocking: boolean;
+  }> {
+    if (this.liveRunLock === undefined) return { configured: false, lock: null, blocking: false };
+    const lock = await this.liveRunLock.current();
+    const blocking = lock?.status === 'held' && lock.leaseUntilMs > this.clock();
+    return { configured: true, lock, blocking };
+  }
+
+  /**
+   * Give the lab back by hand.
+   *
+   * Refused while the incumbent is still live: forcing the slot open under a
+   * running experiment is how two faults end up on one lab, which is the single
+   * thing this lock exists to prevent. It is for a slot whose run has already
+   * finished and could not release it.
+   */
+  async forceReleaseLiveLock(input: { expectedRunKey: string }): Promise<{ released: boolean; reason?: string }> {
+    if (this.liveRunLock === undefined) return { released: false, reason: 'no live-run lock is configured' };
+    const lock = await this.liveRunLock.current();
+    if (lock === null || lock.status === 'released') return { released: false, reason: 'the lab is not locked' };
+    if (lock.runKey !== input.expectedRunKey) {
+      throw new SimulationControlError(
+        'INVALID_STATE',
+        `the lab is held by ${lock.runKey}, not by ${input.expectedRunKey}`
+      );
+    }
+    const run = await this.runs.loadRun(lock.runKey).catch(() => null);
+    if (run !== null && !TERMINAL_SIMULATION_STATUSES.includes(run.state.status)) {
+      throw new SimulationControlError(
+        'INVALID_STATE',
+        `${lock.runKey} is still ${run.state.status}; recover it rather than forcing the lock open`
+      );
+    }
+    await this.liveRunLock.releaseForRun({ runKey: lock.runKey, nowMs: this.clock() });
+    return { released: true };
   }
 
   /** Best effort: a lock that outlives its run expires anyway, and must not mask the run's own outcome. */
