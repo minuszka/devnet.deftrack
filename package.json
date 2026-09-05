@@ -22,7 +22,8 @@
     "verify:chaos": "bash ops/chaos/verify.sh",
     "verify:shell": "bash ops/check-shell.sh",
     "verify:secrets": "bash ops/check-secret-gate.sh",
-    "verify:ops": "node ops/check-imports.mjs"
+    "verify:ops": "node ops/check-imports.mjs",
+    "verify:netns": "bash ops/chaos/tests/netns.sh"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
