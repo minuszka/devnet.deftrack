@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { PeerPropagation } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { PeerObservation } from '../../models/PeerObservation.js';
 import { HostStatus } from '../../models/HostStatus.js';
@@ -188,7 +189,7 @@ router.get(
 
     const statuses = await HostStatus.find().sort({ host: 1 }).lean();
 
-    sendData(res, {
+    const body: PeerPropagation = {
       topic: q.topic,
       hostsReporting: expected,
       events,
@@ -205,7 +206,8 @@ router.get(
         nodeBuild: h.nodeBuild ?? '',
         reportedAt: h.reportedAt.toISOString(),
       })),
-    });
+    };
+    sendData(res, body);
   })
 );
 

@@ -322,9 +322,31 @@ export class DdPageStaking extends LitElement {
    * by key.
    */
   private _hero(d: StakingHealth): TemplateResult {
+    // byHost is null when no payout script is attributed to a machine at all.
+    // The per-key numbers are NOT a fallback -- one host staking five outputs
+    // reads as five producers, which is the concentration error this panel
+    // exists to correct -- so the panel says it cannot answer instead.
+    if (d.byHost === null) {
+      return html`
+        <section class="hero">
+          <div class="hero-head">
+            <span class="eyebrow">Who produced the last ${num(d.blocks)} blocks</span>
+            <span class="verdict">Not attributable<span class="tag">no host ownership</span></span>
+          </div>
+          <div class="note" style="margin: 6px 16px 16px">
+            No payout script in this window is attributed to a machine, so the producer count
+            cannot be given. The payout-key breakdown below is not a substitute: a coinstake pays
+            the key of the output it spent, so one machine staking several outputs appears as
+            several producers.
+          </div>
+        </section>
+      `;
+    }
+
     const hosts = d.byHost.hosts;
     const machines = d.byHost.distinctHosts;
     const hhi = d.byHost.hhi;
+    const unattributed = d.byHost.unattributedBlocks;
 
     if (machines <= 1) {
       return html`
@@ -373,11 +395,11 @@ export class DdPageStaking extends LitElement {
                 >
               `
             )}
-            ${d.byHost.unattributedBlocks > 0
+            ${unattributed > 0
               ? html`<span
                   class="seg-un"
-                  style="flex:${((d.byHost.unattributedBlocks / d.blocks) * 100).toFixed(3)}"
-                  title="${num(d.byHost.unattributedBlocks)} block(s) unattributed"
+                  style="flex:${((unattributed / d.blocks) * 100).toFixed(3)}"
+                  title="${num(unattributed)} block(s) unattributed"
                   >?</span
                 >`
               : nothing}
@@ -428,7 +450,9 @@ export class DdPageStaking extends LitElement {
         <dd-stat
           label="Payout keys"
           value=${num(d.distinctStakers)}
-          sub="across ${num(d.byHost.distinctHosts)} machine(s)"
+          sub=${d.byHost === null
+            ? 'no machine attribution in this window'
+            : `across ${num(d.byHost.distinctHosts)} machine(s)`}
         ></dd-stat>
       </section>
     `;
@@ -440,10 +464,12 @@ export class DdPageStaking extends LitElement {
    * key is what a coinstake actually pays and the gini is measured over them.
    */
   private _leaderboard(d: StakingHealth): TemplateResult {
-    const machines = this._view === 'machines';
-    const rows = machines
-      ? d.byHost.hosts.map((h) => ({ name: h.host, blocks: h.blocks, share: h.share }))
-      : d.stakers.map((s) => ({ name: `${s.payee}…`, blocks: s.blocks, share: s.share }));
+    // With no host attribution there is no machine view to switch to.
+    const byHost = d.byHost;
+    const machines = this._view === 'machines' && byHost !== null;
+    const rows = machines && byHost
+      ? byHost.hosts.map((h) => ({ name: h.host, blocks: h.blocks, share: h.share }))
+      : d.stakers.map((s) => ({ name: s.host ?? `${s.payee}…`, blocks: s.blocks, share: s.share }));
     const top = rows[0]?.blocks ?? 1;
 
     return html`
@@ -452,10 +478,10 @@ export class DdPageStaking extends LitElement {
           <div class="card-title">Blocks per ${machines ? 'machine' : 'payout key'}</div>
           <div class="page-sub mono" style="display:flex; gap:12px; align-items:center">
             <span
-              >${num(d.fromHeight)}–${num(d.toHeight)}${machines
-                ? d.byHost.hhi === null
+              >${num(d.fromHeight)}–${num(d.toHeight)}${machines && byHost
+                ? byHost.hhi === null
                   ? ''
-                  : ` · hhi ${d.byHost.hhi.toFixed(2)}`
+                  : ` · hhi ${byHost.hhi.toFixed(2)}`
                 : d.gini === null
                   ? ''
                   : ` · gini ${d.gini.toFixed(2)}`}</span

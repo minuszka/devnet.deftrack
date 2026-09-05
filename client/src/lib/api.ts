@@ -13,9 +13,40 @@ import type {
   BlockDetail,
   TxRow,
   TxDetail,
+  ChainLockReport,
+  HealthSnapshot,
+  StakingHealth,
+  ProfileOutcome,
+  ExperimentOutcome,
+  ExperimentRow,
+  ExperimentDetail,
+  PeerPropagation,
+  SelectionFairness,
+  DslSummary,
+  DslEpochRow,
 } from '@devnet-deftrack/shared';
 
+/*
+ * The response shapes live in shared/ now, so the server compiles against the
+ * same definitions. Re-exported here because a page asks its API client what
+ * a response looks like, not the wire contract package.
+ */
+export type {
+  ChainLockReport,
+  HealthSnapshot,
+  StakingHealth,
+  ProfileOutcome,
+  ExperimentOutcome,
+  ExperimentRow,
+  ExperimentDetail,
+  PeerPropagation,
+  SelectionFairness,
+  DslSummary,
+  DslEpochRow,
+};
+
 const BASE = '/api/v1';
+
 
 export class ApiError extends Error {
   constructor(
@@ -58,249 +89,16 @@ async function request<T>(path: string, params?: Params, signal?: AbortSignal): 
   return body.data;
 }
 
-export interface ChainLockReport {
-  firstLockedHeight: number | null;
-  blocksConsidered: number;
-  eligible: number;
-  locked: number;
-  unlocked: number;
-  coverage: number | null;
-  gaps: Array<{ from: number; to: number; blocks: number }>;
-  latencyMeasured: number;
-  latencySec: { p50: number | null; p90: number | null; max: number | null };
-  /** Same-host ZMQ block-arrival -> CLSIG-arrival measurements. */
-  eventLatencyMeasured: number;
-  eventLatencyMs: { p50: number | null; p90: number | null; max: number | null };
-  sourceCounts: { zmq: number; poll: number; unknown: number };
-  /**
-   * The Q60 switchover as data: the signed-height resolver flips the signing
-   * profile from v1 to v2 at activationHeight, one-way. firstV2LockedHeight is
-   * null until the first post-activation lock is observed.
-   */
-  signers: {
-    v1: string;
-    v2: string;
-    activationHeight: number;
-    firstV2LockedHeight: number | null;
-    counts: { v1: number; v2: number };
-  };
-  /** Fast polling interval used only when ZMQ is disabled. */
-  resolutionSec: number;
-  reconciliationIntervalSec: number;
-  points: Array<{
-    height: number;
-    time: number;
-    locked: boolean;
-    latencySec: number | null;
-    latencyMs: number | null;
-    source: 'zmq' | 'poll' | null;
-    /** LLMQ profile that signed this block's lock; null when unknown. */
-    signer: string | null;
-  }>;
-}
 
-export interface HealthSnapshot {
-  /** 'ok' | 'degraded' | 'down' -- the endpoint answers 503 for the last two. */
-  status: string;
-  /** Which readiness probes failed; empty when status is 'ok'. */
-  failing: string[];
-  devnet: string;
-  uptimeSeconds: number;
-  mongo: string;
-  chainTip: number;
-  indexedHeight: number;
-  indexedBlocks: number;
-  behind: number;
-  rounds: { formed: number; failed: number; pending: number; impossible: number };
-  nodeVersion: string;
-  masternodes: { total: number; enabled: number };
-  stakers: { active: number; windowBlocks: number };
-  observation?: {
-    zmq: { enabled: boolean; connected: boolean; received: number; missed: number };
-  };
-}
 
-export interface StakingHealth {
-  blocks: number;
-  windowBlocks: number;
-  fromHeight: number;
-  toHeight: number;
-  medianIntervalSec: number | null;
-  meanIntervalSec: number | null;
-  longestGapSec: number | null;
-  stallCount: number;
-  distinctStakers: number;
-  hhi: number | null;
-  gini: number | null;
-  topStakerShare: number | null;
-  stakers: Array<{ payee: string; blocks: number; share: number }>;
-  /** The same window counted by machine rather than by payout key. */
-  byHost: {
-    distinctHosts: number;
-    hhi: number | null;
-    topHostShare: number | null;
-    unattributedBlocks: number;
-    hosts: Array<{ host: string | null; blocks: number; share: number }>;
-  };
-}
 
-export interface ProfileOutcome {
-  llmqName: string;
-  dkgInterval: number;
-  rounds: { formed: number; failed: number; pending: number; impossible: number };
-  formationRate: number | null;
-  medianHealthRatio: number | null;
-  worstHealthRatio: number | null;
-  longestFailureStreak: number;
-  membersPunished: number;
-}
 
-export interface ExperimentOutcome {
-  rounds: { formed: number; failed: number; pending: number; impossible: number };
-  formationRate: number | null;
-  medianHealthRatio: number | null;
-  worstHealthRatio: number | null;
-  longestFailureStreak: number;
-  banEvents: number;
-  revivalEvents: number;
-  penaltyIncreases: number;
-  masternodesPunished: number;
-  blocks: number;
-  medianBlockIntervalSec: number | null;
-  distinctStakers: number;
-  chainLockedBlocks: number;
-  chainLockCoverage: number | null;
-  /** Absent on runs closed before more than one quorum type was tracked. */
-  byProfile?: ProfileOutcome[];
-}
 
-export interface ExperimentRow {
-  runKey: string;
-  title: string;
-  hypothesis: string;
-  expected: string;
-  status: 'running' | 'closed';
-  startedAt: string;
-  endedAt: string | null;
-  startHeight: number;
-  endHeight: number | null;
-  nodeVersion: string;
-  nodeGitSha: string | null;
-  profile: { llmqName: string; size: number; minSize: number; threshold: number; dkgInterval: number };
-  participants: { masternodes: number; hosts: number; stakers: number };
-  intervention: { kind: string; description: string; targets: string[] } | null;
-  baselineRunKey: string | null;
-  outcome: ExperimentOutcome | null;
-  notes: string | null;
-}
 
-export interface ExperimentDetail extends ExperimentRow {
-  /** The network as it stands now; null once the run is closed. */
-  currentParticipants: { masternodes: number; hosts: number; stakers: number } | null;
-  tipHeight: number;
-  comparison: {
-    baselineRunKey: string;
-    baseline: ExperimentOutcome;
-    delta: {
-      formationRate: number | null;
-      medianHealthRatio: number | null;
-      masternodesPunished: number;
-      medianBlockIntervalSec: number | null;
-      chainLockCoverage: number | null;
-    };
-  } | null;
-}
 
-export interface PeerPropagation {
-  topic: 'block' | 'chainlock';
-  hostsReporting: string[];
-  events: Array<{
-    hash: string;
-    height: number | null;
-    hosts: number;
-    firstHost: string | null;
-    lastHost: string | null;
-    spreadMs: number | null;
-    medianDelayMs: number | null;
-    uncertaintyMs: number;
-    uncertaintyIsLowerBound: boolean;
-    clockUnknownHosts: string[];
-    withinNoise: boolean;
-    missingHosts: string[];
-    delays: Array<{ host: string; delayMs: number }>;
-  }>;
-  laggards: Array<{ host: string; samples: number; meanDelayMs: number; lastPlaceShare: number }>;
-  hosts: Array<{
-    host: string;
-    peers: number;
-    inbound: number;
-    verifiedMasternodes: number;
-    medianPingMs: number | null;
-    height: number | null;
-    clockOffsetMs: number | null;
-    agentVersion: string;
-    /** Fingerprint of the daemon binary; '' when the agent could not read it. */
-    nodeBuild: string;
-    reportedAt: string;
-  }>;
-}
 
-export interface SelectionFairness {
-  roundsConsidered: number;
-  expectedSelectionRate: number | null;
-  minSamples: number;
-  llmqName: string | null;
-  heightRange: { from: number; to: number } | null;
-  nodes: Array<{
-    proTxHash: string;
-    operatorLabel: string | null;
-    host: string | null;
-    timesSelected: number;
-    timesInvalid: number;
-    selectionRate: number;
-    invalidRate: number | null;
-  }>;
-  hosts: Array<{
-    host: string;
-    nodes: number;
-    timesSelected: number;
-    timesInvalid: number;
-    invalidRate: number | null;
-  }>;
-  neverSelected: string[];
-  neverSelectedCount: number;
-}
 
-export interface DslSummary {
-  activationHeight: number;
-  epochInterval: number;
-  firstCommittableBoundary: number | null;
-  enforcement: boolean;
-  epochsJudged: number;
-  committed: number;
-  absent: number;
-  convergenceRate: number | null;
-  totalMissedBits: number;
-  latest: {
-    epoch: number;
-    boundaryHeight: number;
-    status: 'committed' | 'absent';
-    missedCount: number | null;
-  } | null;
-}
 
-export interface DslEpochRow {
-  epoch: number;
-  boundaryHeight: number;
-  status: 'committed' | 'absent';
-  txid: string | null;
-  epochBlockHash: string | null;
-  quorumHash: string | null;
-  missedCount: number | null;
-  listSize: number | null;
-  missedIndices: number[];
-  detectedAt: string;
-}
 
 /**
  * The whole API surface, optionally bound to one AbortSignal.

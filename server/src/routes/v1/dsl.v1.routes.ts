@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { DslEpochRow, DslSummary } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { ServiceEpoch } from '../../models/ServiceEpoch.js';
@@ -40,7 +41,7 @@ router.get(
       ServiceEpoch.countDocuments(filter),
     ]);
 
-    const items = epochs.map((e) => ({
+    const items: DslEpochRow[] = epochs.map((e) => ({
       epoch: e.epoch,
       boundaryHeight: e.boundaryHeight,
       status: e.status,
@@ -51,7 +52,9 @@ router.get(
       listSize: e.listSize,
       missedIndices: e.missedIndices,
       missedProTxHashes: e.missedProTxHashes ?? [],
-      detectedAt: e.detectedAt,
+      // ISO on the wire, like every other timestamp this API sends: a Date here
+      // only looks right because JSON.stringify quietly converts it.
+      detectedAt: e.detectedAt.toISOString(),
     }));
 
     sendData(res, page(items, total, q.limit, q.offset));
@@ -81,7 +84,7 @@ router.get(
     ]);
 
     const judged = committed + absent;
-    sendData(res, {
+    const body: DslSummary = {
       // Declared, never inferred: these are the devnet's consensus parameters,
       // keyed in config exactly like the LLMQ profiles.
       activationHeight: config.dsl.activationHeight,
@@ -107,7 +110,8 @@ router.get(
             missedCount: latest.missedCount,
           }
         : null,
-    });
+    };
+    sendData(res, body);
   })
 );
 

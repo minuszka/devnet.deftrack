@@ -19,12 +19,14 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 8 | Kliens: a fő üzenet helyreállítása | **RÉSZBEN KÉSZ** (2026-09-05) |
+| 8 | Kliens: a fő üzenet helyreállítása | **KÉSZ** (2026-09-05) |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** a 8. nap maradéka — kör-részlet oldal,
-`PollController` és a fetch-versenyek, beavatkozás-jelvények, akadálymentesség.
+**Következő pontos feladat:** a 9. nap — shellcheck és `node --check` az
+ops-szkriptekre, gitleaks, negatív kontrollok (netns 100 %-os loss,
+rollback `null` RPC-vel), integrációs tesztek az öt írószolgáltatásra, és a
+rossz viselkedést rögzítő négy teszt javítása.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -620,6 +622,70 @@ szövegesen azt mondja, hogy senkit nem büntetett.
   másik egy másikon, miközben tizenhárom oldal rendereli — vagyis egy kivétellel
   minden hibasáv stílus nélküli szövegtörzs volt, ami tartalomnak látszik, nem
   hibának.
+
+### A 8. nap második menete (2026-09-05) — a nap ezzel lezárult
+
+- **Egy poller, és a lassú válasz többé nem nyer** (#94). Tizenhárom oldal és a
+  shell külön `setInterval`-t vitt, és mindegyik ugyanazt a hármat rontotta el: a
+  rejtett fül tovább kérdezett (egy háttérfül percenként lekérte a teljes
+  ChainLock-riportot, örökre); semmi nem szakította meg a lecserélt kérést, tehát
+  szűrőváltásnál a *lassabb, régi* válasz nyert, és az oldal az előző szűrő adatán
+  állapodott meg; a megszakított kérés pedig a `catch`-ben landolt, vagyis hibának
+  látszott, ami nem volt az. A `PollController` egy helyen tartja az intervallumot,
+  a `visibilitychange`-et, a futásonkénti `AbortController`-t és a
+  sorozat-őrt — utóbbi az, ami akkor is helyes marad, ha a hívást nem lehet
+  megszakítani. Vele jött `errorMessage`/`isAbortError` (az elsőből tizenhárom
+  kézi másolat volt, a másodikból nulla) és a közös `pagerStyles`: három oldal
+  vitte a lapozó bájtra azonos másolatát, és csak az egyiken volt fókuszgyűrű.
+- **A kör egy objektum lett** (#95). A szerver a gyűjtő megírása óta kiszolgálja a
+  `/quorum-rounds/:id`-t — tagok `valid` flaggel, churn, a kör profilparaméterei —
+  és **semmi nem hivatkozott rá**: a sor kiírta, hogy hat tag bukott, és nem
+  lehetett megkérdezni, melyik hat, egy olyan oldalon, aminek ez a célja. Az új
+  `/round/<roundKey>` a verdiktet **mondatban** nyitja, a tagokat operátoronként
+  csoportosítja (bukottak elöl), és megmutatja a profilt úgy, ahogy az a körre rá
+  volt írva. Kiderült közben, hogy **a nyitóoldal saját táblája** még mindig a régi
+  módon olvasta a kört (piros `failed` pill és sima `0` a zöld `formed` és a sima
+  `12` mellett) — a legtöbbet olvasott tábla az oldalon, hónapokkal a szabály
+  leírása után. Most ugyanazt a `roundVerdict`-et hívja, és a health-chart is: a
+  borostyán jel a **büntető** kör, a nem formálódott kör pedig halvány, ahol eddig
+  a diagram leghangosabb eleme volt (`--crit`).
+- **Kontraszt, táblák, billentyűzet** (#96). Az `--ink-3` **3,19:1** volt azon a
+  felületen, amin a legtöbbet ül — a 4,5:1 alatt —, és ő viszi a mértékegységeket,
+  az időbélyegeket és minden gondolatjelet, ami azt jelenti, hogy „ez az érték nem
+  létezik". A palettát végigmérve még két szövegszín bukott: sötétben a `--crit`
+  (3,30:1 — a hibasáv és a health-cellák), világosban a `--warn` (3,81:1 — a
+  büntetett darabszám). A `styles/contrast.test.ts` most **magát a stíluslapot
+  olvassa**, és bukik minden 4,5:1 alatti szövegtokenre és 3:1 alatti diagramjelre.
+  Fájlból olvas, nem `?raw` importtal: a vitest kicseréli a CSS-importot üres
+  sztringre, amivel minden állítás átment volna — miközben semmit nem mér.
+  Mellette: 151 oszlopfejléc kapott `scope`-ot, 26 tábla `<caption>`-t, három
+  oldal szegmenskapcsolója `aria-pressed`-et, és a diagram minden köre
+  fókuszálható lett, saját felolvasott mondattal — eddig a számok egyetlen
+  helyen léteztek, egy egérrel elérhető tooltipben.
+- **Beavatkozás-jelvények** (#96). Egy kör, amit öt leállított masternode mellett
+  vagy közvetlenül egy revive után mértek, igaz szám egy olyan hálózatról, amiből
+  nem szabad általánosítani — a jegyzet őrzi azt a kört, ami 0,16-os healthtel és
+  42 büntetett taggal zárt, pusztán mert a revive-olt tagoknak még nem volt
+  meshük. A deklarált kísérlet-ablakba vagy egy revive utáni két körbe eső sorok
+  ezt most kiírják, és a futásra linkelnek. A távolság **a profil köreiben**
+  számolódik, nem blokkban, tehát ugyanazt jelenti 24 és 72 blokkos ütemen.
+  Ugyanitt tűnt el a fejléc `900 formed / 12 failed` sora: öt ütemezés együtt,
+  health nélkül — vagyis formation rate-nek olvasódott minden oldalon.
+- **Egy definíció válaszonként** (#97). Tizenegy válaszforma csak a kliensben élt,
+  kézzel másolva; négyük a szerverben is létezett külön. Most a `shared/`-ben
+  vannak, és minden útvonal **annotálva** küldi őket — ez teszi a driftet
+  fordítási hibává üres panel helyett. Az első, ami így kiesett, éles volt: a
+  `StakingHealth.byHost` a szervertől **`null`** jön, ha egyetlen kifizetési
+  szkript sem köthető géphez, a kliens típusa viszont nem-null volt és rögtön
+  `.hosts`-ot olvasott rajta. Két kisebb: a staking-útvonal `host` mezőt is küld
+  minden stakerhez, a DSL `missedProTxHashes`-t, és a `DslEpochRow.detectedAt`
+  `Date` volt, ami csak azért nézett ki jól, mert a `JSON.stringify` átalakítja.
+- **Kliens-tesztek: 11 → 79.** `PollController` (7, negatív kontrollal),
+  `groupByOperator` (6), `roundSentence` (4), `router` (9, benne hogy a `/rounds`
+  szekciót nem nyeli el a `/round/:id`), `interventions` (8), kontraszt (6, magával
+  a WCAG-számítással is ellenőrizve), `format` (13, benne a BigInt-út: a supply
+  túl van a `Number.MAX_SAFE_INTEGER`-en), `classifyNetwork` (8, a minSize-határ
+  mindkét oldala) és `lineSegments` (7: a nem formálódott kör **rés**, sosem nulla).
 
 ## 9. nap – CI és szerszám-hitelesítés
 

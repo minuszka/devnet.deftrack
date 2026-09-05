@@ -1,6 +1,7 @@
 import { LitElement, css, html, svg, nothing, type TemplateResult } from 'lit';
 import type { HealthTimelinePoint } from '@devnet-deftrack/shared';
 import { ago, num, ratio } from '../lib/format.js';
+import { lineSegments } from '../lib/healthSeries.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
 import { baseStyles } from '../styles/shared.js';
 
@@ -266,18 +267,11 @@ export class DdHealthChart extends LitElement {
       );
 
     // Break the line wherever a round did not form, so the eye is not led
-    // across a gap that never had data.
-    const segments: Array<Array<{ x: number; y: number }>> = [];
-    let current: Array<{ x: number; y: number }> = [];
-    for (const { p, i } of this.points.map((p, i) => ({ p, i }))) {
-      if (typeof p.healthRatio === 'number') {
-        current.push({ x: x(i), y: y(p.healthRatio) });
-      } else if (current.length > 0) {
-        segments.push(current);
-        current = [];
-      }
-    }
-    if (current.length > 0) segments.push(current);
+    // across a gap that never had data. The rule is in lib/healthSeries, where
+    // it can be tested -- this module cannot be imported outside a browser.
+    const segments = lineSegments(this.points).map((run) =>
+      run.map((i) => ({ x: x(i), y: y(this.points[i]!.healthRatio as number) }))
+    );
 
     const failed = this.points.map((p, i) => ({ p, i })).filter((d) => d.p.status === 'failed');
 

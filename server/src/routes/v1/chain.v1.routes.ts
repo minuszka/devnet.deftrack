@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { ChainLockReport } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { Block } from '../../models/Block.js';
 import { Transaction } from '../../models/Transaction.js';
@@ -344,7 +345,7 @@ router.get(
       unknown: locked.filter((b) => b.chainLockSource !== 'zmq' && b.chainLockSource !== 'poll').length,
     };
 
-    sendData(res, {
+    const body: ChainLockReport = {
       firstLockedHeight: first?.height ?? null,
       blocksConsidered: recent.length,
       eligible: eligible.length,
@@ -386,7 +387,8 @@ router.get(
           signer: b.chainLockLlmqName ?? null,
         }))
         .reverse(),
-    });
+    };
+    sendData(res, body);
   })
 );
 
