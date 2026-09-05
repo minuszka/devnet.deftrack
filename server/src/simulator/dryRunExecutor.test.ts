@@ -103,6 +103,67 @@ describe('pure DryRun executor', () => {
     expect(JSON.stringify(requestInput)).toBe(beforeRequest);
   });
 
+  it('never takes the seed down with a host outage', () => {
+    // The seed is where the explorer's own RPC and ZMQ evidence comes from.
+    // Stopping it stops the measurement rather than the network under test, and
+    // a host outage is about the masternodes on the host, not about silencing
+    // the observer that would have recorded it.
+    const ctx = context();
+    const seed = ctx.targets.find((item) => item.role === 'seed')!;
+    const shared = ctx.targets.map((item) =>
+      item.targetId === seed.targetId ? { ...item, hostRef: 'host-0' } : item
+    );
+    const plan = generateDryRunPlan(
+      request({
+        scenarioId: 'host-outage', scenarioVersion: 1, seed: 'blast',
+        parameters: { anchorTargetId: 'mn-00', durationSeconds: 300 },
+      }),
+      { ...ctx, targets: shared }
+    );
+
+    expect(plan.actions.map((action) => action.targetId)).not.toContain(seed.targetId);
+    expect(plan.actions.length).toBeGreaterThan(0);
+  });
+
+  it('refuses to degrade the seed at all', () => {
+    expect(() =>
+      generateDryRunPlan(
+        request({
+          scenarioId: 'network-degradation', scenarioVersion: 1, seed: 'blast',
+          parameters: {
+            role: 'seed', count: 1, durationSeconds: 300,
+            latencyMs: 100, jitterMs: 0, lossPercent: 0, correlationPercent: 0,
+          },
+        }),
+        context()
+      )
+    ).toThrow();
+  });
+
+  it('will not flap more stakers than the staker limit allows', () => {
+    // Block production rests on those daemons; flapping ten of them is a
+    // different experiment from flapping ten masternodes, and the schema said
+    // ten while the staker limit said five.
+    // Eight stakers registered, so a shortage cannot be what refuses this --
+    // only the limit can.
+    const ctx = context();
+    const extra = Array.from({ length: 3 }, (_, index) =>
+      target(`staker-x${index}`, 'staker', `staker-host-x${index}`)
+    );
+    const roomy = { ...ctx, targets: [...ctx.targets, ...extra] };
+    const flap = (count: number) =>
+      generateDryRunPlan(
+        request({
+          scenarioId: 'restart-flapping', scenarioVersion: 1, seed: 'blast',
+          parameters: { role: 'staker', count, cycles: 1, downSeconds: 10, upSeconds: 10 },
+        }),
+        roomy
+      );
+
+    expect(() => flap(5)).not.toThrow();
+    expect(() => flap(6)).toThrow(/stakers/);
+  });
+
   it('reports unknown margins rather than assuming a profile it was not given', () => {
     // The thresholds used to be literal 44 and 41. On the lab, whose profile is
     // 3/2/2 or whatever -llmqtestparams sets, that measured a devnet that was

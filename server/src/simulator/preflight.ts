@@ -30,6 +30,18 @@ export interface SimulationPreflightPolicy {
   maxExplorerAgeMs: number;
   maxObserverAgeMs: number;
   maxTargetSnapshotAgeMs: number;
+  /**
+   * How far the chain may have moved past the target snapshot.
+   *
+   * The check used to demand equality: the node's tip had to be the exact
+   * height the draft was taken at. Validate and arm therefore both had to
+   * complete inside one block -- 150 seconds on devnet, and a good deal less in
+   * practice -- and any run that took longer was rejected for a reason that had
+   * nothing to do with the network. The snapshot's own age bound already limits
+   * staleness; this bounds it in blocks as well, which is the unit the drift
+   * actually matters in.
+   */
+  maxTargetSnapshotLagBlocks: number;
   minObserverCoveragePercent: number;
   maxStaleTargets: number;
   maxWorkerAgeMs: number;
@@ -151,6 +163,7 @@ function assertInput(input: SimulationPreflightInput): void {
     maxExplorerAgeMs: input.policy.maxExplorerAgeMs,
     maxObserverAgeMs: input.policy.maxObserverAgeMs,
     maxTargetSnapshotAgeMs: input.policy.maxTargetSnapshotAgeMs,
+    maxTargetSnapshotLagBlocks: input.policy.maxTargetSnapshotLagBlocks,
     maxStaleTargets: input.policy.maxStaleTargets,
     maxWorkerAgeMs: input.policy.maxWorkerAgeMs,
     expectedQuorumSize: input.policy.expectedQuorumSize,
@@ -210,14 +223,20 @@ export function evaluateSimulationPreflight(
     `expected chain=${input.policy.expectedChain} genesis=${input.policy.expectedGenesisHash}; observed chain=${input.chain.chain} genesis=${input.chain.genesisHash}`
   ));
 
+  // Behind the snapshot is a different fault from merely being past it: a node
+  // below the height the draft was taken at cannot have seen what the draft
+  // describes, whatever the bound says.
+  const snapshotLag = input.chain.blocks - input.targetInventory.capturedAtHeight;
   const chainPassed =
     !input.chain.initialBlockDownload &&
     input.chain.blocks === input.chain.headers &&
-    input.chain.blocks === input.targetInventory.capturedAtHeight;
+    snapshotLag >= 0 &&
+    snapshotLag <= input.policy.maxTargetSnapshotLagBlocks;
   checks.push(check(
     'chain-synced', 'required', chainPassed, atMs,
     'The reference node is synchronized.', 'The reference node is not synchronized.',
-    `blocks=${input.chain.blocks}, headers=${input.chain.headers}, IBD=${input.chain.initialBlockDownload}, snapshot=${input.targetInventory.capturedAtHeight}`
+    `blocks=${input.chain.blocks}, headers=${input.chain.headers}, IBD=${input.chain.initialBlockDownload}, ` +
+      `snapshot=${input.targetInventory.capturedAtHeight}, lag=${snapshotLag}/${input.policy.maxTargetSnapshotLagBlocks}`
   ));
 
   const explorerLag = input.chain.blocks - input.explorer.indexedHeight;

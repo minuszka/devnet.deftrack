@@ -17,14 +17,14 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
 | 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
 | 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **RÉSZBEN KÉSZ** (2026-09-05) |
+| 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
 | 8 | Kliens: a fő üzenet helyreállítása | nyitva |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** a 6. nap maradéka — `chain-synced` preflight,
-kvórum-feloldás csak ahol kell, `phase:'dkg'` és a blast-radius. Utána 7. nap.
+**Következő pontos feladat:** 7. nap — a gyűjtő: egy igazságforrás, a kör-rekord
+a commitment-indexből. Tisztán repóbeli munka.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -423,6 +423,35 @@ a laborban a küszöbök a labor profiljából jönnek.
   riport `degraded` vagy `not-evaluable` lett, bármit is csinált a fault. Ha a
   küszöb ismeretlen, az mostantól **ismeretlenként** jelenik meg, nem nullaként —
   különben minden fault túlélhetőnek látszana.
+
+### A 6. nap második menete (2026-09-05)
+
+- **A `chain-synced` preflight már nem egyenlőséget követel.** Eddig a node
+  csúcsának pontosan azon a magasságon kellett állnia, ahol a draft készült,
+  vagyis a validate-nek és az armnak **egy blokkon belül** kellett lezárulnia —
+  devneten 150 másodperc, a gyakorlatban kevesebb. Egy ennél lassabb futam olyan
+  okból bukott el, aminek a hálózathoz semmi köze. A snapshot kora eddig is
+  korlátozva volt; most blokkban is korlátozott, ami az a mértékegység, amiben az
+  elcsúszás valóban számít. A csúcs alatti node továbbra is elutasítva, mert az
+  nem láthatta, amit a draft leír.
+- **A seed kikerült a rombolási sugárból.** A `host-outage` eddig a hoszt minden
+  `service-control` célpontját vitte, a seedet is, a `network-degradation` pedig
+  külön engedte a `seed` szerepet. A seed az, ahonnan az explorer RPC- és
+  ZMQ-bizonyítéka jön: leállítani nem a vizsgált hálózatot rontja, hanem a
+  mérést — és az eredmény hálózati leletnek látszana.
+- **A flapping staker-korlátja egyezik a staker-limittel.** A séma tízet
+  engedett, miközben a limit öt. A blokktermelés ezeken a démonokon áll; tízet
+  flappelni más kísérlet, mint tíz masternode-ot.
+- Három negatív kontroll. A staker-korlátét át kellett írnom: a fixtúrában csak
+  öt staker van, tehát a hatodik kérése hiány miatt amúgy is elbukott, és a
+  tesztem a szabály nélkül is zöld maradt volna.
+
+**Átsorolva:** a `phase:'dkg'` elutasítása és a formálódó kvórum tagságának
+kiszámolása. A `CalculateQuorum` determinisztikus a MN-listából és a ciklus-kezdő
+blokk hash-éből, tehát reimplementálható — de **a node saját tesztvektoraival kell
+hitelesíteni**, mielőtt egy scenario ráépül, különben egy rosszul újraírt
+kiválasztás pont azokat a tagokat célozná, amelyek nem is tagok. Ez önálló,
+bizonyítható munka, nem a 6. nap függeléke.
 
 ## 7. nap – gyűjtő: egy igazságforrás
 

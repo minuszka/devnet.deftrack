@@ -157,7 +157,16 @@ function resolveTargets(
       const anchor = context.targets.find((target) => target.targetId === request.parameters.anchorTargetId);
       if (anchor === undefined) throw new Error('host outage anchor is not registered');
       const selected = context.targets
-        .filter((target) => target.hostRef === anchor.hostRef && target.capabilities.includes('service-control'))
+        .filter((target) =>
+          target.hostRef === anchor.hostRef &&
+          target.capabilities.includes('service-control') &&
+          // Never the seed, whatever else shares its host. It is where the
+          // explorer's own RPC and ZMQ evidence comes from, so stopping it
+          // stops the measurement rather than the network under test -- and a
+          // host outage is about the masternodes on the host, not about
+          // silencing the observer that would have recorded it.
+          target.role !== 'seed'
+        )
         .sort((a, b) => compareByCodeUnit(a.targetId, b.targetId));
       if (selected.length === 0) throw new Error('host has no service-control targets');
       if (selected.length > 20) throw new Error('host outage exceeds the maximum target count');
