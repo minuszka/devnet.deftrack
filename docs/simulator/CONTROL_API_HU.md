@@ -54,6 +54,11 @@ nem szükséges; live preflightnál viszont nincs kerülőút.
 - `POST /runs/:runKey/recover`
 - `GET /runs/:runKey`
 - `GET /runs/:runKey/history`
+- `GET /targets`, `POST /targets/inventory-preview` (csak olvasó diff, nem ír)
+- `GET /quorums/forming?network=` -- a futó DKG quorumjának tagsága a láncból
+  levezetve, a formált quorumon elvégzett önellenőrzéssel és a target-regiszterre
+  képezett `resolutionFingerprint`-tel; csak olvas, semmit nem élesít. Lásd
+  `PREFLIGHT_HU.md`, „Aktuális és formálódó quorum”.
 
 A publikus, csak olvasható lista ettől külön a `/api/v1/simulations` alatt
 érhető el. A Mongo lekérdezés kötelező allowlist-projekciót használ; sem a

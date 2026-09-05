@@ -40,6 +40,19 @@ Blokkoló hibák többek között:
 
 Csak `enabled=true`, `maintenance=false` és a kért `regtest/devnet` hálózathoz tartozó target kerülhet a snapshotba. A mappingből publikus DTO nem készül; host, unit és port privát marad.
 
+## Aktuális és formálódó quorum
+
+A `quorumTargetSnapshot` két quorumot rögzít, és a kettő forrása különbözik.
+
+- **`current`**: a legutóbb formált quorum, ahogy a node a bányászott commitment után listázta (`quorum info`). Ez a kiválasztási bemenet: a `quorum-member-outage` ebből válogat, és minden tagjának egyértelmű targetre kell képződnie, különben a draft fail-closed.
+- **`next`**: a quorum, amelynek a DKG-je éppen fut. Nem jóslat: v20 alatt a node a ciklus-kezdő blokk hash-éből és az akkori MN-listából választ tagokat (`ComputeQuorumMembers`), így a taglista a kezdőblokk kibányászásától kezdve teljesen meghatározott, a commitment előtt is. A `simulator/quorumMemberSelection.ts` bitre pontosan reprodukálja ezt a választást (négy formált devnet quorumon ellenőrizve, sorrenddel együtt), a `simulator/formingQuorum.ts` pedig csak akkor ajánlja fel az eredményt, ha ugyanez a számítás előbb visszaadta az adott profil utolsó **formált** quorumát. Ha a visszaellenőrzés bukik, `next` üres, az ok pedig kimondja, hogy a választás nem reprodukálta a lánc döntését.
+
+A `next` minden hiányának oka szerepel a `nextUnavailableReason`-ben: a ciklus quorumja már commitolt és a következő kezdőblokk még nincs kibányászva (a hash a bemenet, ezért addig a tagság nem *ismeretlen*, hanem *nem létezik*); nincs formált quorum, amin a számítás ellenőrizhető; a profil a formálódási kapu alatt van; forgó vagy v20 utáni választás, amit a modul nem reprodukál; vagy egy tag kívül esik a regisztrált target-populáción. Az utolsó eset a regisztert minősíti, nem a draftot: a `current` továbbra is feloldódik, a `next` pedig a hiányzó tagok számával együtt kerül „nem elérhető” állapotba.
+
+Mindkét referencia hordozza a `provenance` mezőt (`observed` vagy `computed`) és a `verifiedAgainstQuorumHash`-t; ezek származási adatok, a `resolutionFingerprint` nem tartalmazza őket, így két megfigyelő ugyanarra a quorumra ugyanazt az ujjlenyomatot adja, függetlenül attól, hogy listázta vagy számolta. A preflight snapshot-egyezése kizárólag a `current` ujjlenyomatát hasonlítja: a formálódó quorum szabály szerint minden ciklusban változik, és ma egyetlen kiválasztási bemenet sem olvassa, ezért egy ciklushatáron átívelő draft–arm nem bukhat rajta.
+
+A `GET /quorums/forming` privát végpont ugyanezt a feloldást adja írás nélkül; a 15. nap elfogadási kapuja -- ugyanazt a quorumot minden megfigyelő ugyanazzal a taglistával oldja fel -- itt ellenőrizhető két observerről anélkül, hogy bármit élesíteni kellene.
+
 ## Kiválasztási módok
 
 - seedelt, determinisztikus random minta;

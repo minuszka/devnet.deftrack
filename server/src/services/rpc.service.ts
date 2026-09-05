@@ -228,6 +228,18 @@ export class RpcService {
   }
 
   /**
+   * The simplified masternode list at `height`, as `protx diff 1 <height>`
+   * reports it. It is the one RPC that exposes `confirmedHash` -- the
+   * detailed `protx list` state omits it -- and `isValid` is `!IsBanned()`,
+   * which covers the DSL ban as well as the DKG one. Base block 1 is the
+   * lowest the RPC accepts ("must not be 0") and holds no masternode, so the
+   * diff is the whole list.
+   */
+  protxSimplifiedListAt(height: number): Promise<RpcSimplifiedMnListDiff> {
+    return this.call<RpcSimplifiedMnListDiff>('protx', ['diff', 1, height]);
+  }
+
+  /**
    * A block with every transaction expanded, in one call.
    *
    * Verbosity 2 used to abort on every proof-of-stake block -- a coinstake
@@ -376,6 +388,30 @@ export interface RpcBlockchainInfo {
   difficulty: number;
   mediantime: number;
   initialblockdownload: boolean;
+  /**
+   * Buried deployments appear here only while reachable: v19 and v20 are
+   * absent on every network where their height is `numeric_limits<int>::max()`,
+   * which is all three. Absent therefore reads as inactive.
+   */
+  softforks?: Record<string, { type?: string; active?: boolean; height?: number }>;
+}
+
+export interface RpcSimplifiedMnListEntry {
+  nVersion: number;
+  nType: number;
+  proRegTxHash: string;
+  confirmedHash: string;
+  service: string;
+  pubKeyOperator: string;
+  votingAddress: string;
+  isValid: boolean;
+}
+
+export interface RpcSimplifiedMnListDiff {
+  baseBlockHash: string;
+  blockHash: string;
+  deletedMNs: string[];
+  mnList: RpcSimplifiedMnListEntry[];
 }
 
 export interface RpcBestChainLock {

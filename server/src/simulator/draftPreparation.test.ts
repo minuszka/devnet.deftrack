@@ -106,6 +106,36 @@ describe('simulation draft preparation', () => {
       .toBe(independentlyPrepared.metadata.quorumTargetSnapshot?.current?.resolutionFingerprint);
     expect(prepared.metadata.quorumTargetSnapshot?.nextUnavailableReason).toMatch(/not formed/);
   });
+
+  it('freezes a computed forming quorum with its provenance, and degrades one that leaves the registered population', () => {
+    const input = validInput();
+    const members = input.currentQuorumMemberProTxHashes;
+    const currentQuorum = {
+      llmqType: 100, llmqName: 'llmq_test', quorumHash: 'f'.repeat(64),
+      expectedHeight: HEIGHT - 24, quorumIndex: 0, capturedAtHeight: HEIGHT,
+      memberProTxHashes: members.slice(0, 3),
+    };
+    const nextQuorum = {
+      ...currentQuorum, quorumHash: 'e'.repeat(64), expectedHeight: HEIGHT,
+      memberProTxHashes: members.slice(1, 4), provenance: 'computed' as const,
+      verifiedAgainstQuorumHash: 'f'.repeat(64),
+    };
+    const prepared = prepareSimulationDraft({ ...input, currentQuorum, nextQuorum });
+    expect(prepared.metadata.quorumTargetSnapshot?.next).toMatchObject({
+      expectedHeight: HEIGHT, memberTargetIds: ['mn-1', 'mn-2', 'mn-3'],
+      provenance: 'computed', verifiedAgainstQuorumHash: 'f'.repeat(64),
+    });
+    expect(prepared.metadata.quorumTargetSnapshot?.nextUnavailableReason).toBeNull();
+
+    // A forming member the registry does not know is evidence about the registry,
+    // not a reason to refuse the draft: the current quorum still resolves.
+    const strayMember = { ...nextQuorum, memberProTxHashes: [...members.slice(1, 3), 'a'.repeat(64)] };
+    const degraded = prepareSimulationDraft({ ...input, currentQuorum, nextQuorum: strayMember });
+    expect(degraded.metadata.quorumTargetSnapshot?.current?.memberTargetIds).toEqual(['mn-0', 'mn-1', 'mn-2']);
+    expect(degraded.metadata.quorumTargetSnapshot?.next).toBeNull();
+    expect(degraded.metadata.quorumTargetSnapshot?.nextUnavailableReason)
+      .toBe(`The forming llmq_test quorum at ${HEIGHT} has 1 member(s) outside the registered target population.`);
+  });
 });
 
 describe('inventory failure reporting', () => {

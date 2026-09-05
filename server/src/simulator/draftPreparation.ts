@@ -11,6 +11,7 @@ import {
   type TargetResolutionPolicy,
 } from './targetResolver.js';
 import {
+  formingQuorumForTargets,
   freezeQuorumTargetSnapshot,
   type QuorumMembershipObservation,
 } from './quorumTargetSnapshot.js';
@@ -90,14 +91,23 @@ export function prepareSimulationDraft(input: {
       .filter((target) => target.proTxHash !== null)
       .map((target) => [target.proTxHash!.toLowerCase(), target.targetId])
   );
+  // The current quorum must map completely, because a scenario selects from it;
+  // a gap there is fatal and named by the resolver below. The forming quorum is
+  // evidence only, so a member outside the registered population makes it
+  // unavailable -- with the gap recorded -- rather than blocking the draft.
+  const forming = formingQuorumForTargets(
+    targetInventory.snapshots,
+    input.nextQuorum ?? null,
+    input.nextQuorumUnavailableReason ?? null
+  );
   const quorumTargetSnapshot = input.currentQuorum === undefined && input.nextQuorum === undefined &&
     input.nextQuorumUnavailableReason === undefined
     ? null
     : freezeQuorumTargetSnapshot({
         targets: targetInventory.snapshots,
         current: input.currentQuorum ?? null,
-        next: input.nextQuorum ?? null,
-        nextUnavailableReason: input.nextQuorumUnavailableReason ?? null,
+        next: forming.next,
+        nextUnavailableReason: forming.nextUnavailableReason,
       });
   const currentQuorumMemberProTxHashes = input.currentQuorum?.memberProTxHashes ?? input.currentQuorumMemberProTxHashes;
   const seenQuorumHashes = new Set<string>();

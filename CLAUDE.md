@@ -774,6 +774,33 @@ questions the project must answer.
 | `quorum list [count]` | quorum hashes per LLMQ type |
 | `quorum listextended [count]` | adds `numValidMembers`, `healthRatio`, `minedBlockHash`, `quorumIndex` |
 | `quorum info <llmqType> <quorumHash> [includeSkShare]` | `height`, `type`, `quorumHash`, `quorumIndex`, `minedBlock`, `members[]` (`proTxHash`, `service`, `pubKeyOperator`, `valid`), `quorumPublicKey` |
+| `protx diff <baseHeight> <height>` | the simplified MN list at `height` (`mnList[]`: `proRegTxHash`, `confirmedHash`, `isValid`, ...). The **only** RPC that exposes `confirmedHash`; `protx list registered true` omits it. Base must be >= 1 |
+| `quorum dkginfo [proTxHash]` | `next_dkg`, and per profile whether `proTxHash` sits in the upcoming quorum -- but `known: false` on every chain this tree runs, because below v20 the selection needs the unmined cycle base block hash |
+
+### A quorum's members are a pure function of its base block
+
+`quorumHash` **is** the hash of the cycle base block (`getblockhash H` for the
+quorum listed at `creationHeight` H -- two profiles formed at 8304 share the
+hash `6fb2178e…`). For a non-rotated profile below v20 -- every profile on every
+network this tree runs, since `V20Height` is `numeric_limits<int>::max()` in
+`chainparams.cpp` -- `ComputeQuorumMembers` (`llmq/utils.cpp`) takes the MN
+list *after* block H and `CalculateQuorum` (`evo/deterministicmns.cpp:283`)
+scores each valid, confirmed node with a **single** SHA256 over
+`SHA256(proTxHash‖confirmedHash) ‖ SHA256d(uint8(llmqType) ‖ blockHash)`, all in
+internal byte order, sorted descending as 256-bit little-endian integers, top
+`size`. `confirmedHash` is the hash of block `registeredHeight + 1`
+(`nMasternodeMinimumConfirmations = 1`). `isValid` is `!IsBanned()`, which
+includes the DSL ban.
+
+The explorer reproduces this in `simulator/quorumMemberSelection.ts`, verified
+**member order included** against four formed devnet quorums (fixture beside
+the test, read 2026-09-05 at tip 8320) with a negative control. Consequence: the
+quorum whose DKG is running has a fully determined member list from the moment
+its base block is mined, and `simulator/formingQuorum.ts` names it -- but only
+after reproducing the last formed quorum of the same profile first. A
+selection that cannot reproduce a committed quorum is not trusted with the
+forming one. Before the base block is mined the members are undefined, not
+merely unknown: the hash is the input.
 
 `quorum info` does **not** return `numValidMembers` or `healthRatio`; those come
 from `listextended`.
