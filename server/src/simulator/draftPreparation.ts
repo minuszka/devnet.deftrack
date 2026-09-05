@@ -43,6 +43,14 @@ export function prepareSimulationDraft(input: {
   nextQuorumUnavailableReason?: string | null;
   /** Compatibility input for callers that predate identified quorum evidence. */
   currentQuorumMemberProTxHashes: readonly string[];
+  /**
+   * The signing thresholds of the profile in force at this height.
+   *
+   * Absent means unknown, and unknown is reported as unknown: a preview that
+   * assumed Q60's 44 and 41 measured a devnet that was not there whenever it
+   * ran anywhere else, and the lab is exactly anywhere else.
+   */
+  quorumThresholds?: { dkg: number | null; chainLock: number | null };
   experimentRunKey?: string | null;
   baselineRunKey?: string | null;
   requestedBy: SimulationAuditActor;
@@ -112,6 +120,13 @@ export function prepareSimulationDraft(input: {
       currentHeight: input.currentHeight,
       targets: targetInventory.snapshots,
       quorumMemberTargetIds,
+      // The thresholds of the profile actually signing at this height, not
+      // Q60's. On the lab they are the test profile's, and pinning Q60's made
+      // every lab preview report a margin for a network that was not there.
+      quorumThresholds: {
+        dkg: input.quorumThresholds?.dkg ?? null,
+        chainLock: input.quorumThresholds?.chainLock ?? null,
+      },
     }
   );
   const metadata: SimulationRunMetadata = {

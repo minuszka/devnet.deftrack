@@ -76,8 +76,16 @@ export interface DryRunImpactEstimate {
   affectedCurrentQuorumMembers: number;
   currentQuorumSize: number | null;
   survivingCurrentQuorumMembers: number | null;
-  dkgThreshold: 44;
-  chainLockThreshold: 41;
+  /**
+   * The thresholds of the profile actually in force, not literals.
+   *
+   * They were pinned to Q60's 44 and 41. On the lab, whose profile is 3/2/2 or
+   * whatever `-llmqtestparams` sets, every preview then measured a devnet
+   * network that was not there: the margin was always negative and every report
+   * came back degraded or not evaluable, whatever the fault did.
+   */
+  dkgThreshold: number | null;
+  chainLockThreshold: number | null;
   dkgMarginAfterFault: number | null;
   chainLockMarginAfterFault: number | null;
   warnings: string[];
@@ -89,6 +97,11 @@ export interface DryRunContext {
   targets: readonly SimulationTargetSnapshot[];
   /** Exact members of the quorum relevant to this preview, if known. */
   quorumMemberTargetIds: readonly string[];
+  /**
+   * The thresholds the profile in force actually uses. Null when the profile is
+   * not known here, which is reported as unknown rather than assumed.
+   */
+  quorumThresholds?: { dkg: number | null; chainLock: number | null };
 }
 
 export interface DryRunRequest {

@@ -1,6 +1,6 @@
 import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
-import { chainlockProfileNameAtHeight } from '../config/llmq.js';
+import { chainlockProfileNameAtHeight, LLMQ_PROFILES } from '../config/llmq.js';
 import { Block } from '../models/Block.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { ObservationGap } from '../models/ObservationGap.js';
@@ -196,6 +196,9 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
       rounds: rounds.map((round) => ({
         llmqName: round.llmqName,
         dkgInterval: round.dkgInterval,
+        // From the profile registry: the round document records the schedule it
+        // ran under, not the phase layout, and the window needs both.
+        dkgPhaseBlocks: LLMQ_PROFILES[round.llmqName]?.dkgPhaseBlocks ?? 0,
         expectedHeight: round.expectedHeight,
         status: round.status,
         healthRatio: round.healthRatio,

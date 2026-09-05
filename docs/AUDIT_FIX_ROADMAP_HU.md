@@ -17,14 +17,14 @@ production hoszthoz. Amit ezek nem blokkolnak, az később jön.
 | 3 | Publikus felület: IP-redakció, admin-auth, boríték | **KÉSZ** (2026-09-05), két tétel átsorolva |
 | 4 | Szimulátor: a csendes no-op osztály lezárása | **KÉSZ** (2026-09-05); laborban még nem bizonyított |
 | 5 | Szimulátor: tervezett vég és live-lock | **KÉSZ, egy tétel átsorolva** (2026-09-05) |
-| 6 | Mérés: anchor, ablak, küszöbök, next-quorum | nyitva |
+| 6 | Mérés: anchor, ablak, küszöbök, next-quorum | **RÉSZBEN KÉSZ** (2026-09-05) |
 | 7 | Gyűjtő: egy igazságforrás (commitment-alapú kör-rekord) | nyitva |
 | 8 | Kliens: a fő üzenet helyreállítása | nyitva |
 | 9 | CI és szerszám-hitelesítés (negatív kontrollok) | nyitva |
 | 10 | Dokumentáció-drift és runbook | nyitva |
 
-**Következő pontos feladat:** 6. nap — a mérés: anchor, ablak, küszöbök,
-next-quorum. Tisztán repóbeli munka.
+**Következő pontos feladat:** a 6. nap maradéka — `chain-synced` preflight,
+kvórum-feloldás csak ahol kell, `phase:'dkg'` és a blast-radius. Utána 7. nap.
 
 **A 2. nap első VPS-lépése kész** (2026-09-05, jóváhagyással): a két maradvány
 install eltávolítva. Mind a 16 hoszt felmérve előtte, pontosan három hordozta a
@@ -399,6 +399,30 @@ Feladatok:
 
 Elfogadási kapu: egy horgonyzott futam **értékelhető** elsődleges profilt ad, és
 a laborban a küszöbök a labor profiljából jönnek.
+
+### Amit a 6. nap eddig elvégzett (2026-09-05)
+
+- **A horgonyzott futam végre látja azt a kört, amire pozicionálva lett.** A
+  kapu a ciklus kezdete + fázis magasságra teszi a faultot, mert ott van a
+  contribution-ablak — a kört viszont a *ciklus kezdete* nevezi meg, két
+  blokkal korábban, és a mérés a ciklus-kezdeteket kereste a megfigyelési
+  ablakban. A kettő pontosan `dkgPhaseBlocks`-szal tért el, ezért a futam épp
+  azt az egy kört nem látta, amiért létezett, és **minden horgonyzott futam
+  „nincs mit értékelni" eredményt adott**. A körök mostantól a **saját DKG-
+  munkájuk** szerint tartoznak a méréshez, és a **fault-ablakhoz**, nem a
+  megfigyelésihez: a warm-up azért van, hogy az állandósult mutatókat ne
+  olvassuk reagálás közben, egy kör viszont nem állandósult mutató, hanem maga
+  az esemény.
+- **Egy második szeletelés csendben visszacsinálta az elsőt.** A pillanatkép
+  ugyanazzal a tartománnyal újraszűrt, tehát a javítás önmagában hatástalan
+  maradt volna. Ez csak azért derült ki, mert a teszt a valódi geometriát
+  reprodukálta, nem a fixtúra kényelmes magasságait.
+- **A küszöbök az érvényben lévő profilból jönnek.** Eddig 44 és 41 volt
+  beégetve, két helyen literál típusként is. A laborban, ahol a profil 3/2/2, ez
+  **egy nem létező hálózatot mért**: a margó mindig negatív volt, és minden
+  riport `degraded` vagy `not-evaluable` lett, bármit is csinált a fault. Ha a
+  küszöb ismeretlen, az mostantól **ismeretlenként** jelenik meg, nem nullaként —
+  különben minden fault túlélhetőnek látszana.
 
 ## 7. nap – gyűjtő: egy igazságforrás
 

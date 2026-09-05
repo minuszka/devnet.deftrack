@@ -51,6 +51,7 @@ function evidence(): SimulationMeasurementEvidence {
     rounds: [3_928, 3_952, 3_976, 4_004].map((expectedHeight) => ({
       llmqName: 'llmq_defcon',
       dkgInterval: 24,
+      dkgPhaseBlocks: 2,
       expectedHeight,
       status: 'formed' as const,
       healthRatio: 1,

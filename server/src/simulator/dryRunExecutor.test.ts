@@ -42,6 +42,10 @@ function context() {
     currentHeight: 6_240,
     targets: [...masternodes, ...stakers, seed],
     quorumMemberTargetIds: masternodes.map((item) => item.targetId),
+    // Q60's own numbers, declared rather than assumed. Pinned as literals they
+    // made every lab preview -- whose profile is 3/2/2 -- report a margin for a
+    // network that was not there.
+    quorumThresholds: { dkg: 44, chainLock: 41 },
   };
 }
 
@@ -99,6 +103,34 @@ describe('pure DryRun executor', () => {
     expect(JSON.stringify(requestInput)).toBe(beforeRequest);
   });
 
+  it('reports unknown margins rather than assuming a profile it was not given', () => {
+    // The thresholds used to be literal 44 and 41. On the lab, whose profile is
+    // 3/2/2 or whatever -llmqtestparams sets, that measured a devnet that was
+    // not there: the margin was always negative and every report came back
+    // degraded whatever the fault actually did. Unknown must read as unknown.
+    const ctx = { ...context(), quorumThresholds: { dkg: null, chainLock: null } };
+    const plan = generateDryRunPlan(request(scenarioRequestFromPreset('dkg-minus-17', 'threshold')), ctx);
+
+    expect(plan.impact.dkgThreshold).toBeNull();
+    expect(plan.impact.chainLockThreshold).toBeNull();
+    expect(plan.impact.dkgMarginAfterFault).toBeNull();
+    expect(plan.impact.chainLockMarginAfterFault).toBeNull();
+    expect(plan.impact.warnings).toContain(
+      'Quorum thresholds for the active profile are unknown; margins are not computed.'
+    );
+  });
+
+  it('uses the thresholds of the profile in force, not Q60 by default', () => {
+    // A lab profile: threshold 2 of 3. A fault leaving 43 of 60 is far below
+    // Q60's 44 and comfortably above this one.
+    const ctx = { ...context(), quorumThresholds: { dkg: 2, chainLock: 2 } };
+    const plan = generateDryRunPlan(request(scenarioRequestFromPreset('dkg-minus-17', 'threshold')), ctx);
+
+    expect(plan.impact.dkgThreshold).toBe(2);
+    expect(plan.impact.dkgMarginAfterFault).toBeGreaterThan(0);
+    expect(plan.impact.warnings.join(' ')).not.toContain('falls below the DKG threshold');
+  });
+
   it('shows the exact Q60 DKG and ChainLock threshold edges', () => {
     const ctx = context();
     const dkg16 = generateDryRunPlan(
@@ -121,8 +153,8 @@ describe('pure DryRun executor', () => {
     expect(dkg17.impact.dkgMarginAfterFault).toBe(-1);
     expect(cl19.impact.chainLockMarginAfterFault).toBe(0);
     expect(cl20.impact.chainLockMarginAfterFault).toBe(-1);
-    expect(dkg17.impact.warnings).toContain('Planned fault falls below the Q60 DKG threshold (44).');
-    expect(cl20.impact.warnings).toContain('Planned fault falls below the Q60 ChainLock threshold (41).');
+    expect(dkg17.impact.warnings).toContain('Planned fault falls below the DKG threshold (44).');
+    expect(cl20.impact.warnings).toContain('Planned fault falls below the ChainLock threshold (41).');
   });
 
   it('requires the host preset to still resolve to exactly ten masternodes', () => {

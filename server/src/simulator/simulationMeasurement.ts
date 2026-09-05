@@ -1,4 +1,5 @@
 import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
+import { roundWorkOverlaps } from '../domain/dkgWindows.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { roundStats, type RoundStatus } from '../domain/roundStats.js';
 import { stakingHealth } from '../domain/stakingHealth.js';
@@ -38,6 +39,12 @@ export interface MeasurementBlockEvidence {
 export interface MeasurementRoundEvidence {
   llmqName: string;
   dkgInterval: number;
+  /**
+   * Needed to place the round's own DKG work, which is what a fault can touch.
+   * `expectedHeight` is a schedule label -- the cycle start -- and the work
+   * happens in the phases after it.
+   */
+  dkgPhaseBlocks: number;
   expectedHeight: number;
   status: RoundStatus;
   healthRatio: number | null;
@@ -324,7 +331,20 @@ function normalizeEvidence(evidence: SimulationMeasurementEvidence): SimulationM
 
 function evidenceForRange(
   evidence: SimulationMeasurementEvidence,
-  range: MeasurementHeightRange
+  range: MeasurementHeightRange,
+  /**
+   * The heights a round's own DKG work is held against, when that differs from
+   * the block range.
+   *
+   * For the observation snapshot it is the FAULT window, not the observation
+   * window. The observation window starts after the warm-up, and the warm-up is
+   * there so block-level metrics -- spacing, ChainLock coverage -- are not read
+   * while the network is still reacting. A round is not a steady-state metric:
+   * it is the event, and the blocks the warm-up excludes are exactly the ones
+   * the anchor gate aims a fault at. Holding rounds against the observation
+   * window therefore excluded the one round the run was positioned to disturb.
+   */
+  roundRange: MeasurementHeightRange = range
 ): SimulationMeasurementEvidence {
   const blocks = evidence.blocks.filter((row) => inRange(row.height, range));
   const observedTimes = blocks
@@ -335,7 +355,13 @@ function evidenceForRange(
   return normalizeEvidence({
     primaryLlmqName: evidence.primaryLlmqName,
     blocks,
-    rounds: evidence.rounds.filter((row) => inRange(row.expectedHeight, range)),
+    // By the round's own DKG work, not by its schedule label. A round is named
+    // by its cycle start; the work is in the phases after it, which is where the
+    // anchor gate aims a fault -- so asking for cycle starts inside the window
+    // excluded exactly the round the run was positioned to disturb.
+    rounds: evidence.rounds.filter((row) =>
+      roundWorkOverlaps(row.expectedHeight, { dkgPhaseBlocks: row.dkgPhaseBlocks }, roundRange)
+    ),
     poseEvents: evidence.poseEvents.filter((row) => inRange(row.height, range)),
     dslEpochs: evidence.dslEpochs.filter((row) => inRange(row.boundaryHeight, range)),
     peerObservations: evidence.peerObservations.filter((row) => inRange(row.height, range)),
@@ -611,8 +637,14 @@ export function createSimulationMeasurementSnapshot(input: {
   evidence: SimulationMeasurementEvidence;
   range: MeasurementHeightRange;
   generatedAtMs: number;
+  /** See `evidenceForRange`: rounds are held against the fault, not the window. */
+  roundRange?: MeasurementHeightRange;
 }): SimulationMeasurementSnapshot {
-  const evidence = evidenceForRange(input.evidence, input.range);
+  // Sliced again here because this is also called directly, with evidence that
+  // has not been narrowed. Slicing twice is idempotent -- but only if the second
+  // pass judges rounds by the same rule as the first, which is what this
+  // argument carries. Without it the second slice quietly undid the first.
+  const evidence = evidenceForRange(input.evidence, input.range, input.roundRange ?? input.range);
   return {
     range: input.range,
     dkg: dkgSnapshot(evidence.rounds, input.evidence.primaryLlmqName),
@@ -648,8 +680,13 @@ function compareSnapshots(
   };
 }
 
-function expectedAvailability(surviving: number | null, threshold: number): 'available' | 'degraded' | 'unknown' {
-  if (surviving === null) return 'unknown';
+function expectedAvailability(
+  surviving: number | null,
+  threshold: number | null
+): 'available' | 'degraded' | 'unknown' {
+  // A threshold the preview could not determine is unknown, not zero. Treating
+  // it as a number would make every fault look survivable.
+  if (surviving === null || threshold === null) return 'unknown';
   return surviving >= threshold ? 'available' : 'degraded';
 }
 
@@ -688,7 +725,10 @@ export function computeSimulationMeasurementReport(input: {
     faultEndHeight: input.faultEndHeight,
   });
   const baselineEvidence = evidenceForRange(input.evidence, windows.baseline);
-  const observationEvidence = evidenceForRange(input.evidence, windows.observation);
+  const observationEvidence = evidenceForRange(input.evidence, windows.observation, {
+    fromHeight: input.faultStartHeight,
+    toHeight: input.faultEndHeight,
+  });
   const baseline = createSimulationMeasurementSnapshot({
     evidence: baselineEvidence,
     range: windows.baseline,
@@ -698,6 +738,7 @@ export function computeSimulationMeasurementReport(input: {
     evidence: observationEvidence,
     range: windows.observation,
     generatedAtMs: input.generatedAtMs,
+    roundRange: { fromHeight: input.faultStartHeight, toHeight: input.faultEndHeight },
   });
   const delta = compareSnapshots(observation, baseline);
   const dkg = compareAvailability({

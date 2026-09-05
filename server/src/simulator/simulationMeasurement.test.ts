@@ -74,6 +74,7 @@ function completeEvidence(): SimulationMeasurementEvidence {
     rounds: [928, 952, 976, 1_004].map((expectedHeight) => ({
       llmqName: 'llmq_defcon',
       dkgInterval: 24,
+      dkgPhaseBlocks: 2,
       expectedHeight,
       status: 'formed' as const,
       healthRatio: expectedHeight === 1_004 ? 0.95 : 1,
@@ -139,6 +140,46 @@ describe('simulation measurement pipeline', () => {
     expect(publicShape).not.toContain('private-protx');
   });
 
+  it('sees the round an anchored fault was aimed at, warm-up notwithstanding', () => {
+    // The real geometry. anchorForNextWindow puts the fault at cycleStart + 2,
+    // which is where the contribution phase is; the round is NAMED by its cycle
+    // start, two blocks earlier; and the observation window then begins two
+    // warm-up blocks after the fault, at cycleStart + 4.
+    //
+    // Holding rounds against the observation window therefore excluded the one
+    // round the run was positioned to disturb -- its cycle start is below the
+    // fault, its work is inside it -- and every anchored run reported nothing
+    // to evaluate. Rounds belong to the FAULT window: a round is the event, not
+    // a steady-state metric the warm-up is there to protect.
+    // Inside the fixture's own block range [1002, 1010], so the observation
+    // window has blocks and the report is evaluable at all.
+    const cycleStart = 1_002;
+    const evidence = completeEvidence();
+    evidence.rounds = [
+      {
+        llmqName: 'llmq_defcon', dkgInterval: 24, dkgPhaseBlocks: 2,
+        expectedHeight: cycleStart, status: 'failed' as const,
+        healthRatio: null, invalidMembers: [],
+      },
+      ...evidence.rounds,
+    ];
+
+    const report = computeSimulationMeasurementReport({
+      faultStartHeight: cycleStart + 2,
+      faultEndHeight: cycleStart + 8,
+      generatedAtMs: GENERATED_AT_MS,
+      impact: impact(),
+      evidence,
+    });
+
+    // The round's cycle start (1002) is BELOW the observation window, which
+    // begins at 1006 after the two warm-up blocks -- so the old rule could not
+    // see it. Its work, [1004, 1006), is inside the fault.
+    expect(report.observation.dkg.rounds.failed).toBe(1);
+    const defcon = report.observation.dkg.byProfile.find((row) => row.llmqName === 'llmq_defcon');
+    expect(defcon?.rounds.failed).toBe(1);
+  });
+
   it('never reports success when telemetry is insufficient', () => {
     const evidence = completeEvidence();
     evidence.peerObservations = [];
@@ -176,7 +217,7 @@ describe('simulation measurement pipeline', () => {
     evidence.rounds = [
       ...evidence.rounds.filter((round) => round.expectedHeight === 1_004),
       ...[930, 954, 978].map((expectedHeight) => ({
-        llmqName: 'llmq_50_60', dkgInterval: 24, expectedHeight,
+        llmqName: 'llmq_50_60', dkgInterval: 24, dkgPhaseBlocks: 2, expectedHeight,
         status: 'formed' as const, healthRatio: 1, invalidMembers: [],
       })),
     ];
@@ -229,14 +270,14 @@ describe('simulation measurement pipeline', () => {
     // ordinary case rather than a contrived one.
     evidence.rounds = [
       ...[930, 954, 978].map((expectedHeight) => ({
-        llmqName: primary, dkgInterval: 24, expectedHeight,
+        llmqName: primary, dkgInterval: 24, dkgPhaseBlocks: 2, expectedHeight,
         status: 'formed' as const, healthRatio: 0.3, invalidMembers: [],
       })),
       ...[936, 960].map((expectedHeight) => ({
-        llmqName: 'llmq_60_75', dkgInterval: 48, expectedHeight,
+        llmqName: 'llmq_60_75', dkgInterval: 48, dkgPhaseBlocks: 2, expectedHeight,
         status: 'formed' as const, healthRatio: 1, invalidMembers: [],
       })),
-      { llmqName: 'llmq_400_60', dkgInterval: 72, expectedHeight: 942,
+      { llmqName: 'llmq_400_60', dkgInterval: 72, dkgPhaseBlocks: 2, expectedHeight: 942,
         status: 'formed' as const, healthRatio: 1, invalidMembers: [] },
       ...evidence.rounds.filter((round) => round.expectedHeight === 1_004),
     ];

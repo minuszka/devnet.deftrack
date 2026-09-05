@@ -65,6 +65,37 @@ export function contributionWindowFor(
   };
 }
 
+/**
+ * Whether a round's own DKG work fell inside a height range.
+ *
+ * A round is named by its cycle start, and that is where the measurement used
+ * to look for it -- but a cycle start is a schedule label, not the moment
+ * anything happened. The work is in the phases after it, and the contribution
+ * phase is what an outage can actually spoil, which is why the anchor gate aims
+ * a fault there.
+ *
+ * The two disagreed by exactly `dkgPhaseBlocks`. The gate placed a fault at
+ * `cycleStart + dkgPhaseBlocks`; the measurement then asked for rounds whose
+ * cycle start fell at or after the fault, which that round's never does. So the
+ * round the run was positioned to disturb was the one round it could not see,
+ * and every anchored run came back with nothing to evaluate.
+ *
+ * Half-open at the top, as the node treats the phase.
+ */
+export function roundWorkOverlaps(
+  expectedHeight: number,
+  profile: Pick<LlmqProfile, 'dkgPhaseBlocks'>,
+  range: { fromHeight: number; toHeight: number }
+): boolean {
+  // `expectedHeight` IS the cycle start -- the collector derives it as
+  // `tip - tip % dkgInterval + quorumIndex`, straight from the node's own
+  // formula -- so it is used as given rather than recomputed from itself.
+  if (profile.dkgPhaseBlocks <= 0) return false;
+  const fromHeight = expectedHeight + profile.dkgPhaseBlocks;
+  const toHeight = expectedHeight + 2 * profile.dkgPhaseBlocks;
+  return fromHeight <= range.toHeight && toHeight > range.fromHeight;
+}
+
 export interface DkgWindowRange {
   /**
    * Windows missed no matter where the outage starts: those a run of this length
