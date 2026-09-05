@@ -52,6 +52,20 @@ export interface ExperimentOutcome {
   blocks: number;
   medianBlockIntervalSec: number | null;
   distinctStakers: number;
+  /**
+   * Concentration, beside the count -- because the count alone reads too
+   * kindly. The staking run of 2026-09-05 recorded 42 distinct producers in a
+   * window where one script took 44 % of the blocks; a reader seeing only
+   * `distinctStakers` would have called that network well spread.
+   *
+   * Null on outcomes snapshotted before these were carried, and null whenever
+   * the underlying window produced no attributable block.
+   */
+  topStakerShare?: number | null;
+  /** Herfindahl-Hirschman index over block share, 0..1 (1 = one producer). */
+  stakerHhi?: number | null;
+  /** 0 = every producer equal, approaching 1 = one takes everything. */
+  stakerGini?: number | null;
 
   chainLockedBlocks: number;
   chainLockCoverage: number | null;
@@ -138,6 +152,11 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
     blocks: { type: Number, default: 0 },
     medianBlockIntervalSec: { type: Number, default: null },
     distinctStakers: { type: Number, default: 0 },
+    // Defaulted to null, not 0: a run closed before these were carried has no
+    // concentration figure, and 0 would read as "perfectly spread".
+    topStakerShare: { type: Number, default: null },
+    stakerHhi: { type: Number, default: null },
+    stakerGini: { type: Number, default: null },
 
     chainLockedBlocks: { type: Number, default: 0 },
     chainLockCoverage: { type: Number, default: null },
