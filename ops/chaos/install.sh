@@ -7,10 +7,16 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 die() { printf 'defcon-chaos install: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat >&2 <<'USAGE'
-Usage: install.sh --targets <targets.conf> --operator <local-user> [--root <staging-root>]
+Usage: install.sh --targets <targets.conf> --operator <local-user>
+                  [--allow-production] [--root <staging-root>]
 
 Without --root this writes the real host paths and enables the recovery timer.
 --root is solely for package tests/staging and never contacts systemd.
+
+The targets file must carry a `host <short-hostname>` record naming the machine
+it belongs to, and it must match this one. --allow-production installs anyway on
+a host carrying production markers; it is never the right flag to reach for by
+default.
 USAGE
   exit 2
 }
@@ -19,11 +25,13 @@ HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 TARGETS=''
 OPERATOR=''
 DEST_ROOT=''
+ALLOW_PRODUCTION=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --targets) [ "$#" -ge 2 ] || usage; TARGETS=$2; shift 2 ;;
     --operator) [ "$#" -ge 2 ] || usage; OPERATOR=$2; shift 2 ;;
     --root) [ "$#" -ge 2 ] || usage; DEST_ROOT=$2; shift 2 ;;
+    --allow-production) ALLOW_PRODUCTION=1; shift ;;
     *) usage ;;
   esac
 done
@@ -34,6 +42,37 @@ if [ -n "$DEST_ROOT" ]; then
   [[ "$DEST_ROOT" = /* ]] || die '--root must be an absolute staging directory'
 else
   [ "$(id -u)" -eq 0 ] || die 'must run as root'
+fi
+
+# Which machine this configuration is for, refused before anything is written.
+# The wrapper enforces the same binding on every later command; this check only
+# moves the refusal forward to the one moment an operator is still watching.
+CONFIG_HOST=$(awk '$1 == "host" { print $2; exit }' "$TARGETS")
+[ -n "$CONFIG_HOST" ] || die "targets file must name its host: add 'host <short-hostname>'"
+
+if [ -z "$DEST_ROOT" ]; then
+  THIS_HOST=$(hostname -s 2>/dev/null || true)
+  [ "$CONFIG_HOST" = "$THIS_HOST" ] ||
+    die "these targets belong to host '$CONFIG_HOST' but this machine is '${THIS_HOST:-unknown}'"
+
+  # Defence in depth behind the host binding: a machine that is visibly carrying
+  # something else must not receive a fault-injection package by routine. Both
+  # markers come from hosts this project actually runs -- a fleet staker unit
+  # and a production node container -- and both were present on a host that
+  # received the wrapper by accident.
+  if [ "$ALLOW_PRODUCTION" != '1' ]; then
+    markers=''
+    if systemctl is-active --quiet defcon-devnet-mn@11.service 2>/dev/null; then
+      markers="$markers fleet-staker(defcon-devnet-mn@11)"
+    fi
+    if command -v docker >/dev/null 2>&1; then
+      if docker ps --filter name=defcon-node --format '{{.Names}}' 2>/dev/null | grep -q .; then
+        markers="$markers production-container(defcon-node)"
+      fi
+    fi
+    [ -z "$markers" ] ||
+      die "production markers present on $THIS_HOST:$markers -- pass --allow-production only deliberately"
+  fi
 fi
 
 root_path() { printf '%s%s\n' "$DEST_ROOT" "$1"; }

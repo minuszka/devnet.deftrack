@@ -4,6 +4,8 @@ import { QuorumRound } from '../../models/QuorumRound.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
 import { selectionFairness, type RoundMembership } from '../../domain/selectionFairness.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
+import { hostLabel } from '../../domain/hostRedaction.js';
+import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 import { asyncRoute, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
 
 const router = Router();
@@ -57,7 +59,9 @@ router.get(
       states.map((s) => [
         s.proTxHash,
         {
-          host: s.hostIp ?? null,
+          // Redacted at the input, so every host figure downstream -- the
+          // per-host table, the concentration numbers -- is already a label.
+          host: hostLabel(s.hostIp, hostRedactionPolicy()),
           operatorLabel: s.operatorLabel ?? null,
           registeredHeight: s.registeredHeight ?? null,
         },

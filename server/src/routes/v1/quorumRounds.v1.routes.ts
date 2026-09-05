@@ -10,14 +10,16 @@ import type {
 import { churnPredecessorKey, membershipChurn } from '../../domain/membershipChurn.js';
 import { QuorumRound, type QuorumRoundDocument } from '../../models/QuorumRound.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
-import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
+import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
+import { redactService } from '../../domain/hostRedaction.js';
+import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 
 const router = Router();
 
 const listQuery = z.object({
   // Bounded so no caller can ask for the whole collection in one request.
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
   llmqName: z.string().min(1).max(64).optional(),
   status: z.enum(['pending', 'formed', 'failed', 'impossible']).optional(),
   /** Kept for readability: ?formed=false is the failure view. */
@@ -293,7 +295,7 @@ router.get(
       invalidMembers: round.invalidMembers,
       members: round.members.map((m) => ({
         proTxHash: m.proTxHash,
-        service: m.service,
+        service: redactService(m.service, hostRedactionPolicy()),
         valid: m.valid,
         operatorLabel: m.operatorLabel,
       })),

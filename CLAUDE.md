@@ -4,6 +4,14 @@ Working notes for this repository. Everything here was verified against source,
 not assumed — the "Verified facts" section carries file:line references so it
 can be re-checked when the node is upgraded.
 
+**Open work lives in [`plan.md`](plan.md)**: the owed experiment runs and what
+blocks each, what in the current binary is still unproven and why, the tooling
+debts every measurement exposed, and the v23/M-02 items parked by decision.
+This file records what is known; `plan.md` records what is not yet done. Read it
+before planning the next run, and update it when something closes — an owed
+verification that lives only in a conversation is an owed verification that gets
+skipped, which has already happened once.
+
 ## What this project is
 
 An explorer for a DeFCoN **devnet**, whose primary job is to record every DKG

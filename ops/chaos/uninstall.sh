@@ -34,8 +34,16 @@ timer=$(root_path /etc/systemd/system/defcon-chaos-recover.timer)
 state_dir=$(root_path /var/lib/defcon-chaos/jobs)
 
 if [ -z "$DEST_ROOT" ]; then
+  # Recovery first, watchdog second. Disabling the timer before recovering
+  # leaves a host holding live faults with nothing left to undo them if the
+  # recovery itself fails -- the one state this package must never create. And
+  # a failed recovery stops the uninstall rather than removing the only tool
+  # that could still repair it.
+  if [ -x "$wrapper" ]; then
+    "$wrapper" recover-all ||
+      die 'recover-all failed; the recovery timer is left enabled and nothing was removed'
+  fi
   systemctl disable --now defcon-chaos-recover.timer 2>/dev/null || true
-  [ -x "$wrapper" ] && "$wrapper" recover-all
 fi
 
 rm -f -- "$wrapper" "$ssh_wrapper" "$sudoers" "$service" "$timer"

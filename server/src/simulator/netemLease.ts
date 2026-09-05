@@ -227,15 +227,25 @@ export function tcApplyArgs(spec: NetemSpec): string[] {
  * Each peer gets its own filter priority. At one shared priority the second
  * would be ambiguous with the first, and `add` after the root `replace` is safe
  * because replacing the root qdisc destroys the filter list with it.
+ *
+ * The dropping band must be unreachable except through those filters, which is
+ * what the explicit all-zero priomap buys. A plain `prio` root uses the DEFAULT
+ * priomap, which routes "bulk" TOS traffic into band 3 on its own -- so a netem
+ * hung there drops packets to peers the partition never named, and the measured
+ * partition is silently wider than the declared one. The same construction on
+ * the fleet wrapper took the operator's own SSH down with it.
  */
 export function tcPartitionArgs(spec: NetemSpec): string[][] {
   assertPartitionPeers(spec.args);
   return [
-    ['qdisc', 'replace', 'dev', NETEM_IFACE, 'root', 'handle', '1:', 'prio', 'bands', '3'],
-    ['qdisc', 'replace', 'dev', NETEM_IFACE, 'parent', '1:3', 'handle', '30:', 'netem', 'loss', '100%'],
+    [
+      'qdisc', 'replace', 'dev', NETEM_IFACE, 'root', 'handle', '1:',
+      'prio', 'bands', '4', 'priomap', ...Array<string>(16).fill('0'),
+    ],
+    ['qdisc', 'replace', 'dev', NETEM_IFACE, 'parent', '1:4', 'handle', '40:', 'netem', 'loss', '100%'],
     ...spec.args.map((peer, index) => [
       'filter', 'add', 'dev', NETEM_IFACE, 'protocol', 'ip', 'parent', '1:',
-      'prio', String(index + 1), 'u32', 'match', 'ip', 'dst', `${peer}/32`, 'flowid', '1:3',
+      'prio', String(index + 1), 'u32', 'match', 'ip', 'dst', `${peer}/32`, 'flowid', '1:4',
     ]),
   ];
 }

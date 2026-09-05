@@ -15,7 +15,12 @@ import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { closedEpochAt, epochKeyFor, isCommittable } from '../domain/dslSchedule.js';
 import { commitmentPunishedCount } from '../domain/commitmentPunishment.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
-import { quorumReorgReset } from '../domain/reorg.js';
+import {
+  MAX_ROLLBACK_DEPTH,
+  quorumReorgReset,
+  reorgVerdict,
+  rewindStep,
+} from '../domain/reorg.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
 import { DIFF_CURSOR_KEY, mnListDiffService } from './mnListDiff.service.js';
 import { SyncState } from '../models/SyncState.js';
@@ -35,6 +40,21 @@ const TRANSACTION_QUORUM_COMMITMENT = 6;
 const TRANSACTION_POSE_SERVICE_COMMITMENT = 10;
 
 const PROGRESS_EVERY = 25;
+
+/**
+ * The node did not answer, so nothing was learned about the chain.
+ *
+ * Raised instead of guessing. It aborts the tick with the sync position
+ * untouched; the reason reaches `SyncState.error` and the health endpoint, and
+ * the next tick asks again. Deleting an index because an RPC call failed is the
+ * one outcome this service must never produce.
+ */
+class ChainUndecidableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChainUndecidableError';
+  }
+}
 
 /**
  * Member counts, resolved once per quorum and never remembered as a failure.
@@ -274,7 +294,11 @@ export class SyncService {
     let from = state.lastSyncedHeight + 1;
 
     if (state.lastSyncedHeight >= 0) {
-      const rolledBackTo = await this.rollbackIfReorged(state.lastSyncedHeight, state.lastSyncedHash);
+      const rolledBackTo = await this.rollbackIfReorged(
+        state.lastSyncedHeight,
+        state.lastSyncedHash,
+        tip
+      );
       if (rolledBackTo !== null) from = rolledBackTo + 1;
     }
 
@@ -325,21 +349,62 @@ export class SyncService {
   }
 
   /**
+   * The node's hash at a height, or null when the node did not answer.
+   *
+   * The distinction is the whole point: an error and a different hash are
+   * different facts, and `reorgVerdict`/`rewindStep` refuse to act on the
+   * former. See `domain/reorg.ts` for why.
+   */
+  private async hashAt(height: number): Promise<string | null> {
+    try {
+      return await rpc.getBlockHash(height);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      logger.warn(`getblockhash ${height} did not answer: ${reason}`);
+      return null;
+    }
+  }
+
+  /**
    * Walk back until the stored chain agrees with the node, deleting anything
    * that no longer exists. Returns the height the database was rewound to, or
    * null when nothing had to change.
+   *
+   * Fail-closed. Every branch that is not "the node gave a hash and it differs"
+   * raises ChainUndecidableError and leaves the index exactly as it was.
    */
-  private async rollbackIfReorged(height: number, hash: string): Promise<number | null> {
-    const onChain = await rpc.getBlockHash(height).catch(() => null);
-    if (onChain === hash) return null;
+  private async rollbackIfReorged(
+    height: number,
+    hash: string,
+    tip: number
+  ): Promise<number | null> {
+    const verdict = reorgVerdict({
+      indexedHeight: height,
+      indexedHash: hash,
+      nodeTip: tip,
+      nodeHash: tip < height ? null : await this.hashAt(height),
+    });
+    if (verdict.action === 'continue') return null;
+    if (verdict.action === 'wait') {
+      throw new ChainUndecidableError(`${verdict.reason}; index untouched`);
+    }
 
     logger.warn(`Reorg detected at height ${height}; stored ${hash || '(none)'} is not on the active chain`);
 
+    const floor = Math.max(0, height - MAX_ROLLBACK_DEPTH);
     let cursor = height;
     while (cursor >= 0) {
       const stored = await Block.findOne({ height: cursor }).select('hash').lean();
-      const actual = await rpc.getBlockHash(cursor).catch(() => null);
-      if (stored && actual && stored.hash === actual) break;
+      const step = rewindStep({
+        cursor,
+        floor,
+        storedHash: stored?.hash ?? null,
+        nodeHash: await this.hashAt(cursor),
+      });
+      if (step.action === 'settle') break;
+      if (step.action === 'wait') {
+        throw new ChainUndecidableError(`${step.reason}; index untouched`);
+      }
       cursor--;
     }
 

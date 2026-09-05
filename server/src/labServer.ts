@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './db.js';
+import { initializeHostLabelPolicy } from './services/hostLabel.service.js';
 import { rpc } from './services/rpc.service.js';
 import { syncService } from './services/sync.service.js';
 import { masternodePollerService } from './services/masternodePoller.service.js';
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
   assertLabDatabaseIsolated({ labUri: config.lab.mongoUri, explorerUri: config.mongoUri });
 
   await connectDatabase(config.lab.mongoUri);
+  await initializeHostLabelPolicy();
   await initializeSimulationPersistenceIndexes();
 
   const info = await rpc.getBlockchainInfo();

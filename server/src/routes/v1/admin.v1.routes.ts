@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DevnetOperator } from '../../models/DevnetOperator.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
 import { QuorumRound } from '../../models/QuorumRound.js';
-import { requireAdminApiKey } from '../../middleware/requireAdminApiKey.js';
+import { requireAdminAuth } from '../../middleware/adminSession.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, sendData, sendError } from '../../utils/http.js';
 import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
@@ -15,7 +15,12 @@ import { rpc } from '../../services/rpc.service.js';
 
 const router = Router();
 
-router.use(requireAdminApiKey);
+// The same two-door guard the simulation admin routes use, rather than the bare
+// key. The key path is unchanged; what it adds is the refusal of a request that
+// carries both credentials, the refusal of browser credentials on the key path,
+// and CSRF on mutations -- and it lets the browser session manage operators and
+// experiments at all, which the key-only guard made impossible.
+router.use(requireAdminAuth);
 // Operator data changes by hand, rarely; never let a proxy hold it.
 router.use(withCachePolicy('no-store'));
 

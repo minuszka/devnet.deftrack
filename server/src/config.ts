@@ -82,6 +82,17 @@ export const config = {
   port: optionalNumber('PORT', 4100),
   corsOrigins: (process.env.CORS_ORIGINS ?? '').split(',').filter(Boolean),
 
+  /**
+   * Publish masternode host addresses on the public API.
+   *
+   * Off unless set to exactly "1". The repository's own rule is that host
+   * addresses are not public, and most of these hosts also carry production
+   * mainnet services; the public DTOs carry a stable per-host label instead.
+   * This exists so the decision can be reversed deliberately, in one place,
+   * rather than by editing route code.
+   */
+  publicHostAddresses: process.env.PUBLIC_HOST_ADDRESSES === '1',
+
   mongoUri: required('MONGODB_URI'),
 
   // Empty means the admin routes refuse service; an unset secret must fail

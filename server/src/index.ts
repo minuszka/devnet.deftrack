@@ -28,6 +28,7 @@ import { MasternodeState } from './models/MasternodeState.js';
 import v1Routes from './routes/v1/index.js';
 import { sendError } from './utils/http.js';
 import { evaluateReadiness } from './domain/readiness.js';
+import { initializeHostLabelPolicy } from './services/hostLabel.service.js';
 import { currentParticipants } from './services/experiment.service.js';
 import { metricsService } from './services/metrics.service.js';
 import {
@@ -57,6 +58,11 @@ app.disable('x-powered-by');
 // 'loopback' and not `true`: only the local proxy may claim to speak for a
 // client, or anyone could set the header and pick their own bucket.
 app.set('trust proxy', 'loopback');
+// The extended parser is qs, which carries the array-limit and isBuffer
+// advisories and builds arbitrary nested objects from a public query string.
+// Every route here validates with zod and none accepts a nested query, so the
+// simple parser loses nothing and removes the attack surface entirely.
+app.set('query parser', 'simple');
 app.use(helmet());
 app.use(compression());
 app.use(cors({ origin: config.corsOrigins }));
@@ -155,8 +161,38 @@ app.get('/api/v1/health', async (_req, res) => {
 // rather than Express's HTML 404 page.
 app.use('/api', (_req, res) => sendError(res, 404, 'not found'));
 
+/**
+ * The last word on every failure, in the same envelope as everything else.
+ *
+ * Without this, malformed JSON, a body over the 256 kB limit, and anything a
+ * route hands to `next(error)` fall to Express's built-in handler, which
+ * answers HTML -- and, whenever NODE_ENV is not production, includes a stack
+ * trace. A 4xx names its cause because the client can fix it; a 5xx does not,
+ * because the message can carry internals this public site must not publish.
+ */
+app.use(
+  (error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const status =
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      typeof (error as { status: unknown }).status === 'number' &&
+      (error as { status: number }).status >= 400 &&
+      (error as { status: number }).status < 600
+        ? (error as { status: number }).status
+        : 500;
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.error(`${req.method} ${req.originalUrl} failed (${status}): ${detail}`);
+    if (res.headersSent) return;
+    sendError(res, status, status >= 500 ? 'internal error' : detail);
+  }
+);
+
 async function main(): Promise<void> {
   await connectDatabase();
+  // Before anything can serve a DTO: an uninitialised policy has no key, and a
+  // route that cannot label a host omits the field rather than publishing it.
+  await initializeHostLabelPolicy();
   await initializeSimulationPersistenceIndexes();
   metricsService.start();
 

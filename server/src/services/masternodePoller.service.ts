@@ -107,6 +107,20 @@ export class MasternodePollerService {
       ).map((s) => [s.proTxHash, s])
     );
 
+    // An empty `protx list` while the index holds masternodes is not a network
+    // in which every collateral was spent at once; it is a node that cannot
+    // answer properly yet -- a reindex at a low height, or a warmup that
+    // answers with an empty list rather than an error. Acting on it writes a
+    // `removed` event for every masternode on the network, and those rows stay
+    // in the record after the next poll quietly re-registers them.
+    if (list.length === 0 && previous.size > 0) {
+      logger.warn(
+        `protx list returned no masternodes while ${previous.size} are indexed; ` +
+          'skipping this poll rather than recording a network-wide removal'
+      );
+      return;
+    }
+
     const stateOps: Parameters<typeof MasternodeState.bulkWrite>[0] = [];
     const eventOps: Parameters<typeof MasternodeEvent.bulkWrite>[0] = [];
     const now = new Date();

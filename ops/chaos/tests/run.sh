@@ -44,7 +44,12 @@ printf '%s\n' \
   'set -euo pipefail' \
   'printf "%s\n" "$*" >> "${FAKE_TC_LOG:?}"' \
   'if [ "$1" = qdisc ] && [ "$2" = show ]; then' \
-  '  printf "qdisc %s 0: root refcnt 2\n" "${FAKE_TC_QDISC:-fq_codel}"' \
+  '  if [ -n "${FAKE_TC_ROOT_MQ:-}" ]; then' \
+  '    printf "qdisc mq 0: root\n"' \
+  '    printf "qdisc %s 0: parent :1\n" "${FAKE_TC_QDISC:-fq_codel}"' \
+  '  else' \
+  '    printf "qdisc %s 0: root refcnt 2\n" "${FAKE_TC_QDISC:-fq_codel}"' \
+  '  fi' \
   'fi' > "$TMP/bin/tc"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -53,6 +58,7 @@ printf '%s\n' \
 chmod 700 "$TMP/bin/systemctl" "$TMP/bin/tc" "$TMP/bin/ssh"
 touch "$TMP/systemd/defcon-devnet-mn@1.service"
 printf '%s\n' \
+  'host pilot-host' \
   'policy 120' \
   'target mn01 defcon-devnet-mn@1.service ens3 19799 fq_codel' > "$TMP/config/targets.conf"
 printf '%s\n' 'target mn01 deploy@pilot-host.example' > "$TMP/config/ssh-targets.conf"
@@ -89,9 +95,49 @@ bash "$HERE/defcon-chaos" clear mn01 service
 [ ! -e "$TMP/jobs/job-service.env" ] || fail 'clear left a completed service job behind'
 
 bash "$HERE/defcon-chaos" netem mn01 netem "$expiry" 80 20 5
-grep -Fqx 'filter replace dev ens3 protocol ip parent 1: prio 3 u32 match ip dport 19799 0xffff flowid 1:3' "$TMP/tc.log" || fail 'netem did not bind to configured P2P port'
+# The band must be unreachable without a filter. A plain `prio` root uses the
+# default priomap, which routes bulk-TOS traffic -- OpenSSH's own interactive
+# default among it -- into band 3 with no filter matching it, and that is how a
+# 100% loss fault cut the operator out of the pilot host.
+grep -Fqx 'qdisc replace dev ens3 root handle 1: prio bands 4 priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' "$TMP/tc.log" ||
+  fail 'netem root qdisc did not reserve an unreachable band'
+grep -Fqx 'qdisc replace dev ens3 parent 1:4 handle 40: netem delay 80ms 20ms loss 5%' "$TMP/tc.log" ||
+  fail 'netem did not attach to the reserved band'
+# Source port, not destination: matching the destination catches every other
+# daemon on the host dialling a remote node that listens on the same number.
+grep -Fqx 'filter replace dev ens3 protocol ip parent 1: prio 4 u32 match ip sport 19799 0xffff flowid 1:4' "$TMP/tc.log" ||
+  fail 'netem did not bind to the configured P2P port as a source port'
+grep -Fq 'match ip dport' "$TMP/tc.log" && fail 'netem still matches a destination port'
 bash "$HERE/defcon-chaos" clear mn01 netem
 grep -Fqx 'qdisc replace dev ens3 root fq_codel' "$TMP/tc.log" || fail 'netem clear did not restore declared baseline qdisc'
+
+# A pure packet-loss fault must be expressible, and must not send `delay 0ms`.
+: > "$TMP/tc.log"
+bash "$HERE/defcon-chaos" netem mn01 loss-only "$expiry" 0 0 100
+grep -Fqx 'qdisc replace dev ens3 parent 1:4 handle 40: netem loss 100%' "$TMP/tc.log" ||
+  fail 'a zero-latency fault did not produce a bare loss netem'
+bash "$HERE/defcon-chaos" clear mn01 loss-only
+
+# The baseline check must read the ROOT qdisc line. On a multi-queue NIC the
+# children are fq_codel while the root is mq, and installing a single-queue
+# root over that is a silent configuration change.
+FAKE_TC_ROOT_MQ=1 expect_failure bash "$HERE/defcon-chaos" netem mn01 mq-root "$expiry" 80 20 5
+
+# The configuration is bound to one machine. A file with no host record is
+# refused outright: without it the package acts on whatever host it was copied
+# to, which is how two fleet machines ended up with an enabled recovery timer
+# nobody meant to install.
+bash "$HERE/defcon-chaos" verify | grep -Fq 'host=pilot-host' || fail 'verify does not name the host it is bound to'
+printf '%s\n' \
+  'policy 120' \
+  'target mn01 defcon-devnet-mn@1.service ens3 19799 fq_codel' > "$TMP/config/hostless.conf"
+DEFCON_CHAOS_TEST_CONFIG="$TMP/config/hostless.conf" expect_failure bash "$HERE/defcon-chaos" verify
+printf '%s\n' \
+  'host pilot-host' \
+  'host other-host' \
+  'policy 120' \
+  'target mn01 defcon-devnet-mn@1.service ens3 19799 fq_codel' > "$TMP/config/twohosts.conf"
+DEFCON_CHAOS_TEST_CONFIG="$TMP/config/twohosts.conf" expect_failure bash "$HERE/defcon-chaos" verify
 
 expect_failure bash "$HERE/defcon-chaos" service stop not-allowlisted other "$expiry"
 expect_failure bash "$HERE/defcon-chaos" service stop mn01 too-long "$((expiry + 120))"

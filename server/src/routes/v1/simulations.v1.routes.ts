@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { SimulationRun } from '../../models/SimulationRun.js';
-import { asyncRoute, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
+import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
 import {
   PUBLIC_SIMULATION_RUN_PROJECTION,
   toPublicSimulationRun,
@@ -17,7 +17,7 @@ const measurementService = new SimulationMeasurementService(new MongoSimulationM
 const runKeySchema = z.string().regex(/^sim_[0-9a-f]{32}$/);
 const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(MAX_OFFSET).default(0),
   status: z.enum(SIMULATION_RUN_STATUSES).optional(),
 }).strict();
 

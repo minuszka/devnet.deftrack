@@ -1,11 +1,18 @@
 # defcon-chaos target configuration. This file is parsed as data; it is never
 # sourced. Keep the installed copy root-owned and mode 0640 or stricter.
 #
+# host <short-hostname>
 # policy <maximum-fault-seconds>
 # target <logical-id> <allowlisted-systemd-unit> <p2p-interface> <p2p-port> <baseline-qdisc>
+#
+# `host` is mandatory and binds this configuration to one machine: the wrapper
+# refuses every command when `hostname -s` does not match it. Without that the
+# package acts on whatever host the file was copied to, which has already
+# happened twice -- once on a host carrying a production container.
 #
 # baseline-qdisc is intentionally a closed set: fq_codel, pfifo_fast, noqueue.
 # A network fault refuses an interface whose observed root qdisc differs from
 # this declaration, rather than overwriting an unknown traffic policy.
+host pilot-host
 policy 600
 target mn01 defcon-devnet-mn@1.service ens3 19799 fq_codel

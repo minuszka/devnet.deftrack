@@ -232,8 +232,17 @@ describe('partition', () => {
     // a band that is not there yet.
     const argvs = tcPartitionArgs(spec(['172.28.0.3', '172.28.0.4']));
     expect(argvs).toHaveLength(4);
-    expect(argvs[0]).toEqual(['qdisc', 'replace', 'dev', 'eth0', 'root', 'handle', '1:', 'prio', 'bands', '3']);
+    expect(argvs[0]).toEqual([
+      'qdisc', 'replace', 'dev', 'eth0', 'root', 'handle', '1:',
+      'prio', 'bands', '4', 'priomap', ...Array<string>(16).fill('0'),
+    ]);
     expect(argvs[1]!.slice(-3)).toEqual(['netem', 'loss', '100%']);
+    // The dropping band has to be unreachable without a filter. A default
+    // priomap routes bulk-TOS traffic into the last band on its own, so peers
+    // the partition never named would be dropped too and the measured split
+    // would be wider than the declared one.
+    expect(argvs[1]).toContain('1:4');
+    expect(argvs[0]!.slice(argvs[0]!.indexOf('priomap') + 1)).not.toContain('3');
     // Each peer on its own filter priority: at one shared priority the second
     // would be ambiguous with the first.
     expect(argvs[2]!).toContain('172.28.0.3/32');

@@ -186,6 +186,7 @@ export class QuorumRoundService {
     let pending = 0;
     let impossible = 0;
     let unseeable = 0;
+    let uncounted = 0;
 
     for (const expectedHeight of plan.heights) {
       // Belt to planProfile's braces: a height below the formation gate must
@@ -213,6 +214,17 @@ export class QuorumRoundService {
         continue;
       }
 
+      // `failed` and `impossible` are told apart by the masternode count, so a
+      // count the node did not answer cannot tell them apart -- classifyRound
+      // skips the `impossible` branch on a null and falls through to `failed`.
+      // Writing it would be a verdict derived from a failed lookup, and
+      // shouldRefreshRound never revisits `failed`, so the fabrication would be
+      // permanent. Skip the height; the next tick asks again.
+      if (status === 'failed' && effectiveSize === null) {
+        uncounted++;
+        continue;
+      }
+
       if (status === 'formed') formed++;
       else if (status === 'failed') failed++;
       else if (status === 'impossible') impossible++;
@@ -225,6 +237,13 @@ export class QuorumRoundService {
       logger.info(
         `${p.llmqName}: ${unseeable} scheduled round(s) below the oldest commitment ` +
           `listextended still reports (${oldestObserved}) -- not judged`
+      );
+    }
+
+    if (uncounted > 0) {
+      logger.warn(
+        `${p.llmqName}: ${uncounted} scheduled round(s) left unjudged -- the masternode ` +
+          `count did not answer, so failed and impossible cannot be told apart`
       );
     }
 
