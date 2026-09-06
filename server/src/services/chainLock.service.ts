@@ -53,6 +53,20 @@ export class ChainLockService {
   start(): void {
     this.startedAtSec = Math.floor(Date.now() / 1000);
 
+    // Latency the lock-before-first-sight race (see applyObservations) left
+    // null on rows already written: both stamps are there, so the number is
+    // derivable. Once, at start; new rows get it as they are applied.
+    void Block.updateMany(
+      { chainLockSource: 'zmq', chainLockLatencyMs: null, firstSeenAt: { $ne: null }, chainLockedAt: { $ne: null } },
+      [{ $set: { chainLockLatencyMs: { $max: [0, { $subtract: ['$chainLockedAt', '$firstSeenAt'] }] } } }]
+    ).then((result) => {
+      if (result.modifiedCount > 0) {
+        logger.info(`ChainLock latency derived for ${result.modifiedCount} block(s) whose lock was applied before their first sight`);
+      }
+    }).catch((error: unknown) => {
+      logger.warn(`ChainLock latency backfill failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+
     // Locks recorded before the signer field existed get their profile from
     // the same height rule new observations use. Idempotent, and safe to run
     // unconditionally: only rows still missing the field are touched.
@@ -211,7 +225,7 @@ export class ChainLockService {
         continue;
       }
       const block = await Block.findOne({ hash: obs.hash })
-        .select('hash height time firstSeenAt chainLockedAt')
+        .select('hash height time firstSeenAt chainLockedAt chainLockSource chainLockLatencyMs')
         .lean();
 
       if (!block) {
@@ -234,7 +248,28 @@ export class ChainLockService {
 
       if (obs.topic === 'hashblock') {
         if (!block.firstSeenAt) {
-          await Block.updateOne({ hash: obs.hash, firstSeenAt: null }, { $set: { firstSeenAt: obs.receivedAt } });
+          // The lock can be applied before the first sight: the block was not
+          // indexed when this observation was looked up, the indexer wrote it
+          // before the lock's lookup a moment later, and the lock recorded no
+          // latency because the first sight was still unknown. On a lab with
+          // 15-second blocks and sub-second locks that was one block in five,
+          // and the report read it as a telemetry gap. Both stamps exist now,
+          // so the latency is derived here rather than left null for good.
+          const lockedAtMs =
+            block.chainLockedAt && block.chainLockSource === 'zmq' && block.chainLockLatencyMs === null
+              ? new Date(block.chainLockedAt).getTime()
+              : null;
+          await Block.updateOne(
+            { hash: obs.hash, firstSeenAt: null },
+            {
+              $set: {
+                firstSeenAt: obs.receivedAt,
+                ...(lockedAtMs === null
+                  ? {}
+                  : { chainLockLatencyMs: Math.max(0, lockedAtMs - new Date(obs.receivedAt).getTime()) }),
+              },
+            }
+          );
         }
       } else if (!block.chainLockedAt) {
         // Measured on one clock, block arrival to lock arrival. The seconds
