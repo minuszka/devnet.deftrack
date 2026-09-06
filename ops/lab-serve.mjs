@@ -54,7 +54,7 @@ function labSpec() {
   // epochs only from that height, and its default is the devnet's, so a lab
   // that runs DSL from genesis would otherwise index no epoch at all and every
   // measurement report would say the layer never committed.
-  const dslArg = command.find((entry) => /^-testactivationheight=dsl@d+$/.test(String(entry)));
+  const dslArg = command.find((entry) => /^-testactivationheight=dsl@\d+$/.test(String(entry)));
   const dslActivationHeight = dslArg === undefined ? null : Number(String(dslArg).split('@')[1]);
   const arg = command.find((entry) => String(entry).startsWith('-llmqtestparams='));
   if (arg === undefined) return { llmqTestParams: null, dslActivationHeight };
