@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PLANNED_END_KIND,
   SimulationActionDispatcher,
   scheduledActionRowsFor,
 } from './simulationDispatcher.service.js';
@@ -28,6 +29,7 @@ function harness(overrides: {
   lease?: number | null;
   claims?: (LeasedSimulationAction | null)[];
   dispatch?: ReturnType<typeof vi.fn>;
+  plannedEnd?: ReturnType<typeof vi.fn>;
 } = {}) {
   const claims = overrides.claims ?? [leased(), null];
   let claimIndex = 0;
@@ -54,6 +56,7 @@ function harness(overrides: {
     loadRun: async () => run as never,
     loadPlan: async () => ({ actions: [] }) as never,
     dispatch: dispatch as never,
+    ...(overrides.plannedEnd === undefined ? {} : { plannedEnd: overrides.plannedEnd as never }),
     workerId: 'worker-1',
     clock: () => NOW,
     logger: { info: () => {}, error: (m) => errors.push(m) },
@@ -111,6 +114,33 @@ describe('dispatching a scheduled action', () => {
     expect(h.settle).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: 'succeeded' }));
   });
 
+  it('closes the plan through the planned-end handler, never through the wrapper', async () => {
+    // The run has done everything its plan said; what follows is recovery with
+    // no abort intent, so the record ends `completed` and not as a timeout.
+    const plannedEnd = vi.fn(async () => {});
+    const h = harness({
+      status: 'observing',
+      claims: [leased({ actionId: 'run-1:planned-end', kind: PLANNED_END_KIND, targetId: 'run' }), null],
+      plannedEnd,
+    });
+    await h.dispatcher.tick();
+    expect(plannedEnd).toHaveBeenCalledWith(expect.objectContaining({ runKey: 'run-1' }));
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(h.settle).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded' }));
+  });
+
+  it('leaves the lease to close a run when no planned-end handler exists', async () => {
+    // Fail closed: nothing is applied and nothing is claimed as done; the run
+    // still ends, by its lease, the way it did before the planned end existed.
+    const h = harness({
+      status: 'observing',
+      claims: [leased({ actionId: 'run-1:planned-end', kind: PLANNED_END_KIND, targetId: 'run' }), null],
+    });
+    await h.dispatcher.tick();
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(h.settle).toHaveBeenCalledWith(expect.objectContaining({ status: 'compensated' }));
+  });
+
   it('does not start a second pass while one is running', async () => {
     let release: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => {
@@ -151,10 +181,56 @@ describe('scheduledActionRowsFor', () => {
       activatedAtMs: NOW,
       faultLeaseExpiresAtMs: LEASE_END,
     });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.actionId).toBe('later');
+    expect(rows.map((row) => row.actionId)).toEqual(['later', 'run-1:planned-end']);
     expect(rows[0]!.notBeforeMs).toBe(NOW + 30_000);
     expect(rows[0]!.expiresAtMs).toBe(LEASE_END);
+  });
+
+  it('declares the planned end one second after the plan\'s last instant', () => {
+    // Over every action, not only the dispatchable ones: a netem fault-clear is
+    // recovery's work, but it still says when the plan is over. The second of
+    // delay lets the last step settle before the end is declared, and the row
+    // sorts after it by sequence as well.
+    const rows = scheduledActionRowsFor({
+      runKey: 'run-1',
+      actions: [
+        { ...action('stop-it', 0), sequence: 1 },
+        { ...action('clear-it', 45_000), sequence: 2, kind: 'fault-clear', payload: { kind: 'fault-clear', scope: 'run' } },
+      ] as never,
+      activatedAtMs: NOW,
+      faultLeaseExpiresAtMs: LEASE_END,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actionId: 'run-1:planned-end',
+      kind: PLANNED_END_KIND,
+      targetId: 'run',
+      sequence: 3,
+      notBeforeMs: NOW + 45_000 + 1_000,
+      expiresAtMs: LEASE_END,
+    });
+  });
+
+  it('has no planned end for a plan made only of immediate steps', () => {
+    const rows = scheduledActionRowsFor({
+      runKey: 'run-1',
+      actions: [action('now', 0)] as never,
+      activatedAtMs: NOW,
+      faultLeaseExpiresAtMs: LEASE_END,
+    });
+    expect(rows).toEqual([]);
+  });
+
+  it('queues the Sentinel clear, which the wrapper performs by fault id', () => {
+    const rows = scheduledActionRowsFor({
+      runKey: 'run-1',
+      actions: [
+        { ...action('clear-dsl', 30_000), kind: 'dsl-fault-clear', payload: { kind: 'dsl-fault-clear', faultKind: 'response-drop' } },
+      ] as never,
+      activatedAtMs: NOW,
+      faultLeaseExpiresAtMs: LEASE_END,
+    });
+    expect(rows.map((row) => row.actionId)).toEqual(['clear-dsl', 'run-1:planned-end']);
   });
 
   it('queues nothing for a kind the dispatcher cannot perform', () => {
@@ -171,7 +247,7 @@ describe('scheduledActionRowsFor', () => {
       activatedAtMs: NOW,
       faultLeaseExpiresAtMs: LEASE_END,
     });
-    expect(rows.map((row) => row.actionId)).toEqual(['stop-it']);
+    expect(rows.map((row) => row.actionId)).toEqual(['stop-it', 'run-1:planned-end']);
   });
 
   it('drops an action that would fall due after the run is over', () => {

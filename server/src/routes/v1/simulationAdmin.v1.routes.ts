@@ -8,6 +8,7 @@ import { MongoSimulationControlPersistenceRepository } from '../../services/simu
 import { SimulationControlPersistenceService } from '../../services/simulationControlPersistence.service.js';
 import {
   SimulationControlError,
+  type SimulationControlIdentity,
   SimulationControlService,
 } from '../../services/simulationControl.service.js';
 import { SimulationControlPersistenceError } from '../../services/simulationControlPersistence.service.js';
@@ -489,6 +490,12 @@ const defaultService = new SimulationControlService(
  * Not started here: a module that starts a background sweep on import would run
  * one in every process that imports the routes, including tests.
  */
+/** Who the audit trail names when a plan ends on schedule: the system, not an operator. */
+const PLANNED_END_IDENTITY: SimulationControlIdentity = {
+  actor: { actorId: 'planned-end', actorType: 'system', displayName: 'Planned end' },
+  role: config.simulator.adminRole,
+};
+
 export const defaultActionDispatcher = new SimulationActionDispatcher(
   new MongoSimulationActionRepository(),
   {
@@ -500,6 +507,17 @@ export const defaultActionDispatcher = new SimulationActionDispatcher(
         throw new Error('no lab executor is configured, so no scheduled action can be applied');
       }
       await executor.dispatchScheduledAction(input);
+    },
+    // The plan has run to its last instant: leave observation through recovery
+    // with no abort intent, so the run ends `completed`, not as a timeout.
+    // Recovery itself clears whatever the plan left armed and proves the lab
+    // clean; this only says that the moment has come.
+    plannedEnd: async (run) => {
+      await defaultService.recover({
+        runKey: run.runKey,
+        idempotencyKey: `planned-end:${run.runKey}`,
+        identity: PLANNED_END_IDENTITY,
+      });
     },
     workerId: `dispatcher:${process.pid}`,
     // Given a logger deliberately: a background sweep that says nothing cannot

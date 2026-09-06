@@ -3,7 +3,8 @@ import { roundWorkOverlaps } from '../domain/dkgWindows.js';
 import { simulationFingerprint } from '../domain/simulationAudit.js';
 import { roundStats, type RoundStatus } from '../domain/roundStats.js';
 import { stakingHealth } from '../domain/stakingHealth.js';
-import type { DryRunImpactEstimate } from './scenarioTypes.js';
+import type { DryRunImpactEstimate, DslImpactExpectation } from './scenarioTypes.js';
+import { isMassOutage } from '../domain/dslSchedule.js';
 import {
   baselineEvidenceSatisfies,
   planMeasurementWindowsForLlmqFault,
@@ -72,6 +73,12 @@ export interface MeasurementDslEpochEvidence {
   status: 'committed' | 'absent';
   missedCount: number | null;
   listSize: number | null;
+  /**
+   * Who the commitment named, resolved from the epoch-base list; empty while a
+   * count is non-zero means the explorer could not resolve them, which the
+   * comparison reports rather than reads as "nobody".
+   */
+  missedProTxHashes: string[];
 }
 
 export interface MeasurementPeerObservationEvidence {
@@ -181,6 +188,12 @@ export interface DslMeasurementSnapshot {
   convergenceRate: number | null;
   totalMissedBits: number;
   maximumMissedRatio: number | null;
+  /**
+   * Committed epochs under the mass-outage guard: the chain named the share
+   * but punished nobody, so their bits are the network's weather, not a
+   * fault's signature. Counted here and excluded from the expectation check.
+   */
+  guardedEpochs: number;
 }
 
 export interface StakingMeasurementSnapshot {
@@ -260,6 +273,12 @@ export interface SimulationMeasurementReport {
   expectedVsActual: {
     dkg: ExpectedActualResult;
     chainLock: ExpectedActualResult;
+    /**
+     * The Sentinel Layer against the plan's declared expectation. Part of
+     * `overall` only when the plan declared one; a plan that never touched the
+     * Sentinel is not made "not evaluable" by a question it did not ask.
+     */
+    dsl: ExpectedActualResult;
     overall: 'matched' | 'mismatched' | 'not-evaluable';
   };
   verdict: {
@@ -495,6 +514,7 @@ function dslSnapshot(epochs: readonly MeasurementDslEpochEvidence[]): DslMeasure
     convergenceRate: epochs.length > 0 ? committed.length / epochs.length : null,
     totalMissedBits: committed.reduce((total, row) => total + (row.missedCount ?? 0), 0),
     maximumMissedRatio: missedRatios.length > 0 ? Math.max(...missedRatios) : null,
+    guardedEpochs: committed.filter((row) => isMassOutage(row.missedCount, row.listSize)).length,
   };
 }
 
@@ -712,6 +732,55 @@ function compareAvailability(input: {
   };
 }
 
+/**
+ * The Sentinel's verdicts in the observation window against what the plan
+ * said they would be: the named targets and nobody else, over the epochs the
+ * mass-outage guard did not hold. `degraded` here means "the chain named
+ * somebody", which is what a response fault is supposed to produce.
+ */
+function compareDsl(input: {
+  expectation: DslImpactExpectation | undefined;
+  epochs: readonly MeasurementDslEpochEvidence[];
+}): ExpectedActualResult {
+  const label = 'Sentinel commitment';
+  if (input.expectation === undefined) {
+    return { expected: 'unknown', actual: 'not-evaluable', matched: null, reason: `${label}: the plan declares no Sentinel expectation` };
+  }
+  const expectedSet = new Set(input.expectation.expectedMissedProTxHashes);
+  const expected = expectedSet.size > 0 ? 'degraded' : 'available';
+  if (!input.expectation.evaluable) {
+    return { expected, actual: 'not-evaluable', matched: null, reason: `${label}: the plan cannot predict the chain for ${input.expectation.faultKind}` };
+  }
+  const guarded = input.epochs.filter((row) => row.status === 'committed' && isMassOutage(row.missedCount, row.listSize));
+  const evaluable = input.epochs.filter((row) => !guarded.includes(row));
+  if (evaluable.length === 0) {
+    return { expected, actual: 'not-evaluable', matched: null, reason: `${label}: no evaluable epoch in the observation window (${guarded.length} under the mass-outage guard)` };
+  }
+  const unresolved = evaluable.filter(
+    (row) => row.status === 'committed' && (row.missedCount ?? 0) > 0 && row.missedProTxHashes.length === 0
+  );
+  if (unresolved.length > 0) {
+    return { expected, actual: 'not-evaluable', matched: null, reason: `${label}: ${unresolved.length} epoch(s) name members the explorer could not resolve` };
+  }
+  const named = new Set(evaluable.flatMap((row) => row.missedProTxHashes));
+  const absent = evaluable.filter((row) => row.status === 'absent').length;
+  const targetsNamed = [...expectedSet].filter((hash) => named.has(hash)).length;
+  const others = [...named].filter((hash) => !expectedSet.has(hash)).length;
+  const actual = named.size > 0 || absent > 0 ? 'degraded' : 'available';
+  const matched =
+    expected === 'degraded'
+      ? targetsNamed === expectedSet.size && others === 0 && absent === 0
+      : actual === 'available';
+  return {
+    expected,
+    actual,
+    matched,
+    reason:
+      `${label} named ${targetsNamed} of ${expectedSet.size} expected target(s) and ${others} other(s) ` +
+      `over ${evaluable.length} evaluable epoch(s), ${absent} absent, ${guarded.length} under the mass-outage guard`,
+  };
+}
+
 export function computeSimulationMeasurementReport(input: {
   faultStartHeight: number;
   faultEndHeight: number;
@@ -753,7 +822,8 @@ export function computeSimulationMeasurementReport(input: {
     actual: observation.chainLock.coverage,
     label: 'ChainLock coverage',
   });
-  const comparisons = [dkg, chainLock];
+  const dsl = compareDsl({ expectation: input.impact.dsl, epochs: observationEvidence.dslEpochs });
+  const comparisons = input.impact.dsl === undefined ? [dkg, chainLock] : [dkg, chainLock, dsl];
   const overall: SimulationMeasurementReport['expectedVsActual']['overall'] = comparisons.some((row) => row.matched === null)
     ? 'not-evaluable'
     : comparisons.every((row) => row.matched)
@@ -792,7 +862,7 @@ export function computeSimulationMeasurementReport(input: {
     baseline,
     observation,
     delta,
-    expectedVsActual: { dkg, chainLock, overall },
+    expectedVsActual: { dkg, chainLock, dsl, overall },
     verdict: {
       measurementValid,
       success: measurementValid && overall === 'matched',

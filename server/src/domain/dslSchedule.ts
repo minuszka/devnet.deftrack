@@ -73,6 +73,27 @@ export function isCommittable(
  * cannot serve: an epoch that never converged has no transaction, and those
  * rows are the point.
  */
+/**
+ * The Sentinel's mass-outage valve, `nDSLMassOutagePct` (`consensus/params.h`):
+ * a commitment naming at least this share of the list is read as a network
+ * fault, not as machines, and punishes nobody -- counters neither advance nor
+ * reset. Proven on the devnet edge pair 22 vs 23 of 152 (E2, 2026-09-06).
+ * On a seven-masternode lab two names already open it.
+ */
+export const DSL_MASS_OUTAGE_PCT = 15;
+
+/**
+ * The epoch position after which an announcement no longer counts
+ * (`ProcessDSLTick`: announce at the boundary tick, cutoff at position 18,
+ * signing at 21). A response delayed this many blocks or more is a miss.
+ */
+export const DSL_CUTOFF_POSITION = 18;
+
+export function isMassOutage(missedCount: number | null, listSize: number | null): boolean {
+  if (missedCount === null || listSize === null || listSize <= 0) return false;
+  return missedCount * 100 >= listSize * DSL_MASS_OUTAGE_PCT;
+}
+
 export function epochKeyFor(epoch: number): string {
   return `dsl:${epoch}`;
 }

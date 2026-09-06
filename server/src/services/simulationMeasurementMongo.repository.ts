@@ -114,7 +114,7 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
         'height type source proTxHash'
       ).lean(),
       ServiceEpoch.find({ boundaryHeight: height }).sort({ boundaryHeight: 1, epoch: 1 }).select(
-        'epoch boundaryHeight status missedCount listSize'
+        'epoch boundaryHeight status missedCount listSize missedProTxHashes'
       ).lean(),
       PeerObservation.find({ height, host: { $in: input.expectedHostIds } }).sort({ height: 1, topic: 1, host: 1 }).select(
         'host topic hash height receivedAt clockOffsetMs resolutionMs'
@@ -216,6 +216,7 @@ export class MongoSimulationMeasurementRepository implements SimulationMeasureme
         status: epoch.status,
         missedCount: epoch.missedCount,
         listSize: epoch.listSize,
+        missedProTxHashes: [...(epoch.missedProTxHashes ?? [])],
       })),
       peerObservations: peerObservations.map((observation) => ({
         hostId: observation.host,
