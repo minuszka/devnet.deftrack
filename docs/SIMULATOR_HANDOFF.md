@@ -15,6 +15,15 @@ Ellenőrzés a „verify the verifier” szabály szerint: az első futás 152 h
 
 Ami a 8 nem-observeres hoston ebből következik: a preflight ott „stale” hostot lát majd, mert nincs telemetria – az observer kiterjesztése a `roland-node-*` hostokra külön döntés (megosztott, termelő gépek).
 
+## 22. nap, 7. futam jelentése (2026-09-06 20:26 UTC) – a küszöb-javítás bizonyítva
+
+`sim_ad32e798…`, ablak [877, 925], a futam a tervezett végén `completed`.
+
+- **A küszöb-javítás működik:** a jelentés `expectedVsActual` sorai először értékelhetők. `dkg: expected available, actual available, matched true` és ugyanez a ChainLockra – korábban mindkettő „a küszöb-margó ismeretlen volt a dry-run idején”. A dry-run impact: quorum 3, túlélő 3, DKG- és ChainLock-küszöb 2, margó 1, figyelmeztetés nélkül.
+- **A Sentinel-sor eltérést jelez, jogosan:** „named 0 of 1 expected target(s) and 0 other(s) over 2 evaluable epoch(s), 1 absent”. A lánc tényleg nem nevezett senkit: a 37. epochra commitment sem került be (lásd a második Core-leletet). A jelentés tehát a valóságot mondja, nem a szimulátor hibázott.
+- **A verdikt `measurementValid: false`,** de az alapvonal telemetriája miatt: blokk-érkezés lefedettség 34,7%, peer-megfigyelés 36,1%. Az alapvonal ablaka (805–876) átfedi a gépújraindítás utáni időszakot, amikor az observer-folyamatok nem futottak. Ez a labor újraindításának nyoma, nem mérési hiba.
+- **Tanulság a laborüzemhez:** a konténerek `docker restart`-ja után a node új RPC-sütit generál, ezért a lab-serve és a segédfolyamatok 401-et kapnak, amíg újra nem indulnak. A kézikönyvbe kerül.
+
 ## 22. nap, második Core-lelet (2026-09-06 késő este) – a bányász megsüketülhet a Sentinel-forgalomra
 
 A 7. futam nem azért nem adott `success: true`-t, mert a szimulátor hibázott: a 37. epochra **egyáltalán nem került commitment a láncra**. A nyom végig olvasható:
