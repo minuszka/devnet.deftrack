@@ -319,6 +319,12 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
     requestedBy: SimulationRunProjection['metadata']['requestedBy'];
   }): Promise<PreparedSimulationDraft> {
     const evidence = await this.snapshot(input.network, input.nowMs);
+    // The thresholds of the profile that is actually signing at this height --
+    // the one the current quorum was looked up by. draftPreparation made them
+    // an input so the lab would stop
+    // measuring Q60's margins, and then nothing supplied them -- every dry run
+    // since reported "threshold margin was unknown", on the lab and the devnet
+    // alike, and no report could ever be evaluable.
     return prepareSimulationDraft({
       ...input,
       currentHeight: evidence.chain.blocks,
@@ -329,6 +335,7 @@ export class MongoRpcSimulationEvidenceService implements SimulationEvidenceProv
       nextQuorum: evidence.nextQuorum,
       nextQuorumUnavailableReason: evidence.nextQuorumUnavailableReason,
       currentQuorumMemberProTxHashes: evidence.quorumMemberProTxHashes,
+      quorumThresholds: { dkg: evidence.quorumProfile.minSize, chainLock: evidence.quorumProfile.threshold },
     });
   }
 
