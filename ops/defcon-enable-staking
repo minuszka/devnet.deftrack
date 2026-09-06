@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+#
+# Re-arm staking after a node restart -- and never disarm it by accident.
+#
+# `staking=1` in defcon.conf only enables the subsystem; the per-wallet switch
+# shown by `liststakingwallets` defaults to disabled on every start and has to
+# be turned on with `setstaking`. On a chain whose only block producers are
+# these nodes, forgetting it stops the chain, so systemd runs this from
+# ExecStartPost on the devnet VPS (both daemons) and on every fleet staker
+# (instance 11 of the masternode template).
+#
+# `setstaking <id>` is a TOGGLE, not a setter: called on a wallet whose switch
+# is already on, it turns staking OFF. The previous version of this script
+# read the state with `grep '"staking": "true"'`, but the node answers a JSON
+# boolean -- `"staking": true` -- so the match never succeeded and the toggle
+# was called unconditionally on every start. Invisible while the switch always
+# began in the off position; a switch that was already on would have been
+# turned off by the very script whose job is to turn it on.
+#
+# The rules this version follows, in order:
+#
+#   1. State is read through jq from the parsed JSON, keyed by wallet id, and
+#      only a JSON boolean counts. A string, a missing key, a wallet id the
+#      answer does not carry, or output that is not JSON at all is an error.
+#   2. If `staking` is already true, nothing is called.
+#   3. If it is false, `setstaking <id>` is called exactly once.
+#   4. The state is read again afterwards, and the run succeeds only if it is
+#      really true. A second toggle is never attempted: at that point the
+#      state is unknown, and a toggle on unknown state is the original bug.
+#   5. Anything the script cannot prove is a failure: no call is made, the
+#      reason goes to stderr (the journal), and the exit status is non-zero.
+#
+# Exit status:  0  every staking wallet verified on
+#               1  a check failed, an RPC failed, or the node never answered
+#               2  usage (missing datadir, missing defcon-cli, missing jq)
+#
+# INSTALL NOTE -- the exit status now means something, and systemd acts on it.
+# `ExecStartPost=` without a leading `-` treats a non-zero exit as a failed
+# start and STOPS THE DAEMON. That is the wrong outcome for "staking could not
+# be verified" (for instance a reindex that keeps RPC in warmup past the
+# deadline). Install this script only with the unit line written as
+#
+#     ExecStartPost=-/path/to/defcon-enable-staking <datadir>
+#
+# so that the failure is logged and the node keeps running.
+#
+# Usage:  defcon-enable-staking <datadir>
+#
+# Environment (all optional):
+#   DEFCON_CLI                   path to defcon-cli; default: the defcon-cli
+#                                that sits beside this script (that is where
+#                                both the VPS and the fleet keep it)
+#   DEFCON_ENABLE_STAKING_TRIES  attempts to wait for RPC and wallets (60)
+#   DEFCON_ENABLE_STAKING_SLEEP  seconds between attempts (5)
+set -u
+set -o pipefail
+
+TAG='defcon-enable-staking'
+
+log() { printf '%s: %s\n' "$TAG" "$*" >&2; }
+die() {
+  # die <status> <message...>
+  local status=$1
+  shift
+  log "ERROR: $*"
+  exit "$status"
+}
+
+[ $# -eq 1 ] || die 2 'usage: defcon-enable-staking <datadir>'
+DATADIR=$1
+[ -d "$DATADIR" ] || die 2 "datadir is not a directory: $DATADIR"
+
+# Both installed locations (/usr/local/bin on the VPS, /opt/defcon-devnet/bin on
+# the fleet) keep defcon-cli in the same directory as this script.
+SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
+DEFCON_CLI=${DEFCON_CLI:-$SELF_DIR/defcon-cli}
+[ -x "$DEFCON_CLI" ] || die 2 "defcon-cli is not executable: $DEFCON_CLI"
+command -v jq >/dev/null 2>&1 || die 2 'jq is required and was not found in PATH'
+
+TRIES=${DEFCON_ENABLE_STAKING_TRIES:-60}
+SLEEP=${DEFCON_ENABLE_STAKING_SLEEP:-5}
+
+cli() { "$DEFCON_CLI" -datadir="$DATADIR" -conf="$DATADIR/defcon.conf" "$@"; }
+
+# read_staking <id>: prints "true" or "false" for wallet <id> as reported by
+# getstakinginfo, and returns non-zero -- printing nothing -- whenever the
+# answer cannot be trusted. Every caller must treat a non-zero return as "do
+# not touch the switch".
+read_staking() {
+  local id=$1 info
+  info=$(cli getstakinginfo) || { log "getstakinginfo failed for wallet $id"; return 1; }
+
+  printf '%s' "$info" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || { log 'getstakinginfo answered something that is not a JSON object'; return 1; }
+  printf '%s' "$info" | jq -e --arg id "$id" '.[$id] | type == "object"' >/dev/null 2>&1 \
+    || { log "getstakinginfo carries no entry for wallet $id"; return 1; }
+  printf '%s' "$info" | jq -e --arg id "$id" '.[$id] | has("staking")' >/dev/null 2>&1 \
+    || { log "getstakinginfo entry for wallet $id has no \"staking\" field"; return 1; }
+
+  local kind
+  kind=$(printf '%s' "$info" | jq -r --arg id "$id" '.[$id].staking | type' 2>/dev/null) || kind='?'
+  [ "$kind" = 'boolean' ] \
+    || { log "getstakinginfo \"staking\" for wallet $id is a $kind, not a JSON boolean -- refusing to guess"; return 1; }
+
+  if printf '%s' "$info" | jq -e --arg id "$id" '.[$id].staking == true' >/dev/null 2>&1; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+# Wait until RPC answers and at least one staking wallet is listed. The wallet
+# vector is rebuilt by the minter's maintenance thread, so an empty object
+# right after start is "not yet", not "none".
+wallet_ids=()
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
+  if cli getblockcount >/dev/null 2>&1; then
+    wallets=$(cli liststakingwallets 2>/dev/null) || wallets=''
+    if [ -n "$wallets" ]; then
+      printf '%s' "$wallets" | jq -e 'type == "object"' >/dev/null 2>&1 \
+        || die 1 'liststakingwallets answered something that is not a JSON object'
+      mapfile -t wallet_ids < <(printf '%s' "$wallets" | jq -r 'keys[]' 2>/dev/null)
+      for id in "${wallet_ids[@]}"; do
+        [[ $id =~ ^[0-9]+$ ]] || die 1 "liststakingwallets returned a non-numeric wallet id: $id"
+      done
+      [ "${#wallet_ids[@]}" -gt 0 ] && break
+    fi
+  fi
+  if [ "$attempt" -ge "$TRIES" ]; then
+    die 1 "no staking wallet listed after $attempt attempts (datadir $DATADIR) -- staking=1 and a loaded wallet are required"
+  fi
+  sleep "$SLEEP"
+done
+
+failed=0
+for id in "${wallet_ids[@]}"; do
+  state=$(read_staking "$id") || { failed=1; continue; }
+
+  if [ "$state" = 'true' ]; then
+    log "wallet $id: staking already on, nothing to do"
+    continue
+  fi
+
+  # Off. One toggle, then prove it took.
+  result=$(cli setstaking "$id") || { log "wallet $id: setstaking failed"; failed=1; continue; }
+  if ! printf '%s' "$result" | jq -e '. == true' >/dev/null 2>&1; then
+    # setstaking answers the new switch state (or null for an id it does not
+    # know). Anything but true means the switch is not provably on, and a
+    # second toggle would only make the state less known.
+    log "wallet $id: setstaking did not report the switch as on (answer: ${result:-<empty>})"
+    failed=1
+    continue
+  fi
+
+  after=$(read_staking "$id") || { log "wallet $id: state unreadable after setstaking; not toggling again"; failed=1; continue; }
+  if [ "$after" = 'true' ]; then
+    log "wallet $id: staking turned on and verified"
+  else
+    log "wallet $id: setstaking answered true but getstakinginfo still reports false -- not toggling again"
+    failed=1
+  fi
+done
+
+[ "$failed" -eq 0 ] || die 1 'at least one staking wallet could not be verified on'
+exit 0
