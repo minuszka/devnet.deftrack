@@ -16,6 +16,13 @@ Last updated 2026-09-05.
 | **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network; owed again once the fault can isolate a member |
 | **InstantSend security** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only |
 
+**Explorer tartozás (2026-09-06):** a lab explorer beragadt egy node-reindex utáni
+láncmozgás után – „block N follows X but Y was indexed before it; the chain moved
+mid-batch” minden ticken, a rollback-mélységen túl nincs önálló kiút, csak az
+adatbázis eldobása segített. A devneten ugyanez előfordulhat egy seed-reindex
+után; a sync-szolgáltatásnak vagy vissza kell tudnia gördülni ilyenkor, vagy
+kimondania, hogy emberi beavatkozás kell.
+
 `E1a` is consensus: `IsBanned()` reads `nDSLBanHeight` (`dmnstate.h:454`) and
 `fRewardSuspended` changes payee selection, so a node started without the
 argument forks. Same mechanism as `dslactivationheight`. Height = tip + 100

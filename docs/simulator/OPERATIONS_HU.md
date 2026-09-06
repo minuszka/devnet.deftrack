@@ -98,7 +98,9 @@ lévőt is** – egy `completed`-re váró futamot ezzel `aborted`-dé teszünk.
 | Targetek | `node ops/lab-register-targets.mjs` – a konténerek mint célpontok, minden képességgel; image-csere után újra kell futtatni (`NODE_BUILD_MISMATCH`) |
 | Bontás | `docker compose -f lab-compose.yml down -v`, majd a `mn*_data` volume-ok és a `.lab-state` törlése |
 
-Ismert csapdák: a régi volume-ok túlélhetik a `down -v`-t, ha a projektnév
+Ismert csapdák: a konténerek újraindítása (`docker restart`) után a node **új
+RPC-sütit** generál, ezért a lab-serve és a segédfolyamatok 401-et kapnak,
+amíg újra nem indítjuk őket; a régi volume-ok túlélhetik a `down -v`-t, ha a projektnév
 változott; a bring-up alatt a miner futnia kell; egy reindex után a
 spork-állapot elveszik (`sporkupdate` a spork-kulcsos node-on); a konténer
 újralétrehozása után a cookie változik, a lab-serve-et újra kell indítani.
