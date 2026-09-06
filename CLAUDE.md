@@ -164,7 +164,11 @@ Two corrections to what this entry said before, both verified at
 
 - **The per-wallet staking switch does not survive a restart.** `staking=1`
   only enables the subsystem; `setstaking <id>` must run afterwards, which
-  `ExecStartPost=/usr/local/bin/defcon-enable-staking` does.
+  `ExecStartPost=/usr/local/bin/defcon-enable-staking` does. **`setstaking` is
+  a toggle, not a setter**, and `getstakinginfo` answers a JSON boolean nested
+  under the wallet id -- the original hook matched the string `"true"`, never
+  matched, and toggled unconditionally. The versioned, tested replacement is
+  `ops/defcon-enable-staking` (see `plan.md` for the owed installation).
 
 - **A solo node never leaves `MASTERNODE_SYNC_BLOCKCHAIN`,** and
   `pos/minter.cpp:164` refuses to stake until `mn_sync.IsSynced()`. With one

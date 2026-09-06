@@ -159,13 +159,28 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 - **A restored root qdisc comes back with a new handle.** `fq_codel 8001:` where
   it began as `fq_codel 0:`; the kernel assigns it on replacement. A checker
   comparing handles reports a false difference — compare parameters.
-- **`defcon-enable-staking` has a latent bug.** Its state check matches
-  `"staking": "true"` while the node answers `"staking": true`, so the pattern
-  never matches and it calls `setstaking` unconditionally — and `setstaking` is
-  a toggle. On a normal restart the wallet switch defaults to off, so the toggle
-  turns it on and the bug is invisible. If the switch were ever already on at
-  that moment, the same call would turn staking **off**. devnet2 and the fleet
-  stakers use this script.
+- **`defcon-enable-staking` had a latent toggle bug; the fix is in the repo
+  and not yet installed.** Its state check matched `"staking": "true"` while
+  the node answers `"staking": true` (a JSON boolean nested under the wallet
+  id), so the pattern never matched and it called `setstaking` unconditionally
+  — and `setstaking` is a toggle. On a normal restart the wallet switch
+  defaults to off, so the toggle turned it on and the bug was invisible; a
+  switch already on would have been turned **off**. Fixed 2026-09-06 as
+  `ops/defcon-enable-staking` (jq-parsed state, no call when already on, one
+  toggle when off, re-read and verify, fail closed with a non-zero exit on
+  anything unparseable) with `ops/tests/defcon-enable-staking.sh` — 15 cases
+  against a fake `defcon-cli`, including a negative control that runs the
+  original script and requires it to show the bug. **Owed: installation.** Two
+  copies are live, identical except for the `defcon-cli` path (the new script
+  derives it from its own directory, so one file serves both):
+  `/usr/local/bin/defcon-enable-staking` on the VPS (`defcond-devnet.service`,
+  `defcond-devnet2.service`; the seed unit clears the hook) and
+  `/opt/defcon-devnet/bin/defcon-enable-staking` on the 8 fullnodes
+  (`defcon-devnet-mn@11.service.d/staking.conf`). Because the exit status is
+  now meaningful, each unit line must become `ExecStartPost=-…` (leading
+  dash) at install time, or a staking check that cannot be verified — a
+  reindex still in warmup, say — would make systemd stop the daemon. No
+  restart is needed to install: the hook only runs at the next start.
 
 ## 4. Current state of the network
 
@@ -321,12 +336,10 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   and firewall -- is the owner's and has not been made. The CI secret gate
   deliberately scans the tree and not the history, so it neither forces that
   decision nor pretends it was made.
-- **`defcon-enable-staking` has a latent toggle bug** (see §3): its state check
-  matches `"staking": "true"` while the node answers `"staking": true`, so it
-  calls `setstaking` unconditionally -- and `setstaking` is a toggle. Invisible
-  on a normal restart, because the switch defaults to off; if it were ever
-  already on, the same call would turn staking **off**. devnet2 and the fleet
-  stakers use this script.
+- **`defcon-enable-staking`: fixed in the repo, installation owed** (see §3).
+  The toggle bug is closed by `ops/defcon-enable-staking` and its test suite;
+  the VPS (two units) and the 8 fullnode stakers still run the old copy until
+  it is installed with the unit line changed to `ExecStartPost=-…`.
 - **The other four writing services have no integration test.** `quorumRound`
   is covered end to end against a real MongoDB, and the repository-level claims
   (unique index, `$setOnInsert`, the write race) are covered for the round and
