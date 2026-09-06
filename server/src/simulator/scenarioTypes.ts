@@ -123,6 +123,29 @@ export interface DryRunImpactEstimate {
   dkgMarginAfterFault: number | null;
   chainLockMarginAfterFault: number | null;
   warnings: string[];
+  /**
+   * What the Sentinel Layer's boundary commitments should say while the plan
+   * runs. Declared at dry-run time like the quorum margins above, so the report
+   * compares the chain against a prediction and never against a story fitted
+   * to the result. Absent on plans that do not touch the Sentinel.
+   */
+  dsl?: DslImpactExpectation;
+}
+
+export interface DslImpactExpectation {
+  faultKind: DslFaultKind;
+  epochs: number;
+  /**
+   * The members the commitment should name, and nobody else. Empty means the
+   * fault is expected to leave every commitment clean (a dropped report changes
+   * one node's view, not the pool's verdict).
+   */
+  expectedMissedProTxHashes: string[];
+  /**
+   * False when the plan cannot say what the chain will show: a skipped
+   * commitment is absent only if nobody else mines the boundary.
+   */
+  evaluable: boolean;
 }
 
 export interface DryRunContext {

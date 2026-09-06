@@ -111,8 +111,8 @@ function completeEvidence(): SimulationMeasurementEvidence {
       subjectId: 'private-protx-hash',
     }],
     dslEpochs: [
-      { epoch: 38, boundaryHeight: 936, status: 'committed', missedCount: 0, listSize: 60 },
-      { epoch: 41, boundaryHeight: 1_008, status: 'committed', missedCount: 1, listSize: 60 },
+      { epoch: 38, boundaryHeight: 936, status: 'committed', missedCount: 0, listSize: 60, missedProTxHashes: [] },
+      { epoch: 41, boundaryHeight: 1_008, status: 'committed', missedCount: 1, listSize: 60, missedProTxHashes: ['target-protx-hash'] },
     ],
     peerObservations,
     observationGaps: [],
@@ -242,6 +242,78 @@ describe('simulation measurement pipeline', () => {
     expect(report.verdict.measurementValid).toBe(true);
     expect(report.expectedVsActual.overall).toBe('not-evaluable');
     expect(report.verdict.success).toBe(false);
+  });
+
+  // The fixture's epoch 41 commits at 1008, past the fault window; these cases
+  // move it inside the observation window (its arithmetic is not under test)
+  // so the Sentinel comparison has a commitment to read.
+  function evidenceWithCommitmentInWindow(): SimulationMeasurementEvidence {
+    const evidence = completeEvidence();
+    evidence.dslEpochs = evidence.dslEpochs.map((row) => (row.epoch === 41 ? { ...row, boundaryHeight: 1_004 } : row));
+    return evidence;
+  }
+
+  it('holds the Sentinel to the plan: the named targets and nobody else', () => {
+    // One commitment in the window names exactly the target, so a response
+    // fault on that target matches; the same chain read against a plan that
+    // expected a clean commitment is a mismatch.
+    const dslExpectation = {
+      faultKind: 'response-drop' as const,
+      epochs: 1,
+      expectedMissedProTxHashes: ['target-protx-hash'],
+      evaluable: true,
+    };
+    const matched = computeSimulationMeasurementReport({
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
+      generatedAtMs: GENERATED_AT_MS,
+      impact: { ...impact(), dsl: dslExpectation },
+      evidence: evidenceWithCommitmentInWindow(),
+    });
+    expect(matched.expectedVsActual.dsl).toMatchObject({ expected: 'degraded', actual: 'degraded', matched: true });
+    expect(matched.expectedVsActual.overall).toBe('matched');
+
+    const cleanExpected = computeSimulationMeasurementReport({
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
+      generatedAtMs: GENERATED_AT_MS,
+      impact: { ...impact(), dsl: { ...dslExpectation, faultKind: 'report-drop', expectedMissedProTxHashes: [] } },
+      evidence: evidenceWithCommitmentInWindow(),
+    });
+    expect(cleanExpected.expectedVsActual.dsl).toMatchObject({ expected: 'available', actual: 'degraded', matched: false });
+    expect(cleanExpected.expectedVsActual.overall).toBe('mismatched');
+  });
+
+  it('keeps a plan without a Sentinel expectation evaluable, and a guarded epoch out of the check', () => {
+    const silent = computeSimulationMeasurementReport({
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
+      generatedAtMs: GENERATED_AT_MS,
+      impact: impact(),
+      evidence: completeEvidence(),
+    });
+    expect(silent.expectedVsActual.dsl.matched).toBeNull();
+    expect(silent.expectedVsActual.overall).toBe('matched');
+
+    // A commitment naming 15% of the list opened the mass-outage guard: the
+    // chain punished nobody, so its names are not a fault's signature and the
+    // only remaining epoch is the clean one. Counted, and left out.
+    const evidence = evidenceWithCommitmentInWindow();
+    evidence.dslEpochs = evidence.dslEpochs.map((row) =>
+      row.epoch === 41
+        ? { ...row, missedCount: 9, missedProTxHashes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'target-protx-hash'] }
+        : row
+    );
+    const guarded = computeSimulationMeasurementReport({
+      faultStartHeight: FAULT_START,
+      faultEndHeight: FAULT_END,
+      generatedAtMs: GENERATED_AT_MS,
+      impact: { ...impact(), dsl: { faultKind: 'response-drop', epochs: 1, expectedMissedProTxHashes: ['target-protx-hash'], evaluable: true } },
+      evidence,
+    });
+    expect(guarded.observation.dsl.guardedEpochs).toBe(1);
+    expect(guarded.expectedVsActual.dsl.matched).toBeNull();
+    expect(guarded.expectedVsActual.dsl.reason).toContain('1 under the mass-outage guard');
   });
 
   it('does not let unrelated quorum profiles satisfy the primary DKG baseline gate', () => {

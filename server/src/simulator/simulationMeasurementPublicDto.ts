@@ -123,6 +123,7 @@ export function toPublicSimulationMeasurementResult(
     expectedVsActual: {
       dkg: { ...source.report.expectedVsActual.dkg },
       chainLock: { ...source.report.expectedVsActual.chainLock },
+      dsl: { ...source.report.expectedVsActual.dsl },
       overall: source.report.expectedVsActual.overall,
     },
     verdict: {

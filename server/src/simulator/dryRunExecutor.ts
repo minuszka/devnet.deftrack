@@ -15,6 +15,7 @@ import {
   type PlannedSimulationAction,
 } from './scenarioTypes.js';
 import { BLOCK_SECONDS } from '../domain/dkgWindows.js';
+import { DSL_CUTOFF_POSITION } from '../domain/dslSchedule.js';
 import { selectSimulationTargets } from './targetSelection.js';
 
 const targetIdSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
@@ -369,6 +370,40 @@ function materializeActions(runKey: string, rawActions: readonly RawAction[]): P
     });
 }
 
+/**
+ * The Sentinel-side prediction of a `dsl-fault` plan, written before the run.
+ *
+ * Only a held-back response makes the pool miss the target: a dropped or
+ * delayed *report* changes what one node says about others, and the verdict
+ * is the pool's, so the commitment should stay clean. A delayed response is a
+ * miss only once the delay reaches the cutoff position. A skipped commitment
+ * is not predictable from here -- another miner may commit the boundary.
+ */
+function withDslExpectation(
+  impact: DryRunImpactEstimate,
+  scenario: SimulationScenarioRequest,
+  selected: readonly SimulationTargetSnapshot[]
+): DryRunImpactEstimate {
+  if (scenario.scenarioId !== 'dsl-fault') return impact;
+  const { faultKind, epochs } = scenario.parameters;
+  const param = scenario.parameters.param ?? 0;
+  const targets = selected
+    .map((target) => target.proTxHash)
+    .filter((hash): hash is string => hash !== null)
+    .sort();
+  const missesTargets =
+    faultKind === 'response-drop' || (faultKind === 'response-delay' && param >= DSL_CUTOFF_POSITION);
+  return {
+    ...impact,
+    dsl: {
+      faultKind,
+      epochs,
+      expectedMissedProTxHashes: missesTargets ? targets : [],
+      evaluable: faultKind !== 'commitment-skip' && targets.length === selected.length,
+    },
+  };
+}
+
 function estimateImpact(
   selected: readonly SimulationTargetSnapshot[],
   context: DryRunContext
@@ -436,7 +471,7 @@ export function generateDryRunPlan(requestInput: unknown, contextInput: unknown)
     selectedTargetIds,
     selectedRoles,
     actions,
-    impact: estimateImpact(selected, context),
+    impact: withDslExpectation(estimateImpact(selected, context), scenario, selected),
     coreSimulator: coreSimulatorReferenceFor(scenario),
     assurances: [
       'NO_DATABASE_WRITE',

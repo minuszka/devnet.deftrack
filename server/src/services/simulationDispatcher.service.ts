@@ -38,12 +38,26 @@ export interface ActionDispatcherDeps {
     actionId: string;
     faultLeaseExpiresAtMs: number;
   }): Promise<void>;
+  /**
+   * The planned end of a live run. Every scheduled step has been applied, so
+   * the run leaves observation through recovery with no abort intent -- the
+   * path that ends in `cooldown` and then `completed`. Without this, the only
+   * way out of observation was the fault lease, and a run whose plan had run to
+   * the letter was closed as a timeout, which is an abort: the record said the
+   * experiment failed to finish when it had finished exactly on schedule.
+   */
+  plannedEnd?(run: SimulationRunProjection): Promise<void>;
   workerId: string;
   intervalMs?: number;
   leaseMs?: number;
   clock?: () => number;
   logger?: DispatcherLogger;
 }
+
+/** The synthetic action that closes a live plan; never a wrapper command. */
+export const PLANNED_END_KIND = 'planned-end';
+/** After the last scheduled step, so its outcome is settled before the end is declared. */
+const PLANNED_END_DELAY_MS = 1_000;
 
 /**
  * Performs the actions a plan scheduled for after activation.
@@ -127,6 +141,22 @@ export class SimulationActionDispatcher {
         await this.settle(claimed, 'compensated', 'already-clear', nowMs, 'the run lease has ended');
         return;
       }
+      if (claimed.kind === PLANNED_END_KIND) {
+        if (this.deps.plannedEnd === undefined) {
+          await this.settle(
+            claimed,
+            'compensated',
+            'already-clear',
+            nowMs,
+            'no planned-end handler is configured; the fault lease closes the run'
+          );
+          return;
+        }
+        await this.deps.plannedEnd(run);
+        await this.settle(claimed, 'succeeded', 'applied', nowMs, null);
+        this.logger.info(`${claimed.runKey} reached its planned end`);
+        return;
+      }
       const plan = await this.deps.loadPlan(run);
       await this.deps.dispatch({ run, plan, actionId: claimed.actionId, faultLeaseExpiresAtMs: lease });
       await this.settle(claimed, 'succeeded', 'applied', nowMs, null);
@@ -190,9 +220,47 @@ export class SimulationActionDispatcher {
  * Mirrors what `scheduledLabActionsForPlan` will translate. The two must agree:
  * a row enqueued for a kind the translation refuses can only ever fail.
  */
-const DISPATCHABLE_ACTION_KINDS: ReadonlySet<string> = new Set(['service-stop', 'service-start']);
+const DISPATCHABLE_ACTION_KINDS: ReadonlySet<string> = new Set([
+  'service-stop',
+  'service-start',
+  // The wrapper clears a Sentinel fault by id, so its scheduled clear is a
+  // command the dispatcher can hand over (unlike a netem fault-clear, which is
+  // recovery's work). Without it the node's own expiry-by-height ended the
+  // fault and the wrapper kept a job nobody would clear until recovery.
+  'dsl-fault-clear',
+]);
 
 export function scheduledActionRowsFor(input: {
+  runKey: string;
+  actions: readonly PlannedSimulationAction[];
+  activatedAtMs: number;
+  faultLeaseExpiresAtMs: number;
+}): ScheduledActionRow[] {
+  const scheduled = scheduledStepRowsFor(input);
+  // The plan's last instant, over every action -- including the ones the
+  // dispatcher does not perform, since a netem fault-clear still says when the
+  // plan is over. A plan made only of immediate steps has no planned end and
+  // keeps the lease as its only exit.
+  const lastOffsetMs = input.actions.reduce((max, action) => Math.max(max, action.notBeforeOffsetMs), 0);
+  if (lastOffsetMs === 0) return scheduled;
+  const plannedEnd: ScheduledActionRow = {
+    actionId: `${input.runKey}:planned-end`,
+    runKey: input.runKey,
+    sequence: input.actions.reduce((max, action) => Math.max(max, action.sequence), 0) + 1,
+    targetId: 'run',
+    kind: PLANNED_END_KIND,
+    payload: { kind: PLANNED_END_KIND },
+    payloadDigest: PLANNED_END_KIND,
+    notBeforeMs: input.activatedAtMs + lastOffsetMs + PLANNED_END_DELAY_MS,
+    expiresAtMs: input.faultLeaseExpiresAtMs,
+    maxAttempts: 3,
+  };
+  // Past the lease it is not queued at all: the lease then ends the run as a
+  // timeout, which is the truth about a plan that outran its own envelope.
+  return plannedEnd.notBeforeMs < plannedEnd.expiresAtMs ? [...scheduled, plannedEnd] : scheduled;
+}
+
+function scheduledStepRowsFor(input: {
   runKey: string;
   actions: readonly PlannedSimulationAction[];
   activatedAtMs: number;
@@ -207,10 +275,9 @@ export function scheduledActionRowsFor(input: {
     // failed action on every netem run, describing a dispatcher fault where
     // there was none.
     //
-    // Leaving it out does not clear the impairment at the planned end. Nothing
-    // does today; the wrapper's own TTL ends it, `duration + 120 s` after it
-    // began. That overshoot is real and is recorded in the roadmap; what this
-    // removes is the false failure, not the overshoot.
+    // Leaving it out no longer leaves the impairment running to the wrapper's
+    // TTL: the planned-end row below takes the run into recovery at the plan's
+    // last instant, and recovery is what clears a netem job.
     .filter((action) => DISPATCHABLE_ACTION_KINDS.has(action.kind))
     .map((action) => ({
       actionId: action.actionId,
