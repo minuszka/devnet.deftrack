@@ -116,6 +116,10 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     INGEST_TOKEN: ingestToken,
     LAB_MONGODB_URI: LAB_MONGO,
     LAB_PORT,
+    // The lab mines every LAB_BLOCK_SECONDS (lab-miner --interval); the server's
+    // block-time arithmetic -- outage ceilings, fault leases, measurement windows
+    // -- must count the same seconds, or a one-epoch DSL fault reads as two hours.
+    BLOCK_TARGET_SECONDS: process.env.BLOCK_TARGET_SECONDS ?? '15',
     RPC_HOST: '127.0.0.1',
     RPC_PORT: rpcPort,
     RPC_USER: user,

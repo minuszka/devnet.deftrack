@@ -77,5 +77,12 @@ export function coreSimulatorReferenceFor(
         artifacts: [],
         note: 'Recovery is an orchestrator safety action, not a Core simulation scenario.',
       };
+    case 'dsl-fault':
+      return {
+        ...base,
+        status: 'modeled',
+        scenarioFamilies: ['dsl_service_pose'],
+        note: 'The Core-native dsl_service_pose suite models ban time and false-ban rates under availability classes; a single injected fault is one sample of it, not a prediction.',
+      };
   }
 }

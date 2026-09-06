@@ -7,7 +7,7 @@ import {
 } from './scenarioRegistry.js';
 
 describe('simulation scenario registry', () => {
-  it('exposes the closed set of eight scenarios', () => {
+  it('exposes the closed set of nine scenarios', () => {
     expect(scenarioDescriptors().map((item) => item.scenarioId)).toEqual([
       'mn-stop',
       'host-outage',
@@ -17,6 +17,7 @@ describe('simulation scenario registry', () => {
       'network-degradation',
       'node-isolation',
       'clear-recover',
+      'dsl-fault',
     ]);
   });
 

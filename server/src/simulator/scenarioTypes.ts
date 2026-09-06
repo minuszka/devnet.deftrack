@@ -13,9 +13,27 @@ export const SIMULATION_SCENARIO_IDS = [
   'network-degradation',
   'node-isolation',
   'clear-recover',
+  'dsl-fault',
 ] as const;
 
 export type SimulationScenarioId = (typeof SIMULATION_SCENARIO_IDS)[number];
+
+/**
+ * The Sentinel Layer faults the node's own injector knows (`faultinject set`,
+ * devnet/regtest only). Spelled exactly as the RPC spells them, so the wrapper
+ * passes them through untouched and an unknown kind is refused by the node.
+ */
+export const DSL_FAULT_KINDS = [
+  'response-drop',
+  'report-drop',
+  'response-delay',
+  'report-delay',
+  'commitment-skip',
+] as const;
+export type DslFaultKind = (typeof DSL_FAULT_KINDS)[number];
+
+/** Blocks per DSL epoch on the regtest lab and the devnet alike (`nDSLEpochInterval`). */
+export const DSL_EPOCH_BLOCKS = 24;
 export type SimulationRiskClass = 'low' | 'medium' | 'high';
 
 export interface ScenarioDescriptor {
@@ -44,6 +62,22 @@ export type PlannedActionPayload =
       peerTargetIds: string[];
       faultLeaseSeconds: number;
     }
+  | {
+      /**
+       * Arm one Sentinel Layer fault on the target's own node for `epochs`
+       * epochs, counted from the next epoch boundary: the wrapper reads the
+       * node's height, arms `faultinject set` with an expiry at
+       * boundary + epochs * DSL_EPOCH_BLOCKS, and the node retires it by height
+       * on its own. `faultLeaseSeconds` is the wrapper's own, second, clock.
+       */
+      kind: 'dsl-fault-apply';
+      faultKind: DslFaultKind;
+      epochs: number;
+      /** Delay in blocks for the *-delay kinds; 0 otherwise. */
+      param: number;
+      faultLeaseSeconds: number;
+    }
+  | { kind: 'dsl-fault-clear'; faultKind: DslFaultKind }
   | { kind: 'fault-clear'; scope: 'run' };
 
 export interface PlannedSimulationAction {

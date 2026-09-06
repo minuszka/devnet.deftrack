@@ -39,8 +39,31 @@ export interface NetemSpec {
   args: readonly string[];
 }
 
-/** What kind of fault a job holds, and therefore how it is undone. */
-export type FaultClass = 'netem' | 'service';
+/**
+ * What kind of fault a job holds, and therefore how it is undone.
+ *
+ * `dsl` is a fault the node holds against itself: `faultinject set` over the
+ * container's own cookie, retired by the node at an expiry height and, as the
+ * second clock, by this wrapper's lease through `faultinject clear <id>`.
+ * Nothing outside the daemon changes -- no qdisc, no container state -- so a
+ * stopped container has no dsl fault to clear and its undo is benign.
+ */
+export type FaultClass = 'netem' | 'service' | 'dsl';
+
+/** The DSL fault kinds the node's injector accepts, spelled as the RPC spells them. */
+export const DSL_FAULT_KIND_NAMES = ['response-drop', 'report-drop', 'response-delay', 'report-delay', 'commitment-skip'] as const;
+export type DslFaultKindName = (typeof DSL_FAULT_KIND_NAMES)[number];
+
+export interface DslFaultSpec {
+  container: string;
+  faultKind: DslFaultKindName;
+  /** Whole epochs the fault covers, counted from the next epoch boundary. */
+  epochs: number;
+  /** Delay in blocks for the *-delay kinds, 0 otherwise. */
+  param: number;
+  /** Recorded on the node's fault; the run key, so the node's telemetry names the experiment. */
+  scenarioId: string;
+}
 
 export interface FaultJob {
   jobId: string;
@@ -53,7 +76,8 @@ export interface FaultJob {
    * which is what it was.
    */
   faultClass?: FaultClass;
-  kind: NetemKind | 'service-stop';
+  kind: NetemKind | 'service-stop' | 'dsl';
+  /** For a dsl job: [faultKind, epochs, param, faultId] -- the id once the node has answered, '' before. */
   args: string[];
   appliedAtMs: number;
   /** Node-local lease expiry: the fault clears itself at this time, API or not. */
@@ -75,7 +99,15 @@ export type FaultAction =
   | { op: 'apply'; container: string; tcArgs: string[] }
   | { op: 'clear'; container: string; tcArgs: string[] }
   | { op: 'stop'; container: string }
-  | { op: 'start'; container: string };
+  | { op: 'start'; container: string }
+  | { op: 'dsl-set'; container: string; faultKind: DslFaultKindName; epochs: number; param: number; scenarioId: string }
+  | { op: 'dsl-clear'; container: string; faultId: string };
+
+/** What an executed action reports back; only `dsl-set` has anything to say. */
+export interface FaultActionResult {
+  faultId?: string;
+  expiryHeight?: number;
+}
 
 export interface Plan {
   state: WrapperState;
@@ -89,9 +121,10 @@ export interface Plan {
  * the right action for the class without asking.
  */
 export function undoFor(job: FaultJob): FaultAction {
-  return faultClassOf(job) === 'service'
-    ? { op: 'start', container: job.container }
-    : { op: 'clear', container: job.container, tcArgs: tcClearArgs() };
+  const faultClass = faultClassOf(job);
+  if (faultClass === 'service') return { op: 'start', container: job.container };
+  if (faultClass === 'dsl') return { op: 'dsl-clear', container: job.container, faultId: job.args[3] ?? '' };
+  return { op: 'clear', container: job.container, tcArgs: tcClearArgs() };
 }
 
 /**
@@ -100,7 +133,10 @@ export function undoFor(job: FaultJob): FaultAction {
  * all -- so a service undo must precede a netem undo on the same container, and
  * the tc clear that follows is then a harmless no-op on a fresh namespace.
  */
-const UNDO_RANK: Record<FaultClass, number> = { service: 0, netem: 1 };
+// A dsl fault lives inside the daemon and is cleared first, while the daemon
+// that was armed is still the one running: a service undo recreates the
+// container and would have lost the fault -- and the qdisc -- with the process.
+const UNDO_RANK: Record<FaultClass, number> = { dsl: 0, service: 1, netem: 2 };
 
 function byUndoRank(a: FaultJob, b: FaultJob): number {
   return UNDO_RANK[faultClassOf(a)] - UNDO_RANK[faultClassOf(b)];
@@ -130,7 +166,7 @@ export function parseWrapperState(raw: unknown): WrapperState {
       jobId: job.jobId,
       runTag: typeof job.runTag === 'string' ? job.runTag : '',
       container: job.container,
-      faultClass: job.faultClass === 'service' ? 'service' : 'netem',
+      faultClass: job.faultClass === 'service' ? 'service' : job.faultClass === 'dsl' ? 'dsl' : 'netem',
       kind: job.kind ?? 'netem',
       args: Array.isArray(job.args) ? job.args.filter((a): a is string => typeof a === 'string') : [],
       appliedAtMs: Number.isFinite(job.appliedAtMs) ? (job.appliedAtMs as number) : 0,
@@ -158,6 +194,30 @@ export function serviceJobId(runTag: string, container: string): string {
     .update(JSON.stringify([runTag, container, 'service-stop']))
     .digest('hex');
   return `service-${digest.slice(0, 16)}`;
+}
+
+/** One dsl fault of a kind per (run, container): a second of the same kind is the same job. */
+export function dslJobId(runTag: string, container: string, faultKind: DslFaultKindName): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([runTag, container, 'dsl', faultKind]))
+    .digest('hex');
+  return `dsl-${digest.slice(0, 16)}`;
+}
+
+export function assertDslFaultSpec(spec: DslFaultSpec): void {
+  if (!(DSL_FAULT_KIND_NAMES as readonly string[]).includes(spec.faultKind)) {
+    throw new Error(`unknown DSL fault kind "${spec.faultKind}"`);
+  }
+  if (!Number.isInteger(spec.epochs) || spec.epochs < 1 || spec.epochs > 3) {
+    throw new Error('a DSL fault covers 1..3 epochs');
+  }
+  if (!Number.isInteger(spec.param) || spec.param < 0 || spec.param > 1_000) {
+    throw new Error('DSL fault param must be a non-negative block count');
+  }
+  const isDelay = spec.faultKind === 'response-delay' || spec.faultKind === 'report-delay';
+  if (isDelay && spec.param === 0) throw new Error(`${spec.faultKind} needs a non-zero delay`);
+  if (!isDelay && spec.param !== 0) throw new Error(`${spec.faultKind} takes no param`);
+  if (spec.scenarioId.trim().length === 0) throw new Error('a DSL fault must name its scenario');
 }
 
 /**
@@ -392,6 +452,68 @@ export function planServiceStop(
 }
 
 /** Clear one job by id. Idempotent: clearing an unknown job does nothing. */
+/**
+ * Arm a DSL fault: one job per (run, container, kind). The node answers with
+ * the fault id only once the action has run, so the job is written first with
+ * an empty id (it still clears on TTL: an empty id clears nothing, and the
+ * node's own height expiry is the other clock) and completed by
+ * `withDslFaultId` afterwards.
+ */
+export function planDslSet(
+  state: WrapperState,
+  spec: DslFaultSpec,
+  runTag: string,
+  nowMs: number,
+  expiresAtMs: number
+): Plan {
+  assertDslFaultSpec(spec);
+  const jobId = dslJobId(runTag, spec.container, spec.faultKind);
+  if (expiresAtMs <= nowMs) {
+    throw new Error(`lease for ${jobId} expired at ${expiresAtMs}, before it could be applied`);
+  }
+  const existing = state.jobs.find((job) => job.jobId === jobId);
+  // Idempotent only once the node has answered. The job is written before the
+  // arm runs, so a first attempt the node refused leaves a live job with no
+  // id; a retry must arm again, not read that job as "already applied" -- which
+  // is exactly what happened on the lab when the cli refused a string argument.
+  if (existing !== undefined && existing.expiresAtMs > nowMs && (existing.args[3] ?? '') !== '') {
+    return { state, actions: [] };
+  }
+  const job: FaultJob = {
+    jobId,
+    runTag,
+    container: spec.container,
+    faultClass: 'dsl',
+    kind: 'dsl',
+    args: [spec.faultKind, String(spec.epochs), String(spec.param), ''],
+    appliedAtMs: nowMs,
+    expiresAtMs,
+  };
+  const others = state.jobs.filter((candidate) => candidate.jobId !== jobId);
+  return {
+    state: { jobs: [...others, job] },
+    actions: [{
+      op: 'dsl-set',
+      container: spec.container,
+      faultKind: spec.faultKind,
+      epochs: spec.epochs,
+      param: spec.param,
+      scenarioId: spec.scenarioId,
+    }],
+  };
+}
+
+/** Record the node's fault id on the dsl job it belongs to, so the undo can name it. */
+export function withDslFaultId(state: WrapperState, jobId: string, faultId: string): WrapperState {
+  return {
+    jobs: state.jobs.map((job) =>
+      job.jobId === jobId && faultClassOf(job) === 'dsl'
+        ? { ...job, args: [job.args[0] ?? '', job.args[1] ?? '', job.args[2] ?? '', faultId] }
+        : job
+    ),
+  };
+}
+
 export function planClear(state: WrapperState, jobId: string): Plan {
   const job = state.jobs.find((candidate) => candidate.jobId === jobId);
   if (job === undefined) return { state, actions: [] };

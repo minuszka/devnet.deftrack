@@ -30,6 +30,7 @@ Payloadban nincs parancssor, script, fájlútvonal, hostname, `hostRef` vagy `un
 | `network-degradation` | Latency, jitter és packet loss | 2000 ms latency, 1000 ms jitter, 30% loss |
 | `node-isolation` | MN-ek P2P izolációja a többi regisztrált targettől | legfeljebb 5 izolált target |
 | `clear-recover` | Ismert simulator fault törlése | legfeljebb 20 target |
+| `dsl-fault` | Futó masternode-ok saját DSL-bejelentésének, riportjának vagy commitment-részének visszatartása/késleltetése egész epochokra (csak teszt-hálózaton, `-enablefaultinjection=1` mögött) | legfeljebb 20 target, 1–3 epoch, késleltetés legfeljebb 24 blokk; `dsl-test-hook` capability kötelező |
 
 Minden Zod objektum `strict()`: ismeretlen scenario, mező vagy payload-paraméter hibát ad. Az explicit `targetIds` lista egyedi, és elemszámának egyeznie kell a `count` mezővel.
 

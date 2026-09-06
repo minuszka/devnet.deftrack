@@ -106,7 +106,12 @@ type PayeeLookup =
   | { ok: true; paidProTxHash: string | null }
   | { ok: false };
 
-async function lookupPayee(blockhash: string): Promise<PayeeLookup> {
+async function lookupPayee(blockhash: string, height: number): Promise<PayeeLookup> {
+  // Genesis pays nobody, and asking the node is not merely useless: the RPC
+  // fills a payment template from the block's predecessor, which genesis does
+  // not have, and the not-null guard on that pointer terminates the daemon.
+  // Found on the regtest lab on 2026-09-06, indexing a fresh chain from 0.
+  if (height === 0) return { ok: true, paidProTxHash: null };
   try {
     const payments = await rpc.masternodePayments(blockhash);
     return { ok: true, paidProTxHash: payments[0]?.masternodes?.[0]?.proTxHash ?? null };
@@ -162,7 +167,7 @@ export class SyncService {
     const results = await mapConcurrent(
       pending,
       Math.min(4, config.sync.txConcurrency),
-      async (block) => ({ block, lookup: await lookupPayee(block.hash) })
+      async (block) => ({ block, lookup: await lookupPayee(block.hash, block.height) })
     );
     let found = 0;
     let none = 0;
@@ -471,7 +476,7 @@ export class SyncService {
     // and one call per block now replaces one per transaction.
     const [block, payeeLookup]: [RpcBlock | RpcBlockVerbose, PayeeLookup] = await Promise.all([
       height === 0 ? rpc.getBlock(hash) : rpc.getBlockVerbose(hash),
-      lookupPayee(hash),
+      lookupPayee(hash, height),
     ]);
 
     let blockTotalSat = 0n;

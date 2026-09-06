@@ -38,6 +38,12 @@ export interface LabProbes {
   /** True when the node is being observed -- for the lab, its daemon process is alive. */
   observerFresh(input: { targetId: string; container: string }): Promise<boolean>;
   /**
+   * True when the node holds no injected DSL fault of this run: `faultinject
+   * list` inside the container names no fault whose scenario is `runTag`. A
+   * node without the gate answers "disabled" -- which is also "none of ours".
+   */
+  dslClear(input: { container: string; runTag: string }): Promise<boolean>;
+  /**
    * The Compose project a container belongs to, or null when it belongs to none.
    * A target's hostRef becomes a container name verbatim, so without this any
    * container on the lab host could be named in a declaration and then faulted.
@@ -263,11 +269,11 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
       runTag: input.run.runKey,
     });
     for (const target of recoveryTargets) await this.queue.enqueue(target.clear);
-    await this.waitForRecovered(recoveryTargets);
+    await this.waitForRecovered(recoveryTargets, input.run.runKey);
 
     const targets: SimulationRecoveryTargetResult[] = [];
     for (const target of recoveryTargets) {
-      targets.push(await this.probeTarget(target));
+      targets.push(await this.probeTarget(target, input.run.runKey));
     }
     const allClear =
       // A skip is something recovery could not speak for; leniency must never
@@ -294,15 +300,21 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
    * run applied is no longer in force" -- which for a service outage is the
    * container running again, and for an impairment is the qdisc gone.
    */
-  private async probeTarget(target: LabRecoveryTarget): Promise<SimulationRecoveryTargetResult> {
+  private async probeTarget(target: LabRecoveryTarget, runTag: string): Promise<SimulationRecoveryTargetResult> {
     const running = await safeProbe(() => this.probes.serviceRunning(target.container));
     const observerFresh = running
       ? await safeProbe(() => this.probes.observerFresh({ targetId: target.targetId, container: target.container }))
       : false;
     const qdiscClean = running ? await safeProbe(() => this.probes.qdiscClean(target.container)) : false;
+    // A dsl fault is read back from the node itself: the run's scenario id must
+    // be absent from its fault list. A stopped node holds none, but "stopped"
+    // is not "recovered" for a fault that assumed a running daemon.
+    const dslClear = running && target.faultClass === 'dsl'
+      ? await safeProbe(() => this.probes.dslClear({ container: target.container, runTag }))
+      : false;
     return {
       targetId: target.targetId,
-      faultStateClear: target.faultClass === 'service' ? running : qdiscClean,
+      faultStateClear: target.faultClass === 'service' ? running : target.faultClass === 'dsl' ? dslClear : qdiscClean,
       expectedServiceRunning: running,
       observerFresh,
       checkedAtMs: this.clock.now(),
@@ -316,10 +328,10 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
    * up: a container is running the instant Docker starts it, seconds before the
    * node inside it is a node again.
    */
-  private async waitForRecovered(targets: readonly LabRecoveryTarget[]): Promise<void> {
+  private async waitForRecovered(targets: readonly LabRecoveryTarget[], runTag: string): Promise<void> {
     if (targets.length === 0) return;
     for (let attempt = 0; attempt < this.options.recoveryPollAttempts; attempt++) {
-      const states = await Promise.all(targets.map((target) => this.isRecovered(target)));
+      const states = await Promise.all(targets.map((target) => this.isRecovered(target, runTag)));
       if (states.every(Boolean)) return;
       if (attempt < this.options.recoveryPollAttempts - 1) {
         await this.clock.delay(this.options.recoveryPollIntervalMs);
@@ -327,10 +339,14 @@ export class DockerLiveExecutor implements SimulationLiveExecutor {
     }
   }
 
-  private async isRecovered(target: LabRecoveryTarget): Promise<boolean> {
+  private async isRecovered(target: LabRecoveryTarget, runTag: string): Promise<boolean> {
     if (target.faultClass === 'service') {
       if (!(await safeProbe(() => this.probes.serviceRunning(target.container)))) return false;
       return safeProbe(() => this.probes.observerFresh({ targetId: target.targetId, container: target.container }));
+    }
+    if (target.faultClass === 'dsl') {
+      if (!(await safeProbe(() => this.probes.serviceRunning(target.container)))) return false;
+      return safeProbe(() => this.probes.dslClear({ container: target.container, runTag }));
     }
     return safeProbe(() => this.probes.qdiscClean(target.container));
   }
@@ -388,6 +404,24 @@ export function dockerLabProbes(dockerBin = 'docker'): LabProbes {
       // processes; the daemon being present is the node still being a node.
       const out = await dockerStdout(dockerBin, ['top', input.container]);
       return /\bdefcond\b/.test(out);
+    },
+    async dslClear(input: { container: string; runTag: string }): Promise<boolean> {
+      // Read from inside the container for the same reason the faults are armed
+      // there: the RPC answers only the node's own datadir cookie.
+      const out = await dockerStdout(dockerBin, [
+        'exec', input.container, 'defcon-cli', '-regtest', '-datadir=/var/lib/defcon', '-rpcport=19798',
+        'faultinject', 'list',
+      ]);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(out);
+      } catch {
+        // "fault injection is disabled", or any non-JSON answer: nothing of ours can be armed there
+        return /disabled/i.test(out);
+      }
+      const faults = (parsed as { faults?: Array<{ scenarioId?: unknown }> }).faults;
+      if (!Array.isArray(faults)) return false;
+      return faults.every((fault) => fault.scenarioId !== input.runTag);
     },
   };
 }

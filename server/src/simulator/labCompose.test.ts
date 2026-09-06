@@ -127,6 +127,29 @@ describe('generateLabCompose', () => {
     expect(spec.services.mn03!.command.some((a) => a.startsWith('-masternodeblsprivkey='))).toBe(false);
   });
 
+  it('runs the Sentinel Layer and the fault gate on every node, or on none', () => {
+    // Both are per-node switches the node itself refuses to mix meaningfully:
+    // a partial DSL lab pools reports nobody validates, and a producer without
+    // the fault gate cannot be asked to skip a commitment. Off by default, so a
+    // lab that measures DKG only runs the daemon exactly as the fleet does.
+    const plain = generateLabCompose({ nodes: 3 });
+    for (const service of Object.values(plain.services)) {
+      expect(service.command.some((a) => a.startsWith('-testactivationheight='))).toBe(false);
+      expect(service.command).not.toContain('-enablefaultinjection=1');
+    }
+    const dsl = generateLabCompose({ nodes: 3, dslActivationHeight: 1, faultInjection: true });
+    for (const service of Object.values(dsl.services)) {
+      expect(service.command).toContain('-testactivationheight=dsl@1');
+      expect(service.command).toContain('-enablefaultinjection=1');
+    }
+    // and one without the other is expressible: DSL observed, nothing injected
+    const shadow = generateLabCompose({ nodes: 2, dslActivationHeight: 1 });
+    for (const service of Object.values(shadow.services)) {
+      expect(service.command).toContain('-testactivationheight=dsl@1');
+      expect(service.command).not.toContain('-enablefaultinjection=1');
+    }
+  });
+
   it('starts no masternode at all by default', () => {
     const spec = generateLabCompose({ nodes: 2 });
     for (const service of Object.values(spec.services)) {

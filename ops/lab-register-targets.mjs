@@ -94,7 +94,7 @@ for (let index = 2; index <= NODES; index++) {
     // them. A capability the target does not really have would be worse, so this
     // list is what the compose grants: NET_ADMIN, its own interface, and a
     // container the executor may stop.
-    capabilities: ['service-control', 'netem-p2p', 'partition-p2p'],
+    capabilities: ['service-control', 'netem-p2p', 'partition-p2p', 'dsl-test-hook'],
     labels: ['lab'],
   });
   await api('POST', `/targets/${name}/enable`);

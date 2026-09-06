@@ -84,6 +84,19 @@ export interface LabTopology {
    * flag on the topology.
    */
   masternodeKeys: Readonly<Record<string, string>>;
+  /**
+   * Activate the Sentinel Layer (DSL) from this regtest height, through the
+   * node's own `-testactivationheight=dsl@<h>`; null leaves it dormant, which
+   * is what a lab measuring only DKG wants. Every node gets it, the wallet node
+   * included: it mines the blocks that carry the commitments.
+   */
+  dslActivationHeight: number | null;
+  /**
+   * Start every node with `-enablefaultinjection=1`, the devnet/regtest-only
+   * gate behind the `faultinject` RPC. Off by default: a lab that injects no
+   * DSL faults must run the daemon exactly as the fleet does.
+   */
+  faultInjection: boolean;
 }
 
 export interface LabComposeService {
@@ -149,6 +162,8 @@ export const DEFAULT_LAB_TOPOLOGY: Omit<LabTopology, 'nodes'> = {
   zmqPort: 28332,
   hostZmqPort: 28332,
   masternodeKeys: {},
+  dslActivationHeight: null,
+  faultInjection: false,
 };
 
 const MIN_NODES = 2;
@@ -231,6 +246,12 @@ export function generateLabCompose(input: { nodes: number } & Partial<Omit<LabTo
       ...(topology.llmqTestParams === null
         ? []
         : [`-llmqtestparams=${topology.llmqTestParams.size}:${topology.llmqTestParams.threshold}`]),
+      // The Sentinel Layer and its fault gate are per-node switches, and every
+      // node gets the same answer: a lab where only some nodes ran DSL would
+      // pool reports nobody else validates, and a producer without the fault
+      // gate could not be asked to skip a commitment.
+      ...(topology.dslActivationHeight === null ? [] : [`-testactivationheight=dsl@${topology.dslActivationHeight}`]),
+      ...(topology.faultInjection ? ['-enablefaultinjection=1'] : []),
       // Only node 1 signs sporks -- it is the one node guaranteed to keep a
       // wallet, and a second signer would add nothing on a single-key chain.
       ...(index === 1 ? [`-sporkkey=${topology.sporkKey}`] : []),

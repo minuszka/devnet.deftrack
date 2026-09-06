@@ -6,9 +6,16 @@
 # and copied in; the only build step here proves it can actually run in this
 # image, because a binary that compiles is not a binary that runs.
 #
-# Build context: place the pre-built binary at the context root as ./defcond,
-# built --without-bdb (SQLite descriptor wallets), then:
+# Build context: place the pre-built binaries at the context root as ./defcond
+# and ./defcon-cli, built --without-bdb (SQLite descriptor wallets), then:
 #   docker build -f docker/Dockerfile -t defcon-core:test .
+# or let ops/lab-image.sh do exactly that from a build directory.
+#
+# defcon-cli is in the image for one caller: the lab fault wrapper arms DSL
+# faults with `docker exec <node> defcon-cli ... faultinject ...`, and that RPC
+# answers only a caller authenticated with the node's own datadir cookie --
+# which the cli inside the container reads and a host process cannot. Every
+# other host-side read still goes over the published RPC port.
 #
 # Base matches the WSL Ubuntu 24.04 build host, so the glibc and shared-library
 # ABI the binary was linked against is the one it finds here.
@@ -29,15 +36,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 COPY defcond /usr/local/bin/defcond
+COPY defcon-cli /usr/local/bin/defcon-cli
 
-# Prove it runs HERE, in the image that is the target host. A missing shared
+# Prove they run HERE, in the image that is the target host. A missing shared
 # library passes the compile and the -version string and only surfaces as
 # "not found" on the box it runs on -- which this image now is. `grep -q`
 # succeeds when it finds "not found", so `!` turns that into a failed build; the
 # -version call is a second, positive proof that the loader is satisfied.
-RUN chmod +x /usr/local/bin/defcond \
+RUN chmod +x /usr/local/bin/defcond /usr/local/bin/defcon-cli \
  && ! ldd /usr/local/bin/defcond | grep -q "not found" \
- && /usr/local/bin/defcond -version > /dev/null
+ && ! ldd /usr/local/bin/defcon-cli | grep -q "not found" \
+ && /usr/local/bin/defcond -version > /dev/null \
+ && /usr/local/bin/defcon-cli -version > /dev/null
 
 # Drop root: only NET_ADMIN is granted per container for netem, nothing more.
 RUN useradd --system --home-dir /var/lib/defcon --create-home defcon
