@@ -12,7 +12,7 @@ import { Transaction } from '../models/Transaction.js';
 import { QuorumRound } from '../models/QuorumRound.js';
 import { QuorumCommitment } from '../models/QuorumCommitment.js';
 import { ServiceEpoch } from '../models/ServiceEpoch.js';
-import { closedEpochAt, epochKeyFor, isCommittable } from '../domain/dslSchedule.js';
+import { closedEpochAt, epochKeyFor, firstCommittableBoundary, isCommittable } from '../domain/dslSchedule.js';
 import { currentRoundHeight } from '../domain/dkgSchedule.js';
 import { commitmentPunishedCount } from '../domain/commitmentPunishment.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
@@ -106,7 +106,12 @@ type PayeeLookup =
   | { ok: true; paidProTxHash: string | null }
   | { ok: false };
 
-async function lookupPayee(blockhash: string): Promise<PayeeLookup> {
+async function lookupPayee(blockhash: string, height: number): Promise<PayeeLookup> {
+  // Genesis pays nobody, and asking the node is not merely useless: the RPC
+  // fills a payment template from the block's predecessor, which genesis does
+  // not have, and the not-null guard on that pointer terminates the daemon.
+  // Found on the regtest lab on 2026-09-06, indexing a fresh chain from 0.
+  if (height === 0) return { ok: true, paidProTxHash: null };
   try {
     const payments = await rpc.masternodePayments(blockhash);
     return { ok: true, paidProTxHash: payments[0]?.masternodes?.[0]?.proTxHash ?? null };
@@ -131,6 +136,17 @@ export class SyncService {
     void this.tick();
     this.timer = setInterval(() => void this.tick(), config.sync.intervalMs);
     logger.info(`Block sync started (every ${config.sync.intervalMs} ms, batch ${config.sync.batchSize})`);
+    // Said out loud at start because a wrong value here is silent: the collector
+    // simply records no epoch, which reads exactly like a chain that never
+    // committed. A lab that runs DSL from genesis sat on the devnet default for
+    // an afternoon before anything asked.
+    logger.info(
+      config.dsl.activationHeight > 0
+        ? `DSL service-epoch collector: activation ${config.dsl.activationHeight}, ` +
+            `epoch interval ${config.dsl.epochInterval}, first committable boundary ` +
+            `${firstCommittableBoundary(config.dsl.activationHeight, config.dsl.epochInterval)}`
+        : 'DSL service-epoch collector disabled (DSL_ACTIVATION_HEIGHT=0)'
+    );
   }
 
   stop(): void {
@@ -162,7 +178,7 @@ export class SyncService {
     const results = await mapConcurrent(
       pending,
       Math.min(4, config.sync.txConcurrency),
-      async (block) => ({ block, lookup: await lookupPayee(block.hash) })
+      async (block) => ({ block, lookup: await lookupPayee(block.hash, block.height) })
     );
     let found = 0;
     let none = 0;
@@ -471,7 +487,7 @@ export class SyncService {
     // and one call per block now replaces one per transaction.
     const [block, payeeLookup]: [RpcBlock | RpcBlockVerbose, PayeeLookup] = await Promise.all([
       height === 0 ? rpc.getBlock(hash) : rpc.getBlockVerbose(hash),
-      lookupPayee(hash),
+      lookupPayee(hash, height),
     ]);
 
     let blockTotalSat = 0n;

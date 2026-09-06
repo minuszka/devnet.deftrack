@@ -125,11 +125,23 @@ async function attemptRun() {
       scenarioId: SCENARIO,
       scenarioVersion: 1,
       seed: `lab-${COUNT > 1 ? `storm${COUNT}` : TARGET}-${step}`,
-      parameters: {
-        count: COUNT,
-        durationSeconds: 60,
-        ...(COUNT > 1 ? {} : { targetIds: [TARGET] }),
-      },
+      parameters: SCENARIO === 'dsl-fault'
+        ? {
+            // A Sentinel Layer fault on running masternodes: whole epochs, no
+            // outage, so it takes the fault kind and an epoch count instead of a
+            // duration -- node ops/lab-walkthrough.mjs --scenario dsl-fault
+            //   [--fault-kind response-drop] [--epochs 1] [--param 0] [--target mn02]
+            faultKind: arg('--fault-kind', 'response-drop'),
+            count: COUNT,
+            epochs: Number(arg('--epochs', '1')),
+            ...(Number(arg('--param', '0')) > 0 ? { param: Number(arg('--param', '0')) } : {}),
+            ...(COUNT > 1 ? {} : { targetIds: [TARGET] }),
+          }
+        : {
+            count: COUNT,
+            durationSeconds: 60,
+            ...(COUNT > 1 ? {} : { targetIds: [TARGET] }),
+          },
     },
   });
   if (!report('create', created)) return null;

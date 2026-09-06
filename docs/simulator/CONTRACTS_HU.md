@@ -137,6 +137,7 @@ választanak célpontot, és kötelező a `clear-recover`-nél.
 | `network-degradation` | `role`, `count`, `durationSeconds`, `latencyMs`, `jitterMs`, `lossPercent`, `correlationPercent`, `targetIds?` |
 | `node-isolation` | `count` (max `maxIsolatedTargets`), `durationSeconds`, `targetIds?` |
 | `clear-recover` | `targetIds` |
+| `dsl-fault` | `faultKind: 'response-drop' | 'report-drop' | 'response-delay' | 'report-delay' | 'commitment-skip'`, `count`, `epochs` (1–3), `param?` (a `*-delay` fajtáknál kötelező, blokkokban; a többinél tilos), `targetIds?` |
 
 Két szabály, ami a sémákban él és nem a prózában:
 
@@ -147,9 +148,11 @@ Két szabály, ami a sémákban él és nem a prózában:
   az explorer RPC- és ZMQ-bizonyítéka jön, tehát megrontani a *mérést* rontja
   meg, nem a mért hálózatot — és az eredmény hálózati leletnek látszana.
 
-A tervben szereplő `dsl_signing_fault` scenario nem létezik. A `dsl-test-hook`
-capability megmaradt a `SimulationTargetCapability` unionben, de egyetlen
-scenario sem kéri.
+A tervben szereplő `dsl_signing_fault` scenario nem létezik; helyette a `dsl-fault`
+scenario van, amely a `dsl-test-hook` capabilityt kéri: ezt csak olyan target
+kaphatja, amelynek node-ja `-enablefaultinjection=1`-gyel fut (devnet/regtest),
+és a faultot a node saját `faultinject` RPC-je tartja, magasság szerinti
+lejárattal.
 
 ## Target kiválasztás és snapshot
 
@@ -306,6 +309,8 @@ type PlannedActionPayload =
       peerTargetIds: string[];
       faultLeaseSeconds: number;
     }
+  | { kind: 'dsl-fault-apply'; faultKind: DslFaultKind; epochs: number; param: number; faultLeaseSeconds: number }
+  | { kind: 'dsl-fault-clear'; faultKind: DslFaultKind }
   | { kind: 'fault-clear'; scope: 'run' };
 
 interface PlannedSimulationAction {
@@ -323,7 +328,13 @@ interface PlannedSimulationAction {
 }
 ```
 
-A tervben szereplő `dsl-test-hook` payload nem létezik.
+A `dsl-fault-apply` payload a wrapper `dsl-set` parancsává fordul: a wrapper a
+konténerben (`docker exec … defcon-cli faultinject set`) a node saját
+cookie-jával élesíti a faultot, a lejárati magasságot a node aktuális
+magasságából számolja (a következő epoch-határ + `epochs` epoch), és a
+visszakapott fault-azonosítót jegyzi a jobra; a `dsl-fault-clear` ugyanennek a
+jobnak a törlése (`faultinject clear <id>`), amit a lease-watchdog is elvégez.
+A `scenarioId`, amit a node a faulton rögzít, a futam kulcsa.
 
 Az actionön nincs nyers parancs. A `unitRef` és `interfaceRef` szintén registry-azonosító; a worker/node-wrapper oldja fel fix helyi allowlistből.
 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BLOCK_SECONDS } from '../domain/dkgWindows.js';
 import {
+  DSL_EPOCH_BLOCKS,
+  DSL_FAULT_KINDS,
   SIMULATION_SCENARIO_IDS,
   type ScenarioDescriptor,
   type SimulationScenarioId,
@@ -169,7 +171,38 @@ const clearRecoverSchema = z
   })
   .strict();
 
+/**
+ * A Sentinel Layer fault on running masternodes: the node itself withholds or
+ * delays its own DSL announcement or reports, or withholds its part of a
+ * commitment, for whole epochs. Nothing is stopped and no packet is dropped;
+ * the ceiling is therefore not the outage ceiling above but the number of
+ * epochs, kept under `nDSLSuspendEpochs` (4) so even an enforcing chain could
+ * not suspend a target from one run.
+ */
+export const DSL_FAULT_LIMITS = Object.freeze({
+  maxEpochs: 3,
+  maxDelayBlocks: DSL_EPOCH_BLOCKS,
+});
+
+const dslFaultSchema = z
+  .object({
+    scenarioId: z.literal('dsl-fault'),
+    ...scenarioHeader,
+    parameters: z
+      .object({
+        faultKind: z.enum(DSL_FAULT_KINDS),
+        count: countSchema,
+        epochs: z.number().int().min(1).max(DSL_FAULT_LIMITS.maxEpochs),
+        /** Delay in blocks for the *-delay kinds; must be absent or 0 for the others. */
+        param: z.number().int().min(0).max(DSL_FAULT_LIMITS.maxDelayBlocks).optional(),
+        targetIds: targetIdsSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const simulationScenarioRequestSchema = z.discriminatedUnion('scenarioId', [
+  dslFaultSchema,
   mnStopSchema,
   hostOutageSchema,
   quorumMemberOutageSchema,
@@ -215,6 +248,11 @@ export const SCENARIO_REGISTRY: Readonly<Record<SimulationScenarioId, ScenarioDe
     scenarioId: 'clear-recover', version: 1, title: 'Clear and recover',
     description: 'Known simulator fault state is cleared for selected targets.', riskClass: 'low',
   },
+  'dsl-fault': {
+    scenarioId: 'dsl-fault', version: 1, title: 'Sentinel Layer fault',
+    description: 'Running masternodes withhold or delay their own DSL announcements, reports or commitment share for whole epochs (test networks only).',
+    riskClass: 'medium',
+  },
 };
 
 export const SIMULATION_PRESET_IDS = [
@@ -225,6 +263,9 @@ export const SIMULATION_PRESET_IDS = [
   'host-10-masternodes',
   'one-staker-outage',
   'multi-staker-outage',
+  'dsl-response-drop-1',
+  'dsl-report-drop-1',
+  'dsl-commitment-skip-1',
 ] as const;
 export type SimulationPresetId = (typeof SIMULATION_PRESET_IDS)[number];
 
@@ -236,6 +277,11 @@ const PRESET_BASES: Record<SimulationPresetId, Record<string, unknown>> = {
   'host-10-masternodes': { scenarioId: 'host-outage', scenarioVersion: 1, parameters: { durationSeconds: 180, expectedMasternodes: 10 } },
   'one-staker-outage': { scenarioId: 'staker-stop', scenarioVersion: 1, parameters: { count: 1, durationSeconds: 180 } },
   'multi-staker-outage': { scenarioId: 'staker-stop', scenarioVersion: 1, parameters: { count: 3, durationSeconds: 180 } },
+  // One running masternode, one epoch: its sentinels report it MISSED once and
+  // the next clean epoch resets it -- the smallest observable DSL fault.
+  'dsl-response-drop-1': { scenarioId: 'dsl-fault', scenarioVersion: 1, parameters: { faultKind: 'response-drop', count: 1, epochs: 1 } },
+  'dsl-report-drop-1': { scenarioId: 'dsl-fault', scenarioVersion: 1, parameters: { faultKind: 'report-drop', count: 1, epochs: 1 } },
+  'dsl-commitment-skip-1': { scenarioId: 'dsl-fault', scenarioVersion: 1, parameters: { faultKind: 'commitment-skip', count: 1, epochs: 1 } },
 };
 
 function validateCrossFields(request: SimulationScenarioRequest): SimulationScenarioRequest {
@@ -261,6 +307,18 @@ function validateCrossFields(request: SimulationScenarioRequest): SimulationScen
     const total = request.parameters.cycles * (request.parameters.downSeconds + request.parameters.upSeconds);
     if (total > SCENARIO_LIMITS.maxDurationSeconds) {
       throw new Error('flapping schedule exceeds the maximum duration');
+    }
+  }
+  if (request.scenarioId === 'dsl-fault') {
+    // The node refuses a delay of zero blocks as "not a delay"; refusing it here
+    // keeps the run from being armed around a fault the node will not take.
+    const { faultKind, param } = request.parameters;
+    const isDelay = faultKind === 'response-delay' || faultKind === 'report-delay';
+    if (isDelay && (param === undefined || param < 1)) {
+      throw new Error(`${faultKind} needs param, the delay in blocks (1..${DSL_FAULT_LIMITS.maxDelayBlocks})`);
+    }
+    if (!isDelay && param !== undefined && param !== 0) {
+      throw new Error(`${faultKind} takes no param`);
     }
   }
   return request;

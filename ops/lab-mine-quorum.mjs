@@ -37,6 +37,10 @@ const arg = (name, fallback) => {
 };
 const LLMQ_TYPE_NAME = arg('--type', 'llmq_test');
 const NODES = Number(arg('--nodes', '4'));
+// How many masternodes the quorum seats. Only the selected members run a DKG
+// session, so a lab with more masternodes than the profile's size must wait for
+// exactly this many sessions -- waiting for every masternode never returns.
+const SIZE = Number(arg('--size', '3'));
 const WALLET_NODE = labNodeName(1);
 const MEMBERS = Array.from({ length: NODES - 1 }, (_, i) => labNodeName(i + 2));
 
@@ -48,15 +52,19 @@ async function mine(count) {
 /** Every member is at `phase` for this quorum, having received `min` messages. */
 async function waitForPhase(quorumHash, { phase, name, counter }, expected) {
   await waitUntil(`phase ${phase} (${name})`, async () => {
+    let ready = 0;
     for (const member of MEMBERS) {
       const sessions = (await rpc(member, 'quorum', ['dkgstatus'])).session ?? [];
       const session = sessions.find(
         (entry) => entry.llmqType === LLMQ_TYPE_NAME && entry.status?.quorumHash === quorumHash
       );
-      if (session === undefined || session.status.phase !== phase) return false;
+      // not a member of this quorum: no session, and none expected
+      if (session === undefined) continue;
+      if (session.status.phase !== phase) return false;
       if (counter !== null && (session.status[counter] ?? 0) < expected) return false;
+      ready += 1;
     }
-    return true;
+    return ready >= SIZE;
   });
 }
 
@@ -71,7 +79,7 @@ async function main() {
   console.log(`mining ${LLMQ_TYPE_NAME} quorum ${quorumHash.slice(0, 16)}... at height ${await rpc(WALLET_NODE, 'getblockcount')}`);
 
   for (const step of PHASES) {
-    await waitForPhase(quorumHash, step, MEMBERS.length);
+    await waitForPhase(quorumHash, step, SIZE);
     console.log(`  phase ${step.phase} ${step.name}`);
     if (step.phase !== 6) await mine(2);
   }

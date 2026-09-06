@@ -1,6 +1,6 @@
 import type { SimulationTargetCapability, SimulationTargetSnapshot } from '../models/SimulationRun.js';
 import { compareByCodeUnit } from '../domain/codeUnitOrder.js';
-import { assertFaultArgs, netemJobId, serviceJobId, type FaultClass } from './netemLease.js';
+import { assertDslFaultSpec, assertFaultArgs, dslJobId, netemJobId, serviceJobId, type FaultClass } from './netemLease.js';
 import { MAX_TTL_MS, type WrapperCommand } from './netemRunner.js';
 import type { DryRunPlan } from './scenarioTypes.js';
 
@@ -25,7 +25,7 @@ import type { DryRunPlan } from './scenarioTypes.js';
 /** A plan action this executor cannot apply -- today, a partition. Fail closed. */
 export class UnsupportedLiveFaultError extends Error {
   constructor(public readonly faultKind: string) {
-    super(`the lab executor applies only netem and service faults; cannot apply "${faultKind}"`);
+    super(`the lab executor applies only netem, service and dsl faults; cannot apply "${faultKind}"`);
     this.name = 'UnsupportedLiveFaultError';
   }
 }
@@ -172,7 +172,42 @@ export function labFaultsForPlan(input: {
   for (const action of input.plan.actions) {
     const { payload } = action;
     // The paired undo of a fault, never a fault: owned by recovery and the TTL.
-    if (payload.kind === 'fault-clear' || payload.kind === 'service-start') continue;
+    if (payload.kind === 'fault-clear' || payload.kind === 'service-start' || payload.kind === 'dsl-fault-clear') continue;
+
+    if (payload.kind === 'dsl-fault-apply') {
+      try {
+        // Immediate only, like a service outage: the fault's own schedule is
+        // inside the node (from the next epoch boundary, for whole epochs), so
+        // an action offset here would be a second clock nobody reconciles.
+        if (action.notBeforeOffsetMs !== 0) {
+          if (input.deferScheduled === true) continue;
+          throw new UnscheduledLiveFaultError(action.actionId);
+        }
+        const target = requireLabTarget(input.targetsById, action.targetId, 'dsl-test-hook');
+        const spec = {
+          container: target.hostRef,
+          faultKind: payload.faultKind,
+          epochs: payload.epochs,
+          param: payload.param,
+          // the run key: the node's telemetry then names the experiment
+          scenarioId: input.runTag,
+        };
+        assertDslFaultSpec(spec);
+        const jobId = dslJobId(input.runTag, target.hostRef, payload.faultKind);
+        if (seen.has(jobId)) continue;
+        seen.add(jobId);
+        faults.push({
+          targetId: target.targetId,
+          container: target.hostRef,
+          faultClass: 'dsl',
+          jobId,
+          apply: { op: 'dsl-set', ...spec, runTag: input.runTag, expiresAtMs: input.expiresAtMs, commandId: jobId },
+        });
+      } catch (error) {
+        refuse(error as Error);
+      }
+      continue;
+    }
 
     if (payload.kind === 'netem-apply') {
       try {
@@ -337,6 +372,29 @@ export function scheduledLabActionsForPlan(input: {
     // that had not even armed recovered every target cleanly and still reported
     // allClear: false, and then held the live slot in `failed` for ever.
     if (payload.kind === 'fault-clear') continue;
+    if (payload.kind === 'dsl-fault-clear') {
+      // The planned end of a dsl fault: clearing the wrapper's job, which runs
+      // `faultinject clear <id>` on the node. The node's own height expiry may
+      // already have retired it, in which case the clear is a benign no-op.
+      let target: SimulationTargetSnapshot;
+      try {
+        target = requireLabTarget(input.targetsById, action.targetId, 'dsl-test-hook');
+      } catch (error) {
+        if (strict) throw error;
+        skipped++;
+        continue;
+      }
+      const jobId = dslJobId(input.runTag, target.hostRef, payload.faultKind);
+      scheduled.push({
+        actionId: action.actionId,
+        targetId: target.targetId,
+        container: target.hostRef,
+        faultClass: 'dsl',
+        notBeforeOffsetMs: action.notBeforeOffsetMs,
+        command: { op: 'clear', jobId, commandId: action.actionId },
+      });
+      continue;
+    }
     if (payload.kind !== 'service-stop' && payload.kind !== 'service-start') {
       if (!strict) {
         skipped++;
@@ -393,9 +451,10 @@ export function assertSingleFaultClass(plan: DryRunPlan): void {
       classes.add('netem');
     }
     if (action.payload.kind === 'service-stop') classes.add('service');
+    if (action.payload.kind === 'dsl-fault-apply') classes.add('dsl');
   }
   if (classes.size > 1) {
-    throw new UnsupportedLiveFaultError('a plan mixing netem and service faults on one run');
+    throw new UnsupportedLiveFaultError('a plan mixing netem, service and dsl faults on one run');
   }
 }
 
@@ -451,11 +510,14 @@ export function faultRecoveryTargetsForPlan(input: {
   for (const scheduled of deferred.actions) {
     if (seen.has(scheduled.container)) continue;
     seen.add(scheduled.container);
+    // A scheduled clear already names its own job; a scheduled stop is undone
+    // by clearing the service job it would have created.
+    const jobId = scheduled.command.op === 'clear' ? scheduled.command.jobId : serviceJobId(input.runTag, scheduled.container);
     targets.push({
       targetId: scheduled.targetId,
       container: scheduled.container,
       faultClass: scheduled.faultClass,
-      clear: { op: 'clear', jobId: serviceJobId(input.runTag, scheduled.container), commandId: serviceJobId(input.runTag, scheduled.container) },
+      clear: { op: 'clear', jobId, commandId: jobId },
     });
   }
   return { targets, skipped: skipped + deferred.skipped };

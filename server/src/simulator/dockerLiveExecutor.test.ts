@@ -62,6 +62,13 @@ class FakeProbes implements LabProbes {
   }
   async serviceRunning(container: string): Promise<boolean> { return this.serviceUp.has(container); }
   async observerFresh(input: { container: string }): Promise<boolean> { return this.observerUp.has(input.container); }
+  /** Containers still holding a dsl fault of the run under test. */
+  dslArmed = new Set<string>();
+  dslCalls: string[] = [];
+  async dslClear(input: { container: string; runTag: string }): Promise<boolean> {
+    this.dslCalls.push(`${input.container}:${input.runTag}`);
+    return !this.dslArmed.has(input.container);
+  }
   projectOf = new Map<string, string | null>();
   async containerProject(container: string): Promise<string | null> {
     return this.projectOf.has(container) ? this.projectOf.get(container)! : LAB_PROJECT;
@@ -101,6 +108,47 @@ function run(targets: SimulationTargetSnapshot[]): SimulationRunProjection {
   return { runKey: 'run-1', metadataFingerprint: 'fp', metadata: { targetSnapshot: targets }, state: {} } as unknown as SimulationRunProjection;
 }
 const planWith = (actions: PlannedSimulationAction[]): DryRunPlan => ({ actions } as unknown as DryRunPlan);
+
+describe('recovering a dsl fault', () => {
+  const dslPayload: PlannedActionPayload = { kind: 'dsl-fault-apply', faultKind: 'response-drop', epochs: 1, param: 0, faultLeaseSeconds: 840 };
+  const dslTarget = () => target({ capabilities: ['service-control', 'dsl-test-hook'] });
+
+  it('reads the fault back from the node, and is clear only once the run\'s scenario is gone from its list', async () => {
+    const queue = new FakeQueue();
+    const probes = new FakeProbes();
+    probes.serviceUp.add('mn01');
+    probes.observerUp.add('mn01');
+    probes.dslArmed.add('mn01');
+    const clock = new FakeClock();
+    let looks = 0;
+    clock.onDelay = () => { if (++looks >= 2) probes.dslArmed.delete('mn01'); };
+    const executor = mkExecutor(queue, probes, clock, { recoveryPollAttempts: 5, recoveryPollIntervalMs: 10 });
+
+    const result = await executor.proveRecovery({ run: run([dslTarget()]), plan: planWith([action('mn-1', dslPayload)]) });
+
+    expect(queue.enqueued.map((c) => c.op)).toEqual(['clear']);
+    expect(probes.dslCalls[0]).toBe('mn01:run-1');
+    expect(result.allClear).toBe(true);
+    expect(result.targets[0]).toMatchObject({ targetId: 'mn-1', faultStateClear: true, expectedServiceRunning: true });
+  });
+
+  it('is not clear while the node still lists the fault, nor when the node is down', async () => {
+    const probes = new FakeProbes();
+    probes.serviceUp.add('mn01');
+    probes.observerUp.add('mn01');
+    probes.dslArmed.add('mn01');
+    const stuck = await mkExecutor(new FakeQueue(), probes, new FakeClock(), { recoveryPollAttempts: 2, recoveryPollIntervalMs: 1 })
+      .proveRecovery({ run: run([dslTarget()]), plan: planWith([action('mn-1', dslPayload)]) });
+    expect(stuck.allClear).toBe(false);
+    expect(stuck.targets[0]!.faultStateClear).toBe(false);
+
+    const down = new FakeProbes(); // nothing running: a stopped node holds no fault, but it is not recovered
+    const result = await mkExecutor(new FakeQueue(), down, new FakeClock(), { recoveryPollAttempts: 2, recoveryPollIntervalMs: 1 })
+      .proveRecovery({ run: run([dslTarget()]), plan: planWith([action('mn-1', dslPayload)]) });
+    expect(result.allClear).toBe(false);
+    expect(result.targets[0]).toMatchObject({ faultStateClear: false, expectedServiceRunning: false });
+  });
+});
 
 describe('waiting for the wrapper to say what it did', () => {
   const netemCommandId = netemJobId('run-1', {

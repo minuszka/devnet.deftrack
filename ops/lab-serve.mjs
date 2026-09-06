@@ -49,10 +49,17 @@ function labSpec() {
     process.exit(1);
   }
   const command = Object.values(parsed.services ?? {})[0]?.command ?? [];
+  // The Sentinel Layer's activation height is a per-node argument the compose
+  // carries (`-testactivationheight=dsl@<h>`); the explorer records service
+  // epochs only from that height, and its default is the devnet's, so a lab
+  // that runs DSL from genesis would otherwise index no epoch at all and every
+  // measurement report would say the layer never committed.
+  const dslArg = command.find((entry) => /^-testactivationheight=dsl@\d+$/.test(String(entry)));
+  const dslActivationHeight = dslArg === undefined ? null : Number(String(dslArg).split('@')[1]);
   const arg = command.find((entry) => String(entry).startsWith('-llmqtestparams='));
-  if (arg === undefined) return { llmqTestParams: null };
+  if (arg === undefined) return { llmqTestParams: null, dslActivationHeight };
   const [size, threshold] = String(arg).split('=')[1].split(':').map(Number);
-  return { llmqTestParams: { size, threshold } };
+  return { llmqTestParams: { size, threshold }, dslActivationHeight };
 }
 
 const WALLET_NODE = process.env.LAB_RPC_CONTAINER ?? 'mn01';
@@ -116,6 +123,13 @@ const child = spawn(process.execPath, ['dist/labServer.js'], {
     INGEST_TOKEN: ingestToken,
     LAB_MONGODB_URI: LAB_MONGO,
     LAB_PORT,
+    // The lab mines every LAB_BLOCK_SECONDS (lab-miner --interval); the server's
+    // block-time arithmetic -- outage ceilings, fault leases, measurement windows
+    // -- must count the same seconds, or a one-epoch DSL fault reads as two hours.
+    BLOCK_TARGET_SECONDS: process.env.BLOCK_TARGET_SECONDS ?? '15',
+    ...(labSpec().dslActivationHeight === null
+      ? {}
+      : { DSL_ACTIVATION_HEIGHT: process.env.DSL_ACTIVATION_HEIGHT ?? String(labSpec().dslActivationHeight) }),
     RPC_HOST: '127.0.0.1',
     RPC_PORT: rpcPort,
     RPC_USER: user,

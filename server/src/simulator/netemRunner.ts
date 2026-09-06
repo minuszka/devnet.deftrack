@@ -13,6 +13,13 @@ import {
   type NetemKind,
   type NetemSpec,
   type WrapperState,
+  DSL_FAULT_KIND_NAMES,
+  dslJobId,
+  planDslSet,
+  withDslFaultId,
+  type DslFaultKindName,
+  type DslFaultSpec,
+  type FaultActionResult,
 } from './netemLease.js';
 
 // A record keyed by the union, so the union and the accepted list cannot drift:
@@ -61,7 +68,8 @@ function assertLeaseInstant(value: unknown, nowMs: number): asserts value is num
  * to `docker exec <container> tc <args>` or `docker stop|start <container>`; a
  * test injects a recorder.
  */
-export type FaultExecutor = (action: FaultAction) => Promise<void>;
+/** Runs one action on the lab; a `dsl-set` answers with the node's fault id, everything else with nothing. */
+export type FaultExecutor = (action: FaultAction) => Promise<void | FaultActionResult>;
 
 /**
  * Persists the wrapper's belief about what is applied. The real implementation
@@ -179,6 +187,36 @@ export class LabFaultRunner {
   }
 
   /** Undo one fault. Acts, then drops the job. Idempotent. */
+  async setDslFault(spec: DslFaultSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string; faultId: string | null }> {
+    return this.serialise(() => this.setDslFaultLocked(spec, runTag, expiresAtMs));
+  }
+
+  /**
+   * The one apply whose undo needs an answer from the node: the fault id is
+   * known only after `faultinject set` has run, so the job is written first
+   * with an empty id and completed after. Between the two writes a crash
+   * leaves a job the sweep clears as a no-op while the node's own height
+   * expiry retires the fault -- state is never left claiming more than it did.
+   */
+  private async setDslFaultLocked(spec: DslFaultSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string; faultId: string | null }> {
+    const jobId = dslJobId(runTag, spec.container, spec.faultKind);
+    const plan = planDslSet(await this.store.load(), spec, runTag, this.clock(), expiresAtMs);
+    if (plan.actions.length === 0) {
+      const existing = plan.state.jobs.find((job) => job.jobId === jobId);
+      return { jobId, faultId: existing?.args[3] ? existing.args[3] : null };
+    }
+    await this.store.save(plan.state);
+    let faultId: string | null = null;
+    for (const action of plan.actions) {
+      const result = await this.execute(action);
+      if (result && typeof result.faultId === 'string' && result.faultId.length > 0) faultId = result.faultId;
+    }
+    if (faultId !== null) {
+      await this.store.save(withDslFaultId(await this.store.load(), jobId, faultId));
+    }
+    return { jobId, faultId };
+  }
+
   async clear(jobId: string): Promise<void> {
     return this.serialise(() => this.clearLocked(jobId));
   }
@@ -340,6 +378,17 @@ export { LabFaultRunner as NetemFaultRunner };
 export type WrapperCommand =
   | { op: 'apply'; container: string; kind: NetemKind; args: string[]; runTag: string; expiresAtMs: number; commandId: string | null }
   | { op: 'service-stop'; container: string; runTag: string; expiresAtMs: number; commandId: string | null }
+  | {
+      op: 'dsl-set';
+      container: string;
+      faultKind: DslFaultKindName;
+      epochs: number;
+      param: number;
+      scenarioId: string;
+      runTag: string;
+      expiresAtMs: number;
+      commandId: string | null;
+    }
   | { op: 'clear'; jobId: string; commandId: string | null };
 
 /**
@@ -366,6 +415,30 @@ export function parseWrapperCommand(raw: unknown, nowMs: number = Date.now()): W
     assertLeaseInstant(value.expiresAtMs, nowMs);
     return { op: 'service-stop', container: value.container, runTag: value.runTag, expiresAtMs: value.expiresAtMs, commandId };
   }
+  if (value.op === 'dsl-set') {
+    if (typeof value.container !== 'string' || value.container.length === 0) throw new Error('dsl-set command needs a container');
+    if (!(DSL_FAULT_KIND_NAMES as readonly string[]).includes(value.faultKind as string)) {
+      throw new Error('dsl-set command needs a valid faultKind');
+    }
+    if (!Number.isInteger(value.epochs) || (value.epochs as number) < 1 || (value.epochs as number) > 3) {
+      throw new Error('dsl-set command needs epochs in 1..3');
+    }
+    if (!Number.isInteger(value.param) || (value.param as number) < 0) throw new Error('dsl-set command needs a non-negative param');
+    if (typeof value.scenarioId !== 'string' || value.scenarioId.length === 0) throw new Error('dsl-set command needs a scenarioId');
+    if (typeof value.runTag !== 'string' || value.runTag.length === 0) throw new Error('dsl-set command needs a runTag');
+    assertLeaseInstant(value.expiresAtMs, nowMs);
+    return {
+      op: 'dsl-set',
+      container: value.container,
+      faultKind: value.faultKind as DslFaultKindName,
+      epochs: value.epochs as number,
+      param: value.param as number,
+      scenarioId: value.scenarioId,
+      runTag: value.runTag,
+      expiresAtMs: value.expiresAtMs,
+      commandId,
+    };
+  }
   if (value.op === 'apply') {
     if (typeof value.container !== 'string' || value.container.length === 0) throw new Error('apply command needs a container');
     if (!NETEM_KINDS.includes(value.kind as NetemKind)) throw new Error('apply command needs a valid kind');
@@ -389,6 +462,7 @@ export function parseWrapperCommand(raw: unknown, nowMs: number = Date.now()): W
 export interface FaultRunnerPort {
   apply(spec: NetemSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string }>;
   stopService(container: string, runTag: string, expiresAtMs: number): Promise<{ jobId: string }>;
+  setDslFault(spec: DslFaultSpec, runTag: string, expiresAtMs: number): Promise<{ jobId: string; faultId: string | null }>;
   clear(jobId: string): Promise<void>;
 }
 
@@ -400,6 +474,19 @@ export async function dispatchWrapperCommand(runner: FaultRunnerPort, command: W
       return;
     case 'service-stop':
       await runner.stopService(command.container, command.runTag, command.expiresAtMs);
+      return;
+    case 'dsl-set':
+      await runner.setDslFault(
+        {
+          container: command.container,
+          faultKind: command.faultKind,
+          epochs: command.epochs,
+          param: command.param,
+          scenarioId: command.scenarioId,
+        },
+        command.runTag,
+        command.expiresAtMs
+      );
       return;
     case 'clear':
       await runner.clear(command.jobId);

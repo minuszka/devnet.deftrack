@@ -6,6 +6,7 @@ import type { SimulationTargetCapability, SimulationTargetSnapshot } from '../mo
 import { coreSimulatorReferenceFor } from './coreSimulatorAdapter.js';
 import { parseScenarioRequest, type SimulationScenarioRequest } from './scenarioRegistry.js';
 import {
+  DSL_EPOCH_BLOCKS,
   type DryRunContext,
   type DryRunImpactEstimate,
   type DryRunPlan,
@@ -13,6 +14,7 @@ import {
   type PlannedActionPayload,
   type PlannedSimulationAction,
 } from './scenarioTypes.js';
+import { BLOCK_SECONDS } from '../domain/dkgWindows.js';
 import { selectSimulationTargets } from './targetSelection.js';
 
 const targetIdSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
@@ -287,6 +289,37 @@ function resolveTargets(
             targetId: target.targetId,
             payload: { kind: 'fault-clear' as const, scope: 'run' as const },
             notBeforeOffsetMs: durationSeconds * 1_000,
+          },
+        ]),
+      };
+    }
+    case 'dsl-fault': {
+      const { faultKind, count, epochs, targetIds } = request.parameters;
+      const param = request.parameters.param ?? 0;
+      const selected = selectedByCount(context, request, 'masternode', 'dsl-test-hook', count, targetIds);
+      // The fault counts from the NEXT epoch boundary (a masternode announces at
+      // the tick of the block that opens an epoch), so the whole span can be
+      // up to one epoch longer than `epochs` epochs. The lease covers that, and
+      // the node's own height expiry is the earlier of the two clocks.
+      const spanSeconds = (epochs + 1) * DSL_EPOCH_BLOCKS * BLOCK_SECONDS;
+      return {
+        selected,
+        rawActions: selected.flatMap((target) => [
+          {
+            targetId: target.targetId,
+            payload: {
+              kind: 'dsl-fault-apply' as const,
+              faultKind,
+              epochs,
+              param,
+              faultLeaseSeconds: spanSeconds + SERVICE_RECOVERY_GRACE_SECONDS,
+            },
+            notBeforeOffsetMs: 0,
+          },
+          {
+            targetId: target.targetId,
+            payload: { kind: 'dsl-fault-clear' as const, faultKind },
+            notBeforeOffsetMs: spanSeconds * 1_000,
           },
         ]),
       };

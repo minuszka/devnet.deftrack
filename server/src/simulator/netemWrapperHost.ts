@@ -61,22 +61,119 @@ function isBenignFailure(action: FaultAction, stderr: string): boolean {
  * from `2>/dev/null || true`, but scoped to the errors that actually mean "already
  * clear" rather than swallowing every failure.
  */
-export function dockerFaultExecutor(dockerBin = 'docker'): FaultExecutor {
-  return (action) => {
-    const argv = action.op === 'stop' || action.op === 'start' ? dockerServiceArgv(action) : dockerExecArgv(action);
-    return new Promise<void>((resolve, reject) => {
-      const child = spawn(dockerBin, argv, { stdio: ['ignore', 'ignore', 'pipe'] });
-      let stderr = '';
-      child.stderr.on('data', (chunk) => {
-        stderr += String(chunk);
-      });
-      child.on('error', reject);
-      child.on('close', (code) => {
-        if (code === 0) return resolve();
-        if (isBenignFailure(action, stderr)) return resolve();
-        reject(new Error(`docker ${argv.join(' ')} exited ${code ?? 'null'}: ${stderr.trim()}`));
-      });
+/**
+ * Where the node's cli finds the node inside its own container. The cookie the
+ * `faultinject` RPC insists on lives under this datadir, which is exactly why
+ * the call is made from inside the container and not over the published port.
+ */
+export interface DslExecOptions {
+  datadir: string;
+  rpcPort: number;
+  /** Blocks per DSL epoch; the fault's expiry is counted in these from the next boundary. */
+  epochBlocks: number;
+}
+
+export const DEFAULT_DSL_EXEC_OPTIONS: DslExecOptions = { datadir: '/var/lib/defcon', rpcPort: 19798, epochBlocks: 24 };
+
+function dslCliArgv(container: string, options: DslExecOptions, ...rest: string[]): string[] {
+  return ['exec', container, 'defcon-cli', '-regtest', `-datadir=${options.datadir}`, `-rpcport=${options.rpcPort}`, ...rest];
+}
+
+/** `docker exec <c> defcon-cli ... getblockcount`: the height the expiry is counted from. */
+export function dockerDslHeightArgv(container: string, options: DslExecOptions = DEFAULT_DSL_EXEC_OPTIONS): string[] {
+  return dslCliArgv(container, options, 'getblockcount');
+}
+
+/**
+ * The expiry height for a fault armed at `height`: the next epoch boundary
+ * (a masternode announces at the tick of the block that opens an epoch, so a
+ * fault meant for an epoch must be in place before that block) plus whole
+ * epochs. Armed exactly on a boundary, the current epoch already announced, so
+ * the count starts at the next one just the same.
+ */
+export function dslExpiryHeight(height: number, epochs: number, epochBlocks: number): number {
+  const nextBoundary = height - (height % epochBlocks) + epochBlocks;
+  return nextBoundary + epochs * epochBlocks;
+}
+
+export function dockerDslSetArgv(
+  action: Extract<FaultAction, { op: 'dsl-set' }>,
+  expiryHeight: number,
+  options: DslExecOptions = DEFAULT_DSL_EXEC_OPTIONS
+): string[] {
+  return dslCliArgv(
+    action.container, options,
+    'faultinject', 'set', action.faultKind, String(expiryHeight), action.scenarioId, String(action.param)
+  );
+}
+
+export function dockerDslClearArgv(
+  action: Extract<FaultAction, { op: 'dsl-clear' }>,
+  options: DslExecOptions = DEFAULT_DSL_EXEC_OPTIONS
+): string[] {
+  return dslCliArgv(action.container, options, 'faultinject', 'clear', action.faultId);
+}
+
+/** The node's answer to `faultinject set`, or a thrown error naming what was wrong with it. */
+export function parseDslSetOutput(stdout: string): { faultId: string; expiryHeight: number } {
+  const value: unknown = JSON.parse(stdout);
+  if (value === null || typeof value !== 'object') throw new Error('faultinject set answered no object');
+  const o = value as { id?: unknown; expiryHeight?: unknown };
+  if (!Number.isInteger(o.id) || (o.id as number) < 1) throw new Error('faultinject set answered no fault id');
+  if (!Number.isInteger(o.expiryHeight)) throw new Error('faultinject set answered no expiry height');
+  return { faultId: String(o.id), expiryHeight: o.expiryHeight as number };
+}
+
+function dockerCapture(dockerBin: string, argv: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(dockerBin, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
     });
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+export function dockerFaultExecutor(dockerBin = 'docker', dsl: DslExecOptions = DEFAULT_DSL_EXEC_OPTIONS): FaultExecutor {
+  return async (action) => {
+    if (action.op === 'dsl-set') {
+      // Two calls, both inside the container: read the height the expiry is
+      // counted from, then arm. The node validates the expiry against its own
+      // tip again, so a block mined between the two only ever makes it refuse.
+      const height = await dockerCapture(dockerBin, dockerDslHeightArgv(action.container, dsl));
+      if (height.code !== 0) {
+        throw new Error(`docker ${dockerDslHeightArgv(action.container, dsl).join(' ')} exited ${height.code ?? 'null'}: ${height.stderr.trim()}`);
+      }
+      const tip = Number.parseInt(height.stdout.trim(), 10);
+      if (!Number.isInteger(tip) || tip < 0) throw new Error(`getblockcount answered "${height.stdout.trim()}"`);
+      const argv = dockerDslSetArgv(action, dslExpiryHeight(tip, action.epochs, dsl.epochBlocks), dsl);
+      const set = await dockerCapture(dockerBin, argv);
+      if (set.code !== 0) throw new Error(`docker ${argv.join(' ')} exited ${set.code ?? 'null'}: ${set.stderr.trim()}`);
+      return parseDslSetOutput(set.stdout);
+    }
+    if (action.op === 'dsl-clear') {
+      // An empty id means the arm never got its answer: nothing to clear, and
+      // the node's own height expiry retires whatever it did arm. A stopped
+      // container has no fault to clear either -- the state died with the
+      // process -- so both are benign, like a tc clear on a fresh namespace.
+      if (action.faultId === '') return;
+      const argv = dockerDslClearArgv(action, dsl);
+      const cleared = await dockerCapture(dockerBin, argv);
+      if (cleared.code === 0) return;
+      if (/is not running|No such container|Could not connect|paused/i.test(cleared.stderr)) return;
+      throw new Error(`docker ${argv.join(' ')} exited ${cleared.code ?? 'null'}: ${cleared.stderr.trim()}`);
+    }
+    const argv = action.op === 'stop' || action.op === 'start' ? dockerServiceArgv(action) : dockerExecArgv(action);
+    const run = await dockerCapture(dockerBin, argv);
+    if (run.code === 0) return;
+    if (isBenignFailure(action, run.stderr)) return;
+    throw new Error(`docker ${argv.join(' ')} exited ${run.code ?? 'null'}: ${run.stderr.trim()}`);
   };
 }
 

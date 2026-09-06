@@ -70,6 +70,10 @@ if (!Number.isInteger(nodes) || nodes < 2) {
   console.error('--nodes must be at least 2: one wallet node plus at least one masternode');
   process.exit(1);
 }
+// `--dsl`: activate the Sentinel Layer from height 1 and open the fault gate on
+// every node, for the DSL fault scenarios. Without it the lab runs the daemon
+// exactly as the fleet does, and `faultinject` answers "disabled" everywhere.
+const dsl = process.argv.includes('--dsl');
 const WALLET_NODE = labNodeName(1);
 const MASTERNODES = Array.from({ length: nodes - 1 }, (_, i) => labNodeName(i + 2));
 
@@ -195,7 +199,11 @@ function writeStoredKeys(keys) {
 }
 
 function writeCompose(masternodeKeys) {
-  const spec = generateLabCompose({ nodes, masternodeKeys });
+  const spec = generateLabCompose({
+    nodes,
+    masternodeKeys,
+    ...(dsl ? { dslActivationHeight: 1, faultInjection: true } : {}),
+  });
   writeFileSync(COMPOSE_FILE, toComposeDocument(spec));
   return spec;
 }
