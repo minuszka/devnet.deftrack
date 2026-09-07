@@ -122,9 +122,12 @@ bash ops/chaos/install.sh --targets <privát targets.conf> --operator <név>   #
 bash ops/chaos/uninstall.sh                    # csak miután minden rekord átment a recovery-n
 ```
 
-Az `ops/deploy.sh` ezt sosem futtatja. A 13. napi pilot (read-only
-telepítés, marker-próba, node leállítása nélkül) és a 14. napi élő pilot
-külön jóváhagyást kér, és a devnet futó kísérletei alatt nem indul.
+Az `ops/deploy.sh` ezt sosem futtatja. A 13–14. napi pilot lefutott
+(2026-09-05, `chaos-wrapper-pilot-2026-09-05` és `chaos-netem-quorum-2026-09-05`),
+a csomag a pilot hoston host-kötötten újratelepítve (2026-09-07). **A
+szimulátor ezt a csomagot nem vezérli, és döntés szerint nem is fogja
+(2026-09-07, B opció):** a flotta-oldali fault kézből indul a jump hoston át,
+és az Experiments-rekord rögzíti; élő devnet-executor tudatosan nincs.
 
 ## 4. Helyreállítási runbook
 
@@ -183,10 +186,12 @@ tervezetekre való.
 
 ## 6. Ismert korlátok
 
-- **Csak `regtest` élő futam.** A control service elutasít minden nem-regtest
-  élő futamot, a labor végrehajtója pedig csak a saját Compose-projektjének
-  konténereit érinti (`allowedContainerProject`). A devnet-flotta a 13–14.
-  nap pilotja után, külön jóváhagyással jön.
+- **Csak `regtest` élő futam, és ez így marad.** A control service elutasít
+  minden nem-regtest élő futamot, a labor végrehajtója pedig csak a saját
+  Compose-projektjének konténereit érinti (`allowedContainerProject`). A
+  devnet-flotta felé nincs és nem lesz élő út (döntés 2026-09-07, B opció): a
+  160 importált target tartósan tiltva marad, a devnet kísérleteit scriptből
+  futtatjuk, és az Experiments rögzíti őket.
 - **Kiesés-plafon:** `MAX_OUTAGE_BLOCKS = 6` blokk (`scenarioRegistry.ts`),
   azaz devneten 900 s, laboron 90 s; legfeljebb 20 célpont. A hosszabb kiesés
   nem magasabb plafon, hanem másik mérés (lásd

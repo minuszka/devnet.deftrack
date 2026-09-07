@@ -191,9 +191,11 @@ checkeket.
 
 - 1–12. nap: kizárólag lokális implementáció, mock/Docker/regtest. Nincs VPS-hozzáférési igény.
 - 13. nap: egyetlen pilot node, külön felhasználói jóváhagyással; wrapper és watchdog telepítés.
-- Fleet rollout csak sikeres pilot, recovery-teszt és külön jóváhagyás után.
+- Fleet rollout: **nincs** (döntés 2026-09-07, B opció). A pilot lefutott, a
+  wrapper egy hoston él, de a szimulátor nem kap a flottára executort és
+  transzportot; a devnet script-vezérelt marad.
 - A fejlesztéshez nem kell wallet seed, privát kulcs, masternode operator key vagy RPC wallet-hozzáférés.
-- A későbbi pilothoz jump-host SSH és egy korlátozott devnet target szükséges, de az explorer környezetébe ezek a kulcsok nem kerülnek.
+- A pilothoz jump-host SSH és egy korlátozott devnet target kellett; az explorer környezetébe ezek a kulcsok nem kerültek, és a B-döntéssel nem is fognak.
 
 ## Nem cél az első kiadásban
 
