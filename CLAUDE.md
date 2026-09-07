@@ -74,6 +74,20 @@ exist on `deftrack_devnet`, both verified against their boundaries:
 | `devnet_app` | `readWrite` on `deftrack_devnet` | the server (`.env`) |
 | `devnet_ro` | `read` on `deftrack_devnet` | the MongoDB MCP server |
 
+The integration suite (`npm run test:integration`) needs a **throwaway,
+no-auth** instance of its own: it creates and drops a database per run, and
+both users above are scoped to `deftrack_devnet` (a URI naming that database
+is refused outright). Start one beside the dev instance and point the suite at
+it:
+
+```bash
+wsl -d Ubuntu -- bash -c 'mkdir -p ~/devnet-mongo-itest/data ~/devnet-mongo-itest/log && ~/opt/mongodb/bin/mongod --dbpath ~/devnet-mongo-itest/data --logpath ~/devnet-mongo-itest/log/mongod.log --bind_ip 127.0.0.1 --port 27018 --fork --quiet'
+MONGODB_TEST_URI=mongodb://127.0.0.1:27018 npm run test:integration
+wsl -d Ubuntu -- ~/opt/mongodb/bin/mongod --dbpath ~/devnet-mongo-itest/data --shutdown
+```
+
+CI provides the same thing as a service container on 27017.
+
 MongoDB **8.0** rather than the 7.x the plan names: 7.x is no longer among the
 supported releases. 8.0 is the long-term branch; 8.2/8.3 are rapid releases.
 
