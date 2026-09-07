@@ -358,20 +358,34 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   with the wrapper. The network was unchanged throughout -- 152/152 enabled,
   ChainLock signing on `llmq_defcon`.
 
-  **The pilot host still carries the pre-fix wrapper and is owed a
-  reinstall.** Its root qdisc reads `fq_codel 8002:`, not the `8001:` this
-  note said -- the kernel assigns a fresh handle on each replacement, which is
-  exactly why a checker must compare parameters and not handles. Reinstalling
-  needs the package from #76: `targets.conf` now requires a `host` record and
-  the wrapper refuses every command on a machine whose hostname does not match
-  it. Full removal anywhere is `ops/chaos/uninstall.sh` plus `userdel
-  chaosops`.
+  **The pilot host was reinstalled on 2026-09-07 and the debt is closed.** It
+  now runs the merged 18,181-byte wrapper, host-bound: `verify` answers
+  `version=1 host=<this machine> targets=1 max_ttl_seconds=600`, where the old
+  one reported no host field at all. The old `targets.conf` predated the
+  binding and had
+  no `host` record, which is why `install.sh` needed `uninstall.sh
+  --purge-config` first -- it refuses to overwrite an existing configuration.
+  `chaosops` and its sudoers entry were kept; the account is not recreated by
+  the installer.
 
-  Note for whoever reinstalls: `/root/chaos-install.sh` on the jump host is
-  the scratch script from the session that produced the two accidental
-  installs. It predates the host binding and should be rewritten against the
-  current `ops/chaos/install.sh`, which refuses a mismatched host and a host
-  showing production markers.
+  Order matters and the package enforces it: `uninstall.sh` runs `recover-all`
+  first and refuses to remove anything if that fails, so a host can never be
+  left holding a live fault with the only tool that could undo it deleted.
+
+  **The band fix is proven on the host, not just shipped to it.** With the
+  smallest fault the wrapper accepts (1 ms, no jitter, no loss, 45 s) the live
+  structure read: `prio 1: root ... bands 4 priomap 0 0 0 0 0 0 0 0 0 0 0 0 0
+  0 0 0`, `netem 40: parent 1:4 delay 1ms`, and a filter at `*flowid 1:4`
+  matching `4d570000/ffff0000` -- 0x4d57 is 19799, the declared port. Nothing
+  on band 3, which is the pre-fix defect. After `clear`: root qdisc back to
+  `fq_codel`, zero filters, zero job records, all 9 masternode units active,
+  mn1 at the tip with 150 peers, network 152/152.
+
+  The handle went from `fq_codel 8002:` to `8003:` across that cycle, which is
+  the same reminder as before: **compare parameters, never handles.**
+
+  **E4b is therefore unblocked.** It is an experiment and needs its own
+  Experiments record; the reinstall above is maintenance and is not that run.
 
 ## 5. v23 / M-02 — DROPPED from v23 (user, 2026-09-05)
 
@@ -464,11 +478,11 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
 
 ### Open items the 2026-09-05 audit left in the explorer
 
-- **The pilot host still carries the pre-fix chaos wrapper** and is owed a
-  reinstall from the merged package, because `targets.conf` now requires a
-  `host` record and the wrapper checks it on every command. Until then the
-  pilot holds the old, wrong netem band, so **no real netem fault (E4b) may be
-  run**. A VPS operation, and the only one the audit left owed.
+- ~~**The pilot host still carries the pre-fix chaos wrapper**~~ **Done
+  2026-09-07.** Reinstalled from the merged package, host-bound, and the netem
+  band binding proven on the host with a 1 ms fault and a clean recovery. See
+  §4 for the evidence. **E4b is no longer blocked by tooling** -- it needs its
+  own Experiments record, which the reinstall deliberately is not.
 - **A real host IP is in this repository's public git history**, at `fb6bb7c`
   and replaced at `a2f86c6`. The decision -- rewrite the history, or accept it
   and firewall -- is the owner's and has not been made. The CI secret gate
