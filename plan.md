@@ -23,6 +23,12 @@ adatbázis eldobása segített. A devneten ugyanez előfordulhat egy seed-reinde
 után; a sync-szolgáltatásnak vagy vissza kell tudnia gördülni ilyenkor, vagy
 kimondania, hogy emberi beavatkozás kell.
 
+**Core döntés v23 előtt (2026-09-07):** az üres Sentinel-órák. 145-ből 7 óra
+jegyzőkönyv nélkül maradt a devneten; mérve: a jelentéskészlet 5–10 perc alatt
+egyezik össze, az aláírás rögzített három blokkal a kiküldés után indul, és a
+konszenzus a jegyzőkönyvnek egyetlen blokkot ad. A mechanizmus és a három
+lehetséges irány a handoff „Devnet-elemzés” szakaszában; a választás nyitva.
+
 `E1a` is consensus: `IsBanned()` reads `nDSLBanHeight` (`dmnstate.h:454`) and
 `fRewardSuspended` changes payee selection, so a node started without the
 argument forks. Same mechanism as `dslactivationheight`. Height = tip + 100
