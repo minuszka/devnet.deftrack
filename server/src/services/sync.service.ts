@@ -309,6 +309,10 @@ export class SyncService {
 
     const tip = await rpc.getBlockCount();
     let from = state.lastSyncedHeight + 1;
+    // The hash the next block must name. It starts as the stored cursor and is
+    // REPLACED after a rewind, because `state` was read before the rollback and
+    // its hash then belongs to the chain the rollback just abandoned.
+    let resumeHash = state.lastSyncedHash;
 
     if (state.lastSyncedHeight >= 0) {
       const rolledBackTo = await this.rollbackIfReorged(
@@ -316,7 +320,10 @@ export class SyncService {
         state.lastSyncedHash,
         tip
       );
-      if (rolledBackTo !== null) from = rolledBackTo + 1;
+      if (rolledBackTo !== null) {
+        from = rolledBackTo + 1;
+        resumeHash = (rolledBackTo >= 0 ? await this.hashAt(rolledBackTo) : null) ?? '';
+      }
     }
 
     if (from > tip) {
@@ -328,7 +335,7 @@ export class SyncService {
     const to = Math.min(tip, from + config.sync.batchSize - 1);
     const startedAt = Date.now();
 
-    let lastHash = state.lastSyncedHash;
+    let lastHash = resumeHash;
     for (let height = from; height <= to; height++) {
       // The predecessor this block must name. Empty for the first block ever
       // indexed, and after a rollback the rewound tip is what it has to follow.
@@ -426,6 +433,24 @@ export class SyncService {
       }
       cursor--;
     }
+
+    // The sync cursor has to move with the deletes. Without this the caller
+    // carries `state.lastSyncedHash` -- read BEFORE the rollback -- into the
+    // next batch, so the first block after the rewind is checked against the
+    // hash of a chain that was just abandoned, `indexBlock` refuses it, and the
+    // next tick repeats the identical rewind forever. Seen on the live devnet
+    // on 2026-09-07: "Rewound to height 9188, dropped 1 block(s)" followed by
+    // "block 9189 follows c77b2baf… but 4934c97e… was indexed before it", once
+    // every 20 seconds, with the index frozen 14 blocks behind the tip.
+    //
+    // Written before the deletes, not after: a crash between the two must leave
+    // a cursor that is at or below the surviving chain, never above it.
+    const survivor = cursor >= 0 ? await this.hashAt(cursor) : null;
+    await SyncState.updateOne(
+      { key: SYNC_KEY },
+      { $set: { lastSyncedHeight: cursor, lastSyncedHash: survivor ?? '' } },
+      { upsert: true }
+    );
 
     const deleted = await Block.deleteMany({ height: { $gt: cursor } });
     await Transaction.deleteMany({ height: { $gt: cursor } });
