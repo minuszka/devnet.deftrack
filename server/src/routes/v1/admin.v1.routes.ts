@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DevnetOperator } from '../../models/DevnetOperator.js';
 import { MasternodeState } from '../../models/MasternodeState.js';
 import { QuorumRound } from '../../models/QuorumRound.js';
-import { requireAdminAuth } from '../../middleware/adminSession.js';
+import { adminOf, requireAdminAuth } from '../../middleware/adminSession.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, sendData, sendError } from '../../utils/http.js';
 import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
@@ -12,6 +12,7 @@ import { Transaction } from '../../models/Transaction.js';
 import { computeOutcome, currentParticipants } from '../../services/experiment.service.js';
 import { chainlockProfileAtHeight } from '../../config/llmq.js';
 import { rpc } from '../../services/rpc.service.js';
+import { RewindRefusedError, syncService } from '../../services/sync.service.js';
 
 const router = Router();
 
@@ -342,6 +343,56 @@ router.delete(
     }
     await ExperimentRun.deleteOne({ _id: run._id });
     sendData(res, { withdrawn: run.runKey });
+  })
+);
+
+/**
+ * Rewinds deeper than the automatic cap.
+ *
+ * The sync rewinds a reorg on its own up to `MAX_ROLLBACK_DEPTH` blocks and
+ * refuses anything deeper, recording "an operator has to confirm". Until now
+ * nothing existed to confirm with, so a disagreement that deep -- a node
+ * reindexed onto another chain, a datadir restored from a backup -- left the
+ * index frozen until somebody dropped the database. These two routes are the
+ * confirmation: read what the sync sees, then post back exactly the fork point
+ * it reported. The service re-derives it before acting and refuses anything
+ * else, so the worst a wrong request can do is be refused.
+ */
+
+/** GET /api/v1/admin/sync/rewind -- where the index and the node part, and whose call it is. */
+router.get(
+  '/sync/rewind',
+  asyncRoute(async (_req, res) => {
+    sendData(res, await syncService.inspectRewind());
+  })
+);
+
+const rewindSchema = z.object({
+  height: z.coerce.number().int().min(0),
+  hash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/i)
+    .transform((h) => h.toLowerCase()),
+});
+
+/** POST /api/v1/admin/sync/rewind -- confirms the fork point GET reported, and performs it. */
+router.post(
+  '/sync/rewind',
+  asyncRoute(async (req, res) => {
+    const parsed = rewindSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendError(res, 400, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+      return;
+    }
+    try {
+      sendData(res, await syncService.confirmRewind({ ...parsed.data, actor: adminOf(res).subject }));
+    } catch (error) {
+      if (error instanceof RewindRefusedError) {
+        sendError(res, 409, error.message);
+        return;
+      }
+      throw error;
+    }
   })
 );
 

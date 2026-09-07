@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_ROLLBACK_DEPTH,
+  findForkPoint,
   quorumReorgReset,
   reorgVerdict,
   rewindStep,
+  type ForkPointProbe,
 } from './reorg.js';
 
 const STORED = 'aaaa';
@@ -141,5 +143,63 @@ describe('quorum data after a reorg', () => {
     for (const key of ['size', 'minSize', 'threshold', 'dkgInterval', 'roundKey', 'firstSeenAt']) {
       expect(set).not.toHaveProperty(key);
     }
+  });
+});
+
+describe('finding the fork point by bisection', () => {
+  /** A chain that agrees up to `fork` and disagrees above it, counting the questions asked. */
+  const chain = (fork: number) => {
+    const asked: number[] = [];
+    const probe = async (height: number): Promise<ForkPointProbe> => {
+      asked.push(height);
+      return { agrees: height <= fork };
+    };
+    return { asked, probe };
+  };
+
+  it('names the highest agreeing height, in a dozen questions rather than a thousand', async () => {
+    const { asked, probe } = chain(8000);
+    const result = await findForkPoint(9000, probe);
+    expect(result).toEqual({ outcome: 'found', height: 8000, probes: asked.length });
+    // log2(9001) rounds up to 14; the walk would have asked 1000 times.
+    expect(asked.length).toBeLessThanOrEqual(14);
+    // Never a height the caller has already decided about.
+    expect(asked).not.toContain(9000);
+  });
+
+  it('finds a fork point directly below the tip, and one at genesis', async () => {
+    expect(await findForkPoint(9000, chain(8999).probe)).toMatchObject({ outcome: 'found', height: 8999 });
+    expect(await findForkPoint(9000, chain(0).probe)).toMatchObject({ outcome: 'found', height: 0 });
+  });
+
+  it('reports a chain with no common history instead of inventing a fork point', async () => {
+    // Even genesis differs: a different chain, which no rewind can join.
+    expect(await findForkPoint(9000, chain(-1).probe)).toMatchObject({ outcome: 'no-common-history' });
+    // A tip of 0 that disagrees is the same thing with nothing to ask.
+    expect(await findForkPoint(0, chain(-1).probe)).toEqual({ outcome: 'no-common-history', probes: 0 });
+  });
+
+  it('stops at a height it cannot compare rather than stepping over it', async () => {
+    // A node that stops answering mid-search, or a hole in the index, is a
+    // reason to look -- and had the search stepped over it, the answer would
+    // have been a guess presented as a fact.
+    // A band wide enough that the first bisection step lands in it, whatever
+    // the exact midpoint arithmetic: the search must not be able to route
+    // around a node that is not answering.
+    const probe = async (height: number): Promise<ForkPointProbe> =>
+      height > 4000 && height < 5000 ? { undecidable: 'the node did not answer' } : { agrees: height <= 8000 };
+    const result = await findForkPoint(9000, probe);
+    expect(result).toMatchObject({ outcome: 'undecidable', probes: 1 });
+    expect(result).toMatchObject({ reason: expect.stringMatching(/^height 4\d{3}: the node did not answer$/) });
+  });
+
+  it('marks the depth refusal as the operator\'s to resolve', () => {
+    const floor = 8028 - MAX_ROLLBACK_DEPTH;
+    const step = rewindStep({ cursor: floor, floor, storedHash: STORED, nodeHash: OTHER });
+    expect(step).toMatchObject({ action: 'wait', needsOperator: true });
+    // The other reason to wait is not: the node may simply answer next tick.
+    expect(rewindStep({ cursor: 8026, floor, storedHash: STORED, nodeHash: null })).not.toHaveProperty(
+      'needsOperator'
+    );
   });
 });
