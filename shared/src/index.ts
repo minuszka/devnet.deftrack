@@ -486,7 +486,24 @@ export interface ExperimentOutcome {
   masternodesPunished: number;
   blocks: number;
   medianBlockIntervalSec: number | null;
+  /**
+   * The figure the block-spacing target governs. Intervals are exponentially
+   * distributed, so the median sits at ln 2 = 0.693 of the mean and reads
+   * 30% fast against the target; the two are carried side by side so neither
+   * is read as the other. Absent on runs closed before it was recorded.
+   */
+  meanBlockIntervalSec?: number | null;
   distinctStakers: number;
+  /**
+   * Concentration beside the count: the count alone reads too kindly (42
+   * producers while one took 44% of the blocks). Absent on runs closed before
+   * they were recorded, and null when no block in the window was attributable.
+   */
+  topStakerShare?: number | null;
+  /** Herfindahl-Hirschman index over block share, 0..1 (1 = one producer). */
+  stakerHhi?: number | null;
+  /** 0 = every producer equal, approaching 1 = one takes everything. */
+  stakerGini?: number | null;
   chainLockedBlocks: number;
   chainLockCoverage: number | null;
   /** Absent on runs closed before more than one quorum type was tracked. */
@@ -525,7 +542,11 @@ export interface ExperimentDetail extends ExperimentRow {
       medianHealthRatio: number | null;
       masternodesPunished: number;
       medianBlockIntervalSec: number | null;
+      meanBlockIntervalSec: number | null;
       chainLockCoverage: number | null;
+      topStakerShare: number | null;
+      stakerHhi: number | null;
+      stakerGini: number | null;
     };
   } | null;
 }

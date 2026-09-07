@@ -51,6 +51,13 @@ export interface ExperimentOutcome {
 
   blocks: number;
   medianBlockIntervalSec: number | null;
+  /**
+   * The figure the spacing target governs. Intervals are exponentially
+   * distributed, so the median is 0.693 of the mean: a run whose expected
+   * outcome named the median read as a miss on a chain within 8% of target.
+   * Null on outcomes snapshotted before it was carried.
+   */
+  meanBlockIntervalSec?: number | null;
   distinctStakers: number;
   /**
    * Concentration, beside the count -- because the count alone reads too
@@ -151,6 +158,7 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
 
     blocks: { type: Number, default: 0 },
     medianBlockIntervalSec: { type: Number, default: null },
+    meanBlockIntervalSec: { type: Number, default: null },
     distinctStakers: { type: Number, default: 0 },
     // Defaulted to null, not 0: a run closed before these were carried has no
     // concentration figure, and 0 would read as "perfectly spread".

@@ -240,12 +240,25 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 
 ## 3. Tooling debts found by using the tools
 
-- **The InstantSend probe races the ChainLock.** It polls `getislocks`, and
-  `HandleFullyConfirmedBlock` prunes the very record it polls. One of twenty
-  transactions was mined four seconds after broadcast and its lock was gone
-  before the poll could see it; scored naively that is a false "no lock". The
-  probe must treat block inclusion as its own outcome, and should read the
-  notification rather than poll.
+- ~~**The InstantSend probe races the ChainLock.**~~ It polled `getislocks`,
+  and `HandleFullyConfirmedBlock` prunes the very record it polled: one of
+  twenty transactions was mined four seconds after broadcast, its lock was
+  gone before the poll could see it, and scored naively that was a false "no
+  lock". **Closed 2026-09-07 with `ops/instantsend-probe.py`**, in the
+  repository this time. It reads `getrawtransaction`'s `instantlock`, which
+  stays true through the ChainLock prune that empties `getislocks`; treats
+  block inclusion as an outcome of its own (`locked`, `mined-with-lock`,
+  `mined-unlocked`, `timeout`, `rejected`); states its resolution -- the poll
+  interval -- beside every latency; and counts RPC errors instead of scoring
+  them. It spends only to the seed wallet's own addresses, from distinct
+  mature non-collateral outputs it selects itself, and refuses to run with
+  the InstantSend spork off. The pure parts are unit-tested in `ops/tests/`.
+  What it still cannot do is read the notification: the seed publishes no
+  InstantSend-lock ZMQ topic (`getzmqnotifications` on 2026-09-07: hashblock,
+  hashchainlock, hashtx, sequence) and the VPS has no pyzmq, so that half
+  needs a conf change and a seed restart -- not during the running
+  observation, and a separate decision. Not yet run against the chain, for
+  the same reason.
 - **`medianBlockIntervalSec` must not be compared against the target spacing.**
   Block intervals are a Poisson process, so they are exponentially distributed
   and the median is `mean x ln2` = 0.693 of the mean, never the mean itself.
@@ -255,11 +268,20 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   median makes it look 25 % too fast. `stake-redistribution-2026-09-05` named
   the median in its expected outcome and would have been read as a miss on that
   half. Either publish the mean beside it, or state the 0.693 factor wherever
-  the median is compared to a target.
+  the median is compared to a target. **Closed 2026-09-07:** the outcome now
+  carries `meanBlockIntervalSec` beside the median (a running run recomputes
+  it; a run frozen earlier shows "not recorded", never zero), the experiment
+  page shows both, and the baseline comparison prints the 0.693 relation under
+  the table. `stakingHealth` had computed the mean all along; the outcome
+  dropped it.
 - **`distinctStakers` in the experiment outcome invites a wrong reading.** It
   counts distinct kernel scripts, not concentration: 42 distinct producers while
   one script took 44 % of 250 blocks. A concentration figure (top-1 share, or a
   Gini) belongs beside it, or every fairness measurement will read too kindly.
+  **Closed 2026-09-07:** the page shows top staker share, HHI and Gini beside
+  the count, and the baseline comparison carries their deltas -- the model had
+  stored all three since 2026-09-05 while the shared type and the client never
+  read them.
 - **A restored root qdisc comes back with a new handle.** `fq_codel 8001:` where
   it began as `fq_codel 0:`; the kernel assigns it on replacement. A checker
   comparing handles reports a false difference — compare parameters.

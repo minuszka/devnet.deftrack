@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import type { ExperimentDetail, ExperimentRow } from '../lib/api.js';
+import type { ExperimentDetail, ExperimentOutcome, ExperimentRow } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio } from '../lib/format.js';
@@ -198,6 +198,16 @@ export class DdPageExperiments extends LitElement {
                 value=${o.chainLockCoverage === null ? '—' : ratio(o.chainLockCoverage)}
                 sub="${num(o.chainLockedBlocks)} of ${num(o.blocks)} blocks"
               ></dd-stat>
+              <dd-stat
+                label="Block interval"
+                value=${o.meanBlockIntervalSec == null ? '—' : `${num(Math.round(o.meanBlockIntervalSec))} s`}
+                sub=${intervalNote(o)}
+              ></dd-stat>
+              <dd-stat
+                label="Block producers"
+                value=${num(o.distinctStakers)}
+                sub=${concentrationNote(o)}
+              ></dd-stat>
             </section>
           `
         : nothing}
@@ -368,12 +378,27 @@ export class DdPageExperiments extends LitElement {
   /** A difference is only worth showing next to what it is a difference from. */
   private _comparison(d: ExperimentDetail): TemplateResult {
     const c = d.comparison!;
-    const rows: Array<[string, number | null, number | null, number | null, boolean]> = [
-      ['Formation rate', d.outcome?.formationRate ?? null, c.baseline.formationRate, c.delta.formationRate, true],
-      ['Median health', d.outcome?.medianHealthRatio ?? null, c.baseline.medianHealthRatio, c.delta.medianHealthRatio, true],
-      ['ChainLock coverage', d.outcome?.chainLockCoverage ?? null, c.baseline.chainLockCoverage, c.delta.chainLockCoverage, true],
-      ['Masternodes punished', d.outcome?.masternodesPunished ?? null, c.baseline.masternodesPunished, c.delta.masternodesPunished, false],
-      ['Median block interval (s)', d.outcome?.medianBlockIntervalSec ?? null, c.baseline.medianBlockIntervalSec, c.delta.medianBlockIntervalSec, false],
+    const o = d.outcome;
+    const b = c.baseline;
+    const rows: ComparisonRow[] = [
+      { label: 'Formation rate', run: o?.formationRate ?? null, base: b.formationRate, delta: c.delta.formationRate, kind: 'ratio', higherIsBetter: true },
+      { label: 'Median health', run: o?.medianHealthRatio ?? null, base: b.medianHealthRatio, delta: c.delta.medianHealthRatio, kind: 'ratio', higherIsBetter: true },
+      { label: 'ChainLock coverage', run: o?.chainLockCoverage ?? null, base: b.chainLockCoverage, delta: c.delta.chainLockCoverage, kind: 'ratio', higherIsBetter: true },
+      { label: 'Masternodes punished', run: o?.masternodesPunished ?? null, base: b.masternodesPunished, delta: c.delta.masternodesPunished, kind: 'number', higherIsBetter: false },
+      // The spacing target governs the MEAN. Intervals are exponentially
+      // distributed, so the median sits at 0.693 of the mean and reads 30%
+      // fast against the target; both are shown so neither is read as the
+      // other. A run whose expected outcome named the median read as a miss
+      // on a chain that was within 8% of target.
+      { label: 'Mean block interval (s)', run: o?.meanBlockIntervalSec ?? null, base: b.meanBlockIntervalSec ?? null, delta: c.delta.meanBlockIntervalSec, kind: 'number', higherIsBetter: false },
+      { label: 'Median block interval (s)', run: o?.medianBlockIntervalSec ?? null, base: b.medianBlockIntervalSec, delta: c.delta.medianBlockIntervalSec, kind: 'number', higherIsBetter: false },
+      // Concentration beside the count. Lower is better, and a change here is
+      // what a fairness intervention exists to move: the producer count barely
+      // moves when the dominant staker stops, because the others were already
+      // there.
+      { label: 'Top staker share', run: o?.topStakerShare ?? null, base: b.topStakerShare ?? null, delta: c.delta.topStakerShare, kind: 'ratio', higherIsBetter: false },
+      { label: 'Staker HHI', run: o?.stakerHhi ?? null, base: b.stakerHhi ?? null, delta: c.delta.stakerHhi, kind: 'index', higherIsBetter: false },
+      { label: 'Staker Gini', run: o?.stakerGini ?? null, base: b.stakerGini ?? null, delta: c.delta.stakerGini, kind: 'index', higherIsBetter: false },
     ];
 
     return html`
@@ -390,12 +415,12 @@ export class DdPageExperiments extends LitElement {
                 <tr><th scope="col">Measure</th><th scope="col" class="r">This run</th><th scope="col" class="r">Baseline</th><th scope="col" class="r">Δ</th></tr>
               </thead>
               <tbody>
-                ${rows.map(([label, run, base, delta, isRatio]) => {
-                  // Higher is better for the ratios, worse for punishments and
-                  // block spacing -- so the sign alone cannot pick the colour.
-                  const better = delta === null || delta === 0 ? 'flat' : (delta > 0) === isRatio ? 'up' : 'down';
+                ${rows.map(({ label, run, base, delta, kind, higherIsBetter }) => {
+                  // The sign alone cannot pick the colour: a rise is good for a
+                  // formation rate and bad for punishments, spacing or concentration.
+                  const better = delta === null || delta === 0 ? 'flat' : (delta > 0) === higherIsBetter ? 'up' : 'down';
                   const fmt = (v: number | null): string =>
-                    v === null ? '—' : isRatio ? ratio(v) : num(Math.round(v * 100) / 100);
+                    v === null ? '—' : kind === 'ratio' ? ratio(v) : kind === 'index' ? v.toFixed(3) : num(Math.round(v * 100) / 100);
                   return html`
                     <tr>
                       <td>${label}</td>
@@ -410,10 +435,39 @@ export class DdPageExperiments extends LitElement {
               </tbody>
             </table>
           </div>
+          <div class="note">
+            Block intervals are exponentially distributed, so the median sits at 0.693 of the
+            mean; the spacing target governs the mean. A dash means the figure was not recorded
+            on that side, not that it was zero.
+          </div>
         </div>
       </section>
     `;
   }
+}
+
+interface ComparisonRow {
+  label: string;
+  run: number | null;
+  base: number | null;
+  delta: number | null;
+  /** How the figure is printed: a percentage, a plain number, or a 0..1 index. */
+  kind: 'ratio' | 'number' | 'index';
+  higherIsBetter: boolean;
+}
+
+/** The median beside the mean, and which is which; the mean is the target's figure. */
+function intervalNote(o: ExperimentOutcome): string {
+  if (o.medianBlockIntervalSec === null) return 'no interval in the window';
+  const median = `median ${num(Math.round(o.medianBlockIntervalSec))} s`;
+  return o.meanBlockIntervalSec == null ? `${median} · mean not recorded` : `mean · ${median}`;
+}
+
+/** Concentration beside the count, or the honest absence of it. */
+function concentrationNote(o: ExperimentOutcome): string {
+  if (o.topStakerShare == null) return 'concentration not recorded';
+  const gini = o.stakerGini == null ? '—' : o.stakerGini.toFixed(2);
+  return `top share ${ratio(o.topStakerShare)} · Gini ${gini}`;
 }
 
 customElements.define('dd-page-experiments', DdPageExperiments);
