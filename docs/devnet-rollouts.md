@@ -12,6 +12,108 @@ ChainLock behaviour, so a rollout is an intervention to be recorded, not just
 an upgrade. And a version string does not identify a build — different binaries
 report the same version — so entries record md5sums.
 
+## Sentinel relay fixes and the Dash audit wave — the whole network, no gate
+
+*Rolled out 2026-09-07, completed at height 9147. Explorer record:
+[`fleet-rollout-208-2026-09-07`](https://devnet.deftrack.xyz/experiments/fleet-rollout-208-2026-09-07).*
+
+Every daemon on the devnet runs a binary built from defcon-project/defcon
+commit `c739d9f504fe4a2b390a9cdceb907f927535b328` (v22.1.5): 16 fleet hosts
+carrying 160 instances (152 masternodes and 8 stakers), plus the seed and
+devnet2 — **162 daemons, no exceptions**.
+
+| artefact | md5 |
+|---|---|
+| fleet / devnet2 non-BDB (`--without-bdb`) | `406828f76173a5a23f3dd6db740afc76` |
+| seed BDB | `a1ad976f18016c5a67672adacdb8f4f5` |
+| `defcon-cli` (both) | `91a238ea58105541a5e2364be1ba5e7f` fleet, `815f2091fec9f66e0e126fad51a8c967` seed — both byte-identical to the ones they replaced |
+
+It replaces `c0db9a2fe14f2e5b8ec90878306e613c` on the fleet and devnet2 and
+`93d4868fc7311cf60d4d2570300d8560` on the seed, both built from `3ce1d8b8d6`
+and installed 2026-09-05.
+
+**No consensus gate is introduced or moved by any of the twelve commits**, and
+the consensus-string fingerprint is bit-identical across old and new on both
+artefacts — 178 strings, md5 `559683c468564314759dfe943705e359`, identical
+sets, with a negative control on a narrower pattern giving a different value.
+Mixed versions during the roll were therefore safe by measurement rather than
+by assumption.
+
+### What the binary carries beyond `3ce1d8b8d6`
+
+All references are pull requests on
+[defcon-project/defcon](https://github.com/defcon-project/defcon):
+
+- [#197](https://github.com/defcon-project/defcon/pull/197) — build/qt: Qt
+  5.15.19 in depends, minimum Qt 5.15, Qt-6-removed APIs dropped. GUI only, so
+  inert in a `--with-gui=no` build
+- [#198](https://github.com/defcon-project/defcon/pull/198),
+  [#199](https://github.com/defcon-project/defcon/pull/199),
+  [#200](https://github.com/defcon-project/defcon/pull/200) — DSL fault
+  injection behind the `-enablefaultinjection` hard gate: refused at startup on
+  mainnet and testnet, allowed on devnet and regtest, process-local,
+  height-expiring, nothing serialised. The faults act on announce, reports,
+  signing and miner inclusion, and `dslstatus` gains `poolhash`, `candidate`
+  and `faults` so shadow tests can read whether signers hold the same pool
+- [#201](https://github.com/defcon-project/defcon/pull/201) — RPC:
+  `masternode payments` stops before genesis instead of aborting the daemon
+- [#202](https://github.com/defcon-project/defcon/pull/202) — RPC:
+  `faultinject` parses its numbers from strings, the form `defcon-cli` sends
+- [#203](https://github.com/defcon-project/defcon/pull/203) — governance
+  (audit F-019): govsync Bloom hash-function limits bounded and rejected with
+  score 100 before request classification
+- [#204](https://github.com/defcon-project/defcon/pull/204) — RPC (audit
+  F-028): legacy masternode operator payloads choose their signing scheme by
+  V19 activation, matching verification. Dormant, since V19 is unset on every
+  network, but it would have blocked `service update` and `revoke` for
+  legacy-registered masternodes the moment V19 activated
+- [#205](https://github.com/defcon-project/defcon/pull/205) — LLMQ (audit
+  F-016): malformed but within-cap `QSIGSHARE`, `QSIGSESANN`, `QSIGSHARESINV`
+  and `QGETSIGSHARES` vectors are scored 100 and disconnected
+- [#206](https://github.com/defcon-project/defcon/pull/206) — LLMQ (audit
+  F-008, F-007): the `AlreadyHave` fallback for a best ChainLock is restored
+  after the bounded seen cache misses
+- [#207](https://github.com/defcon-project/defcon/pull/207) — **DSL**: an
+  announcement arriving before its epoch base block is held for one block and
+  validated when that block connects, instead of being dropped with no
+  retransmission ever following. Ungated; acts from the first epoch after
+  install
+- [#208](https://github.com/defcon-project/defcon/pull/208) — **DSL**: Sentinel
+  messages relay over masternode connections as well as ordinary ones, since
+  they are quorum traffic. Block-relay-only connections stay excluded. Ungated
+
+### The gates this rollout passed before it shipped
+
+Every one of these can fail, and each was checked against evidence rather than
+assumed:
+
+- **Build freshness** — zero sources and zero objects newer than the binary
+- **Mixed-ABI canary** — all 677 fleet objects and all 679 seed objects newer
+  than the regenerated `configure`, each set produced inside a single build
+  window after a `make clean`, so no incremental build crossed a reconfigure.
+  This is the check that a reconfigure once defeated silently
+- **Tree identity** — the fleet binary was built from the cherry-pick
+  `9aa903f696`, whose tree is identical to merged upstream `c739d9f504`,
+  verified with a negative control against `dc79b9cd1d`
+- **Artefact kind** — the fleet build carries the `Compiled without bdb
+  support` marker and the seed build does not, each probe controlled against
+  the other binary
+- **`ldd` on real targets** — clean on a Debian fleet host, on all five Ubuntu
+  24.04 hosts, and on the VPS, before anything was installed anywhere
+- **Consensus fingerprint** — bit-identical, with a negative control
+
+### Result
+
+160 of 160 fleet instances on one chain at height 9147, zero forked, zero
+unreachable, every host reporting the shipped md5; seed and devnet2 at the same
+height and the same block hash; 152 of 152 masternodes enabled; ChainLock at
+the tip on `llmq_defcon`; no ban or penalty event from the roll. All nine
+block-propagation observers kept reporting across their hosts' restarts.
+
+**devnet2 was included deliberately.** It runs `/usr/local/bin/defcond-nobdb`,
+a different path from the seed's `defcond`, and every earlier roll had left it
+behind on whatever build it happened to hold.
+
 ## DSL shadow re-roll — reorg/signing hardening, activation brought forward to 5472
 
 *Rolled out 2026-08-30, completed at height 4939. Explorer record: the same

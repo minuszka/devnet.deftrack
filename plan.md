@@ -36,15 +36,27 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
 
 ## 1b. Owed on the next fleet roll
 
-- **M-02 comes off the devnet** (defcon-project/defcon#194). `CDevNetParams` no
-  longer sets `nStrictBLSSigSizeActivationHeight`, so the rule is unset on every
-  network -- the devnet is kept identical to what v23 ships, and M-02 is not in
-  v23. **Until a binary carrying this reaches the fleet the change exists only
-  in git:** every running daemon still enforces M-02 from height 5250.
-  No urgency and no deadline -- unsetting a stricter rule is a relaxation, so
-  the chain stays valid, there is no gate height to hit and no reindex. Ride the
-  next binary rollout rather than making it an event of its own, and give that
-  rollout its Experiments entry as usual.
+- **M-02 came off the devnet, and had already done so before this entry was
+  last read** (defcon-project/defcon#194). `CDevNetParams` no longer sets
+  `nStrictBLSSigSizeActivationHeight`; the only assignment left in
+  `chainparams.cpp` is `= 0` inside `CRegTestParams`, so the rule is unset on
+  devnet, testnet and mainnet alike. This entry claimed until 2026-09-07 that
+  "every running daemon still enforces M-02 from height 5250", and that was
+  **wrong from 2026-09-05 onward**: #194 (`292337f175`) is an ancestor of
+  `3ce1d8b8d6`, the commit the binary installed that day was built from --
+  verified with `git merge-base --is-ancestor` and a negative control. The item
+  was discharged by a rollout nobody credited with it.
+
+  **The lesson is the entry, not the rule.** An "owed on the next roll" note
+  does not clear itself when the roll happens; someone has to check the range
+  the roll actually shipped against this list. Do that as part of closing a
+  rollout, or this section quietly accumulates work that is already done --
+  which is the same failure, in the other direction, as an owed verification
+  that lives only in a conversation.
+
+- Nothing else is currently owed on a roll. The 2026-09-07 rollout
+  (`c739d9f504`, 12 commits) reached all 162 daemons; see
+  `docs/devnet-rollouts.md`.
 
 ## 2. In the binary, not proven on-chain
 
@@ -196,6 +208,37 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   restart is needed to install: the hook only runs at the next start.
 
 ## 4. Current state of the network
+
+- **Every daemon runs `c739d9f504` (#208) since 2026-09-07, height 9147.**
+  162 of 162: 16 fleet hosts with 160 instances, plus seed and devnet2. Fleet
+  and devnet2 md5 `406828f76173a5a23f3dd6db740afc76`, seed
+  `a1ad976f18016c5a67672adacdb8f4f5`. 160/160 on one chain, 0 forked, 0
+  unreachable; 152/152 enabled; ChainLock at the tip on `llmq_defcon`; no ban
+  or penalty event from the roll. The consensus-string fingerprint is
+  bit-identical to the binaries replaced, so nothing about block validity
+  moved. Full record in `docs/devnet-rollouts.md` and the Experiments run
+  `fleet-rollout-208-2026-09-07`.
+
+  **What is now on the network that was not before:** #207 (an announcement
+  arriving before its epoch base block is held rather than dropped) and #208
+  (Sentinel messages relay over masternode connections too). Both are ungated
+  and act from the first epoch after install. Neither is claimed to fix the
+  absent Sentinel epochs -- that cause was measured separately and is the open
+  v23 decision recorded above.
+
+- **The simulator cannot act on the devnet, by construction, so nothing of it
+  belongs on a VPS yet.** `EXECUTOR_LAB_NETWORK` in
+  `services/simulationControl.service.ts` is the constant `'regtest'`, and the
+  comment beside it says it is a design constant rather than a setting: a live
+  run whose target snapshot carries real fleet host identities is exactly what
+  the guard exists to prevent. The only implementation of
+  `SimulationLiveExecutor` is `DockerLiveExecutor`, which drives lab
+  containers, and it is built only when `SIMULATION_LAB_EXECUTOR_ENABLED` is
+  set. So the 160 imported devnet targets are for planning, preview and
+  dry-run; all 160 are `enabled: false` and all carry `service-control` only.
+  Installing a wrapper on a fleet host today would connect to nothing. What the
+  live devnet path would need first is a devnet executor and a transport to
+  reach a host, and neither exists.
 
 - **The seed no longer stakes, durably.** `staking=0` in its conf plus a
   systemd drop-in clearing `ExecStartPost` for that unit only. With staking off
