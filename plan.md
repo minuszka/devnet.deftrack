@@ -54,6 +54,37 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   which is the same failure, in the other direction, as an owed verification
   that lives only in a conversation.
 
+- **#209 rides the next roll that has its own reason. It is not a reason to
+  roll.** `37e845beb0` landed upstream shortly after the 2026-09-07 rollout and
+  is the only commit the fleet does not have. It is two lines in
+  `src/pos/stake.h`: `static const int` becomes `static constexpr int` for
+  `SHORTDELAY` and `LARGEDELAY`. **The values are unchanged** (2500 and 10000)
+  and nothing else in the tree is touched.
+
+  What it actually fixes is a **build configuration**, not the network. The two
+  constants are used in twelve places, all
+  `std::chrono::milliseconds{CStakeWallet::SHORTDELAY}`; libstdc++'s duration
+  constructor takes `const Rep2&`, so each of those *odr-uses* the member, and a
+  `static const int` with no out-of-line definition (there is none) then needs
+  one. An optimised build folds the constant and never emits the reference, which
+  is why the binary running on 162 daemons is correct; a debug or sanitizer build
+  fails to link. `constexpr` static members are implicitly inline since C++17, so
+  the definition exists and the link succeeds. Hence the branch name,
+  `fix/f107-debug-sanitizer`.
+
+  Three reasons not to re-roll for it, in order of weight. It changes no value
+  and no runtime behaviour, so the deployed binaries already behave identically.
+  It is staking code, and 152 of the 160 fleet instances never execute it --
+  `init.cpp` soft-sets `disablewallet=1` wherever `masternodeblsprivkey` is
+  present, so a masternode has no wallet and no `CStakeWallet`; only the 8
+  stakers and the seed would even reach it. And `ops/fleet-deploy.sh` restarts
+  every instance on a host, so the price is 160 restarts, every DKG connection
+  dropped at once, and a disturbed hour that reads like a ban wave --
+  [[devnet-binary-build-path]] records this exact trade for a staking change.
+
+  If a sanitizer build is wanted before the next roll, it needs the source tree,
+  not the fleet.
+
 - Nothing else is currently owed on a roll. The 2026-09-07 rollout
   (`c739d9f504`, 12 commits) reached all 162 daemons; see
   `docs/devnet-rollouts.md`.
@@ -225,6 +256,38 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   and act from the first epoch after install. Neither is claimed to fix the
   absent Sentinel epochs -- that cause was measured separately and is the open
   v23 decision recorded above.
+
+  **What the restart cost, measured rather than assumed.** The DKG round whose
+  base block was 9144 ran straight through the rollout window, and it is the
+  only one disturbed. `llmq_defcon` -- the ChainLock profile -- formed at health
+  **1.00 with nobody punished**. `llmq_50_60` formed at **0.96 with 2 of 50
+  punished**, both on `roland-node-8`, the host that carries 14 instances and so
+  dropped the most DKG connections at once; two `penalty_up` events at 9155,
+  each `None -> 100`. That is a mild disturbance by this network's history: the
+  2404 revive punished 42 of 50 in the equivalent window.
+
+  **One masternode was banned, and the run's own prediction said none would
+  be.** `9c94c198…` on `roland-node-8` took 100 at 9155 from `llmq_50_60`, then
+  100 again at 9165 from `llmq_400_60` -- ten blocks apart, saturating at the
+  152 ceiling. Expectation 7 of the run reasoned from a single profile's
+  24-block interval and concluded two exclusions could not fall close enough
+  together. That was wrong for a reason this file's own notes already record:
+  what bans is two exclusions from **different interleaved profiles**, and their
+  gap has nothing to do with either profile's interval. Enabled fell to 151.
+
+  **No cascade.** The 9168 rounds formed at 1.00 with nobody punished, so the
+  mesh re-formed inside one interval; the five nodes left at 100 decay from
+  there at one point per block. The ban does not decay -- that node needs a
+  ProUpServTx to return, and reviving it was correctly deferred until the wave
+  had passed rather than done into it.
+
+  **A logging limit worth knowing before the next measurement.** The fleet runs
+  `debug=llmq-dkg` only, so #207's held-announcement trace line never reaches a
+  fleet debug.log. Evidence for #207 and #208 on this network has to come from
+  `dslstatus` (`respondedcount`, `epochreports`, `missedreports`, `poolhash`)
+  sampled across hosts at epoch positions 17-23, and from the explorer's
+  `/api/v1/dsl/epochs`. Turning the category on is a conf change and a restart,
+  so it rides a roll rather than being done for one measurement.
 
 - **The simulator cannot act on the devnet, by construction, so nothing of it
   belongs on a VPS yet.** `EXECUTOR_LAB_NETWORK` in
