@@ -347,6 +347,20 @@ Minden futás után:
 
 Elfogadási kapu: Gate E – a generikus Live Devnet Chaos használható.
 
+> **Lezárva 2026-09-07, döntéssel, nem építéssel (B opció).** A szimulátor
+> nem kap élő devnet-utat: nincs devnet-executor és nincs hostot elérő
+> transzport, a 160 importált target tartósan `enabled: false`. A fenti
+> scenariókat a devnet script-vezérelt kísérletei fedték le teljes rekorddal:
+> `dsl-enforcement-outage-2026-09-05` (5 masternode leállítva 6 epochra),
+> `dsl-mass-outage-guard-2026-09-06` (23 masternode), `stake-redistribution-2026-09-05`
+> (stakerek), `chaos-wrapper-pilot-2026-09-05` és `chaos-netem-quorum-2026-09-05`
+> (egy hostos fault). Gate E abban az értelemben áll, hogy a generikus
+> devnet-chaos használható -- kézből, a chaos-wrapperrel és az
+> Experiments-rekorddal, nem a szimulátorból. Indok: a flotta ideiglenes, és
+> nyolc hostja a mainnetet is viszi; egy webes gomb, amely termelő gépeken
+> állít le daemonokat, nem áll arányban a haszonnal. Újra elővehető egy
+> DAO-szavazta állandó flottánál, amely termelő géppel nem osztozik.
+
 ## 17. nap – hálózati fault pilot
 
 Először Dockerben, majd egy jóváhagyott pilot porton:
@@ -361,6 +375,17 @@ Először Dockerben, majd egy jóváhagyott pilot porton:
 Teljes interfészre vonatkozó `tc` szabály csak külön, explicit engedéllyel használható.
 
 Elfogadási kapu: a host SSH/control útvonala nem zárható ki a faulttal.
+
+> **Állás 2026-09-07.** Dockerben és a pilot hoston kész: latency/jitter/loss,
+> clear és expiry, a controller-crash alatti automatikus helyreállítás (a
+> wrapper 15 másodperces watchdogja, a 09-05-i futásban élesben bizonyítva --
+> a fault az SSH-t is elvágta, és a watchdog a lejárat után 13 másodperccel
+> helyreállított), és a kapu maga: a netem-sáv javítása után a host SSH-útja
+> bizonyítottan érintetlen (09-07). Ami hiányzik: a csak P2P-portra
+> korlátozott izoláció a devneten -- a wrapper szűrője ma a célpont
+> figyelőportját forrásportként illeszti, tehát a bejövő kapcsolatokat éri
+> el, a célpont által nyitottakat nem. Ez wrapper-feladat marad, szimulátor
+> nélkül, és az E4b újrafuttatása amúgy is kikényszeríti (`plan.md` §3a).
 
 ## 18. nap – DSL fault-injection terv és Core tesztkeret
 
@@ -443,6 +468,16 @@ Dokumentáció:
 - mainnet safety proof;
 - ismert korlátok;
 - eredményértelmezési útmutató.
+
+> **Állás 2026-09-07.** A labor- és dokumentációs fél kész: tervezett vég,
+> Sentinel-elvárás a jelentésben, `OPERATIONS_HU.md`, `RESULTS_HU.md`, a
+> Core-horog (#198–#202) és két Core-javítás (#207, #208) laboron bizonyítva.
+> A devnet-pilot fél ugyanazzal a B-döntéssel zárul, mint a 16. nap: a flotta
+> binárisán a `-enablefaultinjection` nincs bekapcsolva és nem is lesz; a
+> Sentinel viselkedését a devneten valódi kieséssel mértük (E1b, E2),
+> injektált hibával a laboron. A szimulátor ezzel labor-eszköz Core-változások
+> bizonyítására, mainnet és devnet felé szerkezetileg zárva. **A fejezet
+> lezárva.**
 
 ## Napi átadási protokoll modellváltáshoz
 

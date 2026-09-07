@@ -392,6 +392,18 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   live devnet path would need first is a devnet executor and a transport to
   reach a host, and neither exists.
 
+  **Decided 2026-09-07 (the user, option B): it stays that way.** No devnet
+  executor, no transport, the 160 targets disabled for good. The devnet
+  remains script-driven -- the E1b/E2 pattern, hand-run and recorded in
+  Experiments -- and the simulator is the lab instrument for proving Core
+  changes, closed as a chapter. Roadmap day 16 and day 22's devnet half are
+  closed by documentation as covered by those runs; day 17's missing half
+  (P2P-port-only isolation) stays a chaos-wrapper task, which E4b needs
+  anyway. Reason: the fleet is temporary and eight of its hosts carry
+  mainnet; a web button that stops daemons on production machines is not
+  worth what it would buy. Re-openable for a DAO-voted permanent fleet that
+  shares no machine with production.
+
 - **The seed no longer stakes, durably.** `staking=0` in its conf plus a
   systemd drop-in clearing `ExecStartPost` for that unit only. With staking off
   the subsystem does not initialise at all: `getstakinginfo` and
@@ -521,7 +533,10 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   those 72, so resolution stays closed until either an observer runs on the
   shared hosts (a decision -- they carry production services) or a policy
   admits declared-but-unobserved targets, which the fail-closed design
-  deliberately does not.
+  deliberately does not. **Moot since 2026-09-07 (option B, §4):** the
+  targets stay disabled for good, so the gap needs no observer on the shared
+  hosts. The manifest stays useful as the fleet's declared inventory for
+  preview and dry-run.
 - ~~Refresh the inherited-failing tests listed in `CLAUDE.md`.~~ **Done**:
   `CLAUDE.md` now records `subsidy_tests` and `block_reward_reallocation_tests`
   as passing (measured 2026-09-05 on the deployed commit) and keeps the rest

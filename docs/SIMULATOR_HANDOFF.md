@@ -1,5 +1,22 @@
 # Szimulátor handoff – 15. nap, fleet inventory és quorumtag-célzás
 
+## Lezárás (2026-09-07) – B opció: nincs élő devnet-út, a szimulátor labor-eszköz
+
+A felhasználó döntése: a szimulátor **nem kap** devnet-executort és hostot
+elérő transzportot. A devnet script-vezérelt marad (E1b/E2 minta: kézből
+indított, mért, Experiments-rekordba írt beavatkozás), a szimulátor pedig a
+Docker/regtest labor eszköze Core-változások bizonyítására, ahol a 18–22. nap
+teljes értékű volt (#198–#202, #207, #208). Következmények, mind
+dokumentálva: a roadmap 16. napja és a 22. nap devnet-fele „script-vezérelt
+kísérletekkel lefedve, élő executor tudatosan nincs”; a 17. nap hiányzó fele
+(csak P2P-portra korlátozott izoláció) wrapper-feladat marad az E4b-hez; a
+160 importált target tartósan `enabled: false`; a forming-quorum feloldás
+hiánya a roland-hostokon (nincs observer) tárgytalan. Indok: a flotta
+ideiglenes, nyolc hostja a mainnetet viszi, és egy webes gomb termelő
+daemonok leállítására nem áll arányban a haszonnal. Újra elővehető egy
+DAO-szavazta állandó flottánál. **A szimulátor fejezete ezzel lezárva;** az
+alábbi szakaszok a történet.
+
 ## 15. nap kiegészítés (2026-09-05 este) – a 16 hostos fleet-manifest elkészült, importra vár
 
 A tényleges devnet fleet-deklaráció megvan: 16 host, 160 target (152 masternode + 8 fleet-staker), a séma szerint érvényes, és a read-only `POST /admin/simulations/targets/inventory-preview` 160 create / 0 update / 0 undeclared / 0 kockázatos mapping-változást ad rá. Ujjlenyomat: `41a4c2b02c448b9c5bcb2f7acbaa30f4f493c63b1c0a4df2d26dae7a9f65916c`, `inventoryId: devnet-fleet-2026-09-05`. **Importálva ugyanaznap este a felhasználó „csináld” jóváhagyásával:** 160 `PUT /admin/simulations/targets/:id` (ütemezve, mert a szimulátor admin-routere 30 kérés/perc), mind `enabled: false`; utána az előnézet 160 változatlant adott azonos ujjlenyomattal, a registry 160 targetet tart 16 hoston (152 masternode, 8 staker, 0 engedélyezett). Az engedélyezés (`enable`) továbbra is külön, safety-admin lépés. **Amit az import szabály szerint nem old meg:** a `GET /quorums/forming` feloldása most is `no unambiguous target mapping`-gel áll meg, egy `roland-node-8` tagnál. A resolver minden targetet elejt, amelynek hostjáról nincs `HostStatus` (`MISSING_HOST_OBSERVATION`), és observer csak a 8 DAO-hoston fut: azok 88 targetje feloldódik (friss, tipen, a build 64 hexes és egyezik az `expectedBuild`-del), a 8 megosztott `roland-node-*` host 72 targetje nem. Egy 60 tagú quorum 152-ből szinte mindig tartalmaz ezekből, ezért a feloldás addig zárva marad, amíg vagy observer nem fut a megosztott hostokon (döntés: termelő szolgáltatásokat visznek), vagy egy policy be nem engedi a deklarált, de nem megfigyelt targeteket – amit a fail-closed terv szándékosan nem tesz.

@@ -168,6 +168,8 @@ független retesz, amelyek mindegyike külön elég:
    és a mainnet-bináris konszenzus-sztring ujjlenyomata a horog nélkül és
    vele azonos (178 sztring, 21. nap).
 
-Ami ebből *nem* következik: a devnet-flotta pilotja (13–14. nap) új
-bizalmi határt nyit, és a fenti 3–4. pont ott bizonyítandó újra, egy hoston,
-read-only lépésekkel, mielőtt bármi leáll.
+Ami ebből *nem* következik: hogy a szimulátor a devnet-flottát is
+vezérelhetné. Nem teszi, és döntés szerint (2026-09-07, B opció) nem is
+fogja: a flotta felé nincs executor és nincs transzport, a bizalmi határ a
+laboron ér véget. A devnet-flotta hibáit a chaos-wrapper és a kézből
+futtatott, Experiments-rekordba írt kísérletek viszik.
