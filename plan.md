@@ -114,6 +114,20 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   If a sanitizer build is wanted before the next roll, it needs the source tree,
   not the fleet.
 
+  **Proven 2026-09-07, in the source tree, both halves.** An ASan+UBSan
+  `-O0 -g3` build at the #209 tip (`37e845beb0`,
+  `~/DEFCON-verify-f107-37e845beb047`) links: `defcond` and `test_defcon` both
+  exist, every source older than the binaries. Negative control in the sibling
+  sanitizer tree (`~/DEFCON-indrev-san-3d03b3f492`, same fix as a local
+  commit): the pre-fix `stake.h` put back, nine translation units rebuilt, and
+  the link of `test_defcon` fails with **16 undefined references** to
+  `CStakeWallet::SHORTDELAY` and `LARGEDELAY` (`pos/minter.cpp:215`, `:260`,
+  ...; `make` exit 2). File restored, nine objects rebuilt, link succeeds, tree
+  clean. So the fix does exactly what its description says, and only a
+  non-optimised build ever sees the difference -- the fleet's `-O2` binaries
+  were never affected. The unit suite under the sanitizer build is recorded
+  below in §6.
+
 - Nothing else is currently owed on a roll. The 2026-09-07 rollout
   (`c739d9f504`, 12 commits) reached all 162 daemons; see
   `docs/devnet-rollouts.md`.
@@ -282,6 +296,15 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   the count, and the baseline comparison carries their deltas -- the model had
   stored all three since 2026-09-05 while the shared type and the client never
   read them.
+- **devnet2 stakes, and nothing attributes its blocks.** Measured 2026-09-07
+  over 200 blocks: eight fullnodes produced 196, and one payout key nobody
+  claims produced 4 -- devnet2's (`staking=1`, wallet `devnet2`, 10.05 M DFCN,
+  minter running). The VPS observer reports the seed's scripts under `seed`
+  and knows nothing of the second daemon on the same host, so the staking
+  view lists the key as unattributed and every participant count reads nine
+  stakers, correctly but unexplained. Either the observer learns to report
+  both daemons' scripts under their own labels, or devnet2's scripts are
+  declared by hand; until then read "9 stakers" as 8 fullnodes plus devnet2.
 - **A restored root qdisc comes back with a new handle.** `fq_codel 8001:` where
   it began as `fq_codel 0:`; the kernel assigns it on replacement. A checker
   comparing handles reports a false difference — compare parameters.
@@ -553,6 +576,17 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   nothing new has broken. Everything the gate covers is green, including
   `pos_coinstake_fee_tests`, `logging_tests`, `llmq_chainlocks_tests`,
   `pos_stake_rules_tests`, `pos_multiwallet_tests` and `pos_kernel_tests`.
+- **Re-measured 2026-09-07 on the deployed `c739d9f504`** (`~/DEFCON-tests`,
+  -O2, binary brought up to HEAD first -- it had been two source files behind
+  -- and one process per suite): 156 suites, 764 cases entered, exactly 16
+  suites failing, and the set equals `build.yml`'s exclusion list name for
+  name. One case moved inside a suite: `wallet_tests/WatchOnlyPubKeys` now
+  passes, so CLAUDE.md's named list is five wallet cases, not six.
+  `validation_chainstate_tests/chainstate_update_tip` fails on the critical
+  check `CreateAndActivateUTXOSnapshot`; `rpc_getblockstats.py` on the
+  subsidy fixture, as before. First attempt measured a stale binary because a
+  top-level `make src/test/test_defcon` "had nothing to do" (CLAUDE.md,
+  operational notes); the run was thrown away and repeated with `make -C src`.
 - **v22.1.4 cannot serve as the control for those 16.** Run there for exactly
   that purpose, it aborts 141 of 581 cases and skips 438 more -- the state
   #168/#169 was written to fix. A pre-#169 commit cannot distinguish "this
