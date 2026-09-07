@@ -277,9 +277,28 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 
   **No cascade.** The 9168 rounds formed at 1.00 with nobody punished, so the
   mesh re-formed inside one interval; the five nodes left at 100 decay from
-  there at one point per block. The ban does not decay -- that node needs a
-  ProUpServTx to return, and reviving it was correctly deferred until the wave
-  had passed rather than done into it.
+  there at one point per block. A ban does not decay, so that node needed a
+  ProUpServTx, and reviving it was deferred until the wave had passed rather
+  than done into it. Confirmed quiet first: `enabled` held at 151 from 9169 to
+  9215 with no further event.
+
+  **Revived at 9234; the network is back to 152/152.** A stale ban, not an
+  outage -- the daemon was up, at the tip and holding 99 peers the whole time,
+  which is the check that decides whether a ProUpServTx is the right answer.
+  `/root/revive-expansion.py` on the seed did it, fed the one operator key it
+  needed. On chain afterwards: `PoSeBanHeight -1`, `PoSePenalty 0`, and the
+  explorer recorded the `revived` event at 9234.
+
+  **How the key was handled, because this is the part worth repeating.** The
+  operator secret lives only in that instance's own conf on a shared host.
+  `/root/extract-keys.sh` runs there through `sudo -n bash -s` and prints
+  `port secret` lines to stdout and nothing else; the jump host filters to the
+  single port that needed reviving, so no other instance's key left that
+  machine; the line was piped straight into a mode-600 file on the seed, which
+  the revive script deletes when it is done. It was never printed, never
+  written to disk anywhere in between, and the deletion was verified
+  afterwards. Check the count and the secret's length rather than echoing it --
+  one line, 64 characters is enough to know the extraction worked.
 
   **A logging limit worth knowing before the next measurement.** The fleet runs
   `debug=llmq-dkg` only, so #207's held-announcement trace line never reaches a
