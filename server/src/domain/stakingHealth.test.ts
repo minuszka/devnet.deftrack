@@ -28,6 +28,21 @@ describe('staking health', () => {
     expect(h.medianIntervalSec).toBe(160);
   });
 
+  it('reports the mean beside the median, because the target governs the mean', () => {
+    // Block intervals are exponentially distributed, so the median sits at
+    // ln 2 of the mean: measured over 40 blocks on 2026-09-05, mean 161.6 s
+    // and median 112 s, an exact fit. Read the median against the 150 s target
+    // and a chain within 8% of it looks 25% too fast.
+    const h = stakingHealth([
+      { height: 1, time: 0, payee: 'a' },
+      { height: 2, time: 50, payee: 'a' },
+      { height: 3, time: 150, payee: 'a' },
+      { height: 4, time: 600, payee: 'a' },
+    ]);
+    expect(h.medianIntervalSec).toBe(100);
+    expect(h.meanIntervalSec).toBe(200);
+  });
+
   it('counts a long pause as a stall', () => {
     const h = stakingHealth([
       { height: 1, time: 0, payee: 'a' },

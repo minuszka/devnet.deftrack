@@ -100,6 +100,10 @@ export async function computeOutcome(
 
     blocks: blocks.length,
     medianBlockIntervalSec: staking.medianIntervalSec,
+    // The target governs the mean; the median of exponentially distributed
+    // intervals sits at 0.693 of it, and a run that named the median in its
+    // expected outcome read as a miss on a chain that was on target.
+    meanBlockIntervalSec: staking.meanIntervalSec,
     distinctStakers: staking.distinctStakers,
     // stakingHealth already computes these; the outcome used to drop them, so
     // every closed run recorded a producer count with no way to tell whether
@@ -174,6 +178,7 @@ export interface OutcomeDelta {
   medianHealthRatio: number | null;
   masternodesPunished: number;
   medianBlockIntervalSec: number | null;
+  meanBlockIntervalSec: number | null;
   chainLockCoverage: number | null;
   /**
    * The change in how concentrated block production is -- the number a
@@ -182,6 +187,8 @@ export interface OutcomeDelta {
    * barely moves when the dominant staker stops: the others were already there.
    */
   topStakerShare: number | null;
+  stakerHhi: number | null;
+  stakerGini: number | null;
 }
 
 /** Run minus baseline, field by field. Null where either side has no value. */
@@ -194,9 +201,12 @@ export function compareOutcomes(run: ExperimentOutcome, baseline: ExperimentOutc
     medianHealthRatio: diff(run.medianHealthRatio, baseline.medianHealthRatio),
     masternodesPunished: run.masternodesPunished - baseline.masternodesPunished,
     medianBlockIntervalSec: diff(run.medianBlockIntervalSec, baseline.medianBlockIntervalSec),
+    meanBlockIntervalSec: diff(run.meanBlockIntervalSec ?? null, baseline.meanBlockIntervalSec ?? null),
     chainLockCoverage: diff(run.chainLockCoverage, baseline.chainLockCoverage),
     // Undefined on any outcome closed before the field existed; treated as
     // "no value", which `diff` already renders as null rather than as zero.
     topStakerShare: diff(run.topStakerShare ?? null, baseline.topStakerShare ?? null),
+    stakerHhi: diff(run.stakerHhi ?? null, baseline.stakerHhi ?? null),
+    stakerGini: diff(run.stakerGini ?? null, baseline.stakerGini ?? null),
   };
 }

@@ -165,8 +165,10 @@ jobs:
           done
           echo "parsed $count node scripts"
 
-      - name: Parse the observer
-        run: python3 -m py_compile ops/devnet-observer.py
+      - name: Parse and test the python ops scripts
+        run: |
+          python3 -m py_compile ops/devnet-observer.py ops/instantsend-probe.py
+          python3 -m unittest discover -s ops/tests -p 'test_*.py' -v
 
       # The unit is verified against the real command, installed where the unit
       # says it lives: otherwise systemd only reports that the path is missing,

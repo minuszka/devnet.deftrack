@@ -30,6 +30,24 @@ describe('comparing a run against its baseline', () => {
     expect(delta.masternodesPunished).toBe(10);
   });
 
+  it('reports the mean-interval and concentration changes, and null where a side never carried them', () => {
+    const delta = compareOutcomes(
+      outcome({ meanBlockIntervalSec: 161.6, topStakerShare: 0.0506, stakerHhi: 0.03, stakerGini: 0.216 }),
+      outcome({ meanBlockIntervalSec: 150, topStakerShare: 0.44, stakerHhi: 0.2, stakerGini: 0.6 })
+    );
+    expect(delta.meanBlockIntervalSec).toBeCloseTo(11.6, 6);
+    expect(delta.topStakerShare).toBeCloseTo(-0.3894, 6);
+    expect(delta.stakerHhi).toBeCloseTo(-0.17, 6);
+    expect(delta.stakerGini).toBeCloseTo(-0.384, 6);
+
+    // A baseline frozen before these fields existed has no value, not zero: a
+    // zero would state that concentration did not change when it was never
+    // measured on that side.
+    const old = compareOutcomes(outcome({ meanBlockIntervalSec: 161.6, stakerGini: 0.2 }), outcome({}));
+    expect(old.meanBlockIntervalSec).toBeNull();
+    expect(old.stakerGini).toBeNull();
+  });
+
   it('refuses to compare where either side has no value', () => {
     // A baseline with no formed round has no health ratio, and subtracting from
     // nothing would state a change that was never measured.

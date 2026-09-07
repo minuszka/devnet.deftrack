@@ -484,6 +484,13 @@ Two corrections to what this entry said before, both verified at
   locked, never when the CLSIG arrived, so resolution equals the poll interval
   and blocks locked before the watcher started carry `null`, not a number.
 
+- **A median block interval is 0.693 of the mean, and the target governs the
+  mean.** Intervals are exponentially distributed (a Poisson process), so the
+  median sits at `mean x ln 2`: measured over 40 blocks on 2026-09-05, mean
+  161.6 s and median 112 s, an exact fit. Read the median against the 150 s
+  target and a chain within 8 % of it looks 25 % too fast. The experiment
+  outcome has carried both since 2026-09-07; compare the mean.
+
 - **`lastPaidHeight` answers only for each node's most recent payment.** Which
   masternode a block paid comes from `masternode payments <blockhash>`, stored
   at index time; every masternode here shares one payout address.
