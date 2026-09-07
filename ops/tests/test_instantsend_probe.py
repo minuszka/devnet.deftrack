@@ -21,9 +21,9 @@ spec.loader.exec_module(probe)
 
 class ParseEnv(unittest.TestCase):
     def test_reads_quoted_and_bare_values_and_skips_noise(self):
-        env = probe.parse_env('# explorer\nRPC_HOST=127.0.0.1\nRPC_PORT="19798"\nRPC_USER=\'u\'\n\nnot a pair\nRPC_PASS=a=b=c\n')
+        env = probe.parse_env('# explorer\nRPC_HOST=127.0.0.1\nRPC_PORT="12345"\nRPC_USER=\'u\'\n\nnot a pair\nRPC_PASS=a=b=c\n')
         self.assertEqual(env["RPC_HOST"], "127.0.0.1")
-        self.assertEqual(env["RPC_PORT"], "19798")
+        self.assertEqual(env["RPC_PORT"], "12345")
         self.assertEqual(env["RPC_USER"], "u")
         # Only the first '=' splits; a password may contain more.
         self.assertEqual(env["RPC_PASS"], "a=b=c")
