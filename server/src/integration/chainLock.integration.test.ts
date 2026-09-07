@@ -115,15 +115,26 @@ describe.skipIf(!HAVE_MONGO)('the ChainLock watcher, against a real MongoDB', ()
     const { ChainLockService } = await import('../services/chainLock.service.js');
     service = new ChainLockService();
     service.start();
-    // Let the first tick and both backfills land before anything is read.
+    // The timer is not wanted, the start-up tick and the two backfills are.
+    // All three are fire-and-forget, so each is waited for by its own
+    // evidence: the tick by its guard releasing (a tick started while it holds
+    // the guard is dropped, which is exactly what a test calling tick() next
+    // must not run into), the backfills by the rows they change. Waiting for
+    // the tick's first write instead let the tests start while it was still
+    // flagging transactions and reconciling the best lock.
+    service.stop();
     await eventually(
-      async () =>
-        ((await Block.findOne({ height: 10, chainLockLatencyMs: { $ne: null } }).lean()) &&
-          (await Block.findOne({ height: V2 + 9, chainLockedAt: { $ne: null } }).lean())) ||
-        null,
+      async () => ((service as unknown as { reconciling: boolean }).reconciling ? null : true),
       'the start-up tick'
     );
-    service.stop();
+    await eventually(
+      async () => (await Block.findOne({ height: 10, chainLockLatencyMs: { $ne: null } }).lean()) ?? null,
+      'the latency backfill'
+    );
+    await eventually(
+      async () => (await Block.findOne({ height: V2 + 3, chainLockLlmqName: { $ne: null } }).lean()) ?? null,
+      'the signer backfill'
+    );
   }, 60_000);
 
   afterAll(async () => {

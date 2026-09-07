@@ -18,6 +18,7 @@ import { commitmentPunishedCount } from '../domain/commitmentPunishment.js';
 import { LLMQ_PROFILES } from '../config/llmq.js';
 import {
   MAX_ROLLBACK_DEPTH,
+  findForkPoint,
   quorumReorgReset,
   reorgVerdict,
   rewindStep,
@@ -55,6 +56,48 @@ class ChainUndecidableError extends Error {
     super(message);
     this.name = 'ChainUndecidableError';
   }
+}
+
+/**
+ * An operator asked for a rewind the service will not perform: nothing to
+ * confirm, a fork point other than the real one, or a tick in flight. The
+ * message says which; the route turns it into a 409.
+ */
+export class RewindRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RewindRefusedError';
+  }
+}
+
+export type RewindVerdict = 'in-sync' | 'automatic' | 'operator' | 'no-common-history' | 'undecidable';
+
+/** What `inspectRewind` reports: where the index and the node part, and whose call it is. */
+export interface RewindInspection {
+  indexedHeight: number;
+  indexedHash: string;
+  nodeTip: number;
+  /** The node's hash at the indexed height; null when it did not answer or sits below it. */
+  nodeHashAtIndexed: string | null;
+  /** How deep the sync rewinds on its own. */
+  automaticDepth: number;
+  verdict: RewindVerdict;
+  /** The highest height where the stored chain and the node agree, with the node's hash there. */
+  forkPoint: { height: number; hash: string; depth: number } | null;
+  reason: string | null;
+  /** RPC round trips the search took: a dozen is bisection, hundreds would be the walk. */
+  probes: number;
+}
+
+export interface RewindResult {
+  height: number;
+  hash: string;
+  depth: number;
+  droppedBlocks: number;
+  resetRounds: number;
+  droppedEvents: number;
+  actor: string;
+  at: Date;
 }
 
 /**
@@ -392,6 +435,145 @@ export class SyncService {
   }
 
   /**
+   * Where the index and the node disagree, and whose call the rewind is.
+   *
+   * Read-only. The automatic rollback walks back one block per RPC and stops
+   * at `MAX_ROLLBACK_DEPTH`, recording that an operator has to confirm; this
+   * is what the operator reads before confirming. It bisects instead of
+   * walking, and it names the HIGHEST agreeing height -- the only one
+   * `confirmRewind` accepts.
+   */
+  async inspectRewind(): Promise<RewindInspection> {
+    const state = await SyncState.findOne({ key: SYNC_KEY });
+    const indexedHeight = state?.lastSyncedHeight ?? -1;
+    const indexedHash = state?.lastSyncedHash ?? '';
+    const nodeTip = await rpc.getBlockCount();
+    const base = {
+      indexedHeight,
+      indexedHash,
+      nodeTip,
+      automaticDepth: MAX_ROLLBACK_DEPTH,
+      forkPoint: null,
+      probes: 0,
+    };
+    if (indexedHeight < 0) {
+      return { ...base, nodeHashAtIndexed: null, verdict: 'in-sync', reason: 'nothing indexed yet' };
+    }
+
+    const nodeHashAtIndexed = nodeTip < indexedHeight ? null : await this.hashAt(indexedHeight);
+    const verdict = reorgVerdict({ indexedHeight, indexedHash, nodeTip, nodeHash: nodeHashAtIndexed });
+    if (verdict.action === 'continue') {
+      return { ...base, nodeHashAtIndexed, verdict: 'in-sync', reason: null };
+    }
+    if (verdict.action === 'wait') {
+      return { ...base, nodeHashAtIndexed, verdict: 'undecidable', reason: verdict.reason };
+    }
+
+    // Remembered so the fork point's hash is not a fresh question afterwards:
+    // a fresh answer could differ if the chain moved in between.
+    const nodeHashes = new Map<number, string>();
+    const search = await findForkPoint(indexedHeight, async (height) => {
+      const [stored, node] = await Promise.all([
+        Block.findOne({ height }).select('hash').lean(),
+        this.hashAt(height),
+      ]);
+      if (node === null) return { undecidable: 'the node did not answer' };
+      if (!stored) return { undecidable: 'nothing is stored at this height' };
+      nodeHashes.set(height, node);
+      return { agrees: stored.hash === node };
+    });
+
+    if (search.outcome === 'undecidable') {
+      return { ...base, nodeHashAtIndexed, verdict: 'undecidable', reason: search.reason, probes: search.probes };
+    }
+    if (search.outcome === 'no-common-history') {
+      return {
+        ...base,
+        nodeHashAtIndexed,
+        verdict: 'no-common-history',
+        reason:
+          'the node disagrees with the index at every height, genesis included; ' +
+          'that is a different chain, not a reorg, and no rewind can join them',
+        probes: search.probes,
+      };
+    }
+
+    const depth = indexedHeight - search.height;
+    const forkPoint = { height: search.height, hash: nodeHashes.get(search.height)!, depth };
+    if (depth <= MAX_ROLLBACK_DEPTH) {
+      return {
+        ...base,
+        nodeHashAtIndexed,
+        verdict: 'automatic',
+        forkPoint,
+        reason: `${depth} block(s) deep, within the automatic depth; the next sync tick rewinds on its own`,
+        probes: search.probes,
+      };
+    }
+    return {
+      ...base,
+      nodeHashAtIndexed,
+      verdict: 'operator',
+      forkPoint,
+      reason:
+        `${depth} blocks deep, beyond the automatic ${MAX_ROLLBACK_DEPTH}; confirm with ` +
+        `POST /api/v1/admin/sync/rewind {"height": ${forkPoint.height}, "hash": "${forkPoint.hash}"}`,
+      probes: search.probes,
+    };
+  }
+
+  /**
+   * Performs the rewind the automatic path refused, once an operator has
+   * confirmed the fork point it reported.
+   *
+   * Fail-closed on every count: it refuses while a tick is running, refuses
+   * when there is nothing beyond the automatic depth to confirm, and refuses a
+   * fork point other than the one it computes now -- height AND hash. The
+   * operator confirms a fact about the chain, not a number of their choosing:
+   * a deeper rewind than the fork point resets quorum rounds the node can no
+   * longer describe, and that record is the one this project exists for.
+   */
+  async confirmRewind(input: { height: number; hash: string; actor: string }): Promise<RewindResult> {
+    if (this.running) {
+      throw new RewindRefusedError('a sync tick is in progress; try again in a moment');
+    }
+    this.running = true;
+    try {
+      const inspection = await this.inspectRewind();
+      if (inspection.verdict !== 'operator' || inspection.forkPoint === null) {
+        throw new RewindRefusedError(
+          `nothing for an operator to confirm: the index is ${inspection.verdict}` +
+            (inspection.reason ? ` (${inspection.reason})` : '')
+        );
+      }
+      const fork = inspection.forkPoint;
+      if (fork.height !== input.height || fork.hash !== input.hash) {
+        throw new RewindRefusedError(
+          `the fork point is ${fork.height} (${fork.hash}); ${input.height} (${input.hash}) was confirmed instead. ` +
+            'Re-read GET /api/v1/admin/sync/rewind and confirm exactly what it reports'
+        );
+      }
+
+      logger.warn(
+        `Operator ${input.actor} confirmed a rewind to ${fork.height} (${fork.hash}), ${fork.depth} blocks deep`
+      );
+      const dropped = await this.rewindTo(fork.height);
+      const record = {
+        height: fork.height,
+        hash: fork.hash,
+        depth: fork.depth,
+        droppedBlocks: dropped.droppedBlocks,
+        actor: input.actor,
+        at: new Date(),
+      };
+      await SyncState.updateOne({ key: SYNC_KEY }, { $set: { error: null, operatorRewind: record } });
+      return { ...record, resetRounds: dropped.resetRounds, droppedEvents: dropped.droppedEvents };
+    } finally {
+      this.running = false;
+    }
+  }
+
+  /**
    * Walk back until the stored chain agrees with the node, deleting anything
    * that no longer exists. Returns the height the database was rewound to, or
    * null when nothing had to change.
@@ -429,11 +611,29 @@ export class SyncService {
       });
       if (step.action === 'settle') break;
       if (step.action === 'wait') {
-        throw new ChainUndecidableError(`${step.reason}; index untouched`);
+        throw new ChainUndecidableError(
+          step.needsOperator
+            ? `${step.reason}; index untouched. Inspect with GET /api/v1/admin/sync/rewind and confirm with POST`
+            : `${step.reason}; index untouched`
+        );
       }
       cursor--;
     }
 
+    await this.rewindTo(cursor);
+    return cursor;
+  }
+
+  /**
+   * Rewinds the index to `cursor`, which the caller has established as the
+   * highest height where the stored chain and the node agree. Everything above
+   * it is deleted or reset, collection by collection. Shared by the automatic
+   * rollback and the operator-confirmed one, so there is exactly one delete
+   * path and the integration test covers both callers at once.
+   */
+  private async rewindTo(
+    cursor: number
+  ): Promise<{ droppedBlocks: number; resetRounds: number; droppedEvents: number }> {
     // The sync cursor has to move with the deletes. Without this the caller
     // carries `state.lastSyncedHash` -- read BEFORE the rollback -- into the
     // next batch, so the first block after the rewind is checked against the
@@ -494,7 +694,11 @@ export class SyncService {
       `Rewound to height ${cursor}, dropped ${deleted.deletedCount} block(s), ` +
         `reset ${rounds.modifiedCount} quorum round(s)`
     );
-    return cursor;
+    return {
+      droppedBlocks: deleted.deletedCount,
+      resetRounds: rounds.modifiedCount,
+      droppedEvents: events.deletedCount,
+    };
   }
 
   private async indexBlock(height: number, tip: number, expectedPrevious: string | null): Promise<string> {

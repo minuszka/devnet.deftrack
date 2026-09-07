@@ -447,6 +447,33 @@ Two corrections to what this entry said before, both verified at
   true 2911 s). Now 256-bit. Watch `netstakeweight` on any network a few times
   larger than this one.
 
+- **The block index rewinds a reorg on its own up to 200 blocks and refuses
+  anything deeper until an operator confirms the fork point.** The refusal is
+  recorded in the sync error ("an operator has to confirm a rewind that deep"),
+  the health endpoint reports `sync` failing, and the index stays exactly as it
+  was -- a disagreement that deep is a symptom (a node reindexed onto another
+  chain, a datadir restored from a backup), not a reorg. Until 2026-09-07
+  nothing existed to confirm with and the only way out was dropping the
+  database, which is what the lab explorer needed on 2026-09-06. Now, from the
+  VPS:
+
+  ```bash
+  curl -s -H "X-Admin-Api-Key: $KEY" http://localhost:4100/api/v1/admin/sync/rewind
+  #  -> verdict "operator", forkPoint {height, hash, depth}: the HIGHEST height at which index and node agree
+  curl -s -X POST -H "X-Admin-Api-Key: $KEY" -H 'Content-Type: application/json' -d '{"height": <forkPoint.height>, "hash": "<forkPoint.hash>"}' http://localhost:4100/api/v1/admin/sync/rewind
+  ```
+
+  Confirm exactly what GET reports. The service re-derives the fork point
+  before acting and answers 409 to any other height or hash, to a request
+  while a tick is running, and to a disagreement that is absent or within the
+  automatic depth. The insistence on the highest agreeing height is not
+  pedantry: a deeper rewind resets quorum rounds that `quorum listextended` can
+  no longer describe, and that failed-round record is then gone for good. A
+  `no-common-history` verdict means the node disagrees at genesis -- a
+  different chain, which no rewind can join. The confirmed rewind is written
+  on the sync cursor (`operatorRewind`: who, when, to where, how many blocks
+  dropped) and the next tick follows the surviving chain.
+
 ## Measurement caveats that are easy to get wrong
 
 - **ChainLock coverage starts at the first lock ever seen,** not at the start

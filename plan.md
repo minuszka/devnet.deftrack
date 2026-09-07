@@ -37,11 +37,19 @@ rollback *előtt* olvasott kurzor-hasht vitte a következő batchbe, így a
 visszagördítés utáni első blokk sosem illeszkedett, és minden tick ugyanazt a
 rewindet ismételte. A #123 a rewind pontján újraolvassa a folytatási hasht a
 node-tól, és a kurzort a törlés *előtt* írja ki; a regressziós teszt a
-production üzenetet szó szerint reprodukálja, negatív kontrollal. **Ami nyitva
-maradt:** a `MAX_ROLLBACK_DEPTH` (200) fölötti eltérésnél a szolgáltatás
-kimondja, hogy „an operator has to confirm a rewind that deep” – de nincs mivel
-megerősíteni: se env-kapcsoló, se admin-végpont (`domain/reorg.ts`,
-`rewindStep`). Ez a következő tétel.
+production üzenetet szó szerint reprodukálja, negatív kontrollal. **A másik
+fele is lezárva 2026-09-07-én:** a `MAX_ROLLBACK_DEPTH` (200) fölötti
+eltérésnél a szolgáltatás továbbra is megáll, de a rögzített hiba megmondja,
+hová nézzen az operátor. `GET /api/v1/admin/sync/rewind` kettéosztással
+(nem blokkonkénti sétával) megnevezi az elágazáspontot – a legmagasabb
+magasságot, ahol az index és a node még egyezik –, és kimondja, kié a döntés;
+`POST` ugyanoda pontosan ezt a magasságot és hasht kéri, újraszámolja, és
+minden mást 409-cel elutasít: más elágazáspontot, futó tick alatti kérést,
+200-on belüli vagy nem létező eltérést. Egy másik lánc (a genezis is eltér)
+`no-common-history`-ként jelenik meg, rewind nélkül. A megerősített rewind a
+`SyncState.operatorRewind` mezőbe kerül (ki, mikor, hová, hány blokk).
+Végponttól végpontig bizonyítva valódi Mongón és a valódi admin-őr mögött,
+231 blokkos hamis láncon 210 mély reorggal; runbook a CLAUDE.md-ben.
 
 **Core döntés v23 előtt (2026-09-07):** az üres Sentinel-órák. 145-ből 7 óra
 jegyzőkönyv nélkül maradt a devneten; mérve: a jelentéskészlet 5–10 perc alatt

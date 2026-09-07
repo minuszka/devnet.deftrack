@@ -81,8 +81,12 @@ export type RewindStep =
   | { action: 'settle' }
   /** Disagreement, or nothing stored here: keep walking down. */
   | { action: 'step' }
-  /** Nothing was learned, or the disagreement is too deep to act on alone. */
-  | { action: 'wait'; reason: string };
+  /**
+   * Nothing was learned, or the disagreement is too deep to act on alone.
+   * `needsOperator` marks the second case: waiting will not resolve it, and
+   * the sync says so in the error it records.
+   */
+  | { action: 'wait'; reason: string; needsOperator?: boolean };
 
 /**
  * One step of the walk back to the fork point.
@@ -111,6 +115,7 @@ export function rewindStep(input: {
   if (cursor - 1 < floor) {
     return {
       action: 'wait',
+      needsOperator: true,
       reason:
         `the stored chain disagrees with the node for more than ${MAX_ROLLBACK_DEPTH} blocks ` +
         `above ${floor}; an operator has to confirm a rewind that deep`,
@@ -145,4 +150,61 @@ export function quorumReorgReset(cursor: number): QuorumReorgReset {
       },
     },
   };
+}
+
+/** What the fork-point search learns about one height. */
+export type ForkPointProbe =
+  | { agrees: boolean }
+  /** Nothing was learned here: the node did not answer, or nothing is stored. */
+  | { undecidable: string };
+
+export type ForkPointSearch =
+  /** The highest height where the stored chain and the node agree. */
+  | { outcome: 'found'; height: number; probes: number }
+  /** They disagree at every height, genesis included: a different chain. */
+  | { outcome: 'no-common-history'; probes: number }
+  /** A height could not be compared; nothing is concluded. */
+  | { outcome: 'undecidable'; reason: string; probes: number };
+
+/**
+ * The fork point by bisection, for the rewinds the walk refused.
+ *
+ * The automatic rollback walks down one block per RPC and gives up at
+ * `MAX_ROLLBACK_DEPTH`; the operator who then has to confirm needs the fork
+ * point of a disagreement that is hundreds of blocks deep at least, and one
+ * call per block is the wrong tool for that. Bisection is sound because
+ * agreement is monotone along a single fork: every height below the fork point
+ * agrees, every height above it disagrees. The caller has established that
+ * `indexedHeight` disagrees; -1 agrees by definition, there being nothing below
+ * genesis to disagree about.
+ *
+ * The answer is the HIGHEST agreeing height, and the operator path insists on
+ * exactly it. A deeper rewind is not merely wasteful: it resets quorum rounds
+ * that `quorum listextended` can no longer describe, and those rows -- the
+ * failed-round record this project exists for -- are then gone for good.
+ *
+ * Fail-closed: a height that cannot be compared stops the search rather than
+ * being stepped over. A hole in the index or a node that stops answering is a
+ * reason to look, not a reason to guess.
+ */
+export async function findForkPoint(
+  indexedHeight: number,
+  probe: (height: number) => Promise<ForkPointProbe>
+): Promise<ForkPointSearch> {
+  let agrees = -1;
+  let disagrees = indexedHeight;
+  let probes = 0;
+  while (disagrees - agrees > 1) {
+    const mid = Math.floor((agrees + disagrees) / 2);
+    const answer = await probe(mid);
+    probes++;
+    if ('undecidable' in answer) {
+      return { outcome: 'undecidable', reason: `height ${mid}: ${answer.undecidable}`, probes };
+    }
+    if (answer.agrees) agrees = mid;
+    else disagrees = mid;
+  }
+  return agrees < 0
+    ? { outcome: 'no-common-history', probes }
+    : { outcome: 'found', height: agrees, probes };
 }
