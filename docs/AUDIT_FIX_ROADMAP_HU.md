@@ -811,7 +811,8 @@ Feladatok:
   `X-Simulation-Client` vagy legyen ellenőrizve, vagy kerüljön ki.
 - `PERSISTENCE_HU.md` / `THREAT_MODEL_HU.md`: az `action_*` audit-események és a
   `SimulationResumeDirective` ma nem íródnak/nem fogyasztódnak — vagy kössük be,
-  vagy vegyük ki az ígéretet.
+  vagy vegyük ki az ígéretet. **2026-09-07: kivéve** (a felhasználó döntése),
+  a dokumentumok a hiányt rögzítik.
 - `CLAUDE.md`: a „withCachePolicy profilok + in-flight dedup” nem létezik; a két
   már zöld inherited-failing teszt bekezdése elavult.
 - `plan.md`: a chaos-host takarítás, az IP-döntés, a `defcon-enable-staking`
@@ -858,7 +859,11 @@ mérje a kódot.
   run-stream), a `SimulationResumeDirective` pedig kiszámolódik és **semmi nem
   olvassa** — automatikus recovery-indítás tehát nincs; ami visszaállít, az a
   fault TTL-je és a wrapper watchdogja. Mindkettő be nem kötött ígéretként van
-  jelölve, nem funkcióként.
+  jelölve, nem funkcióként. **Lezárva 2026-09-07:** mindkettő kikerült a
+  kódból — a négy típus, az `action` stream-érték és az `actionAfter` mező a
+  modellből, a direktíva a reconcile eredményéből —, és a három
+  szimulátor-dokumentum (persistencia, fenyegetési modell, üzemeltetés) a
+  hiányt döntésként rögzíti.
 - **`CLAUDE.md`**: a „withCachePolicy profilok + in-flight dedup" fele hamis
   volt — a `withCachePolicy` fejléceket állít és semmi mást, nincs
   szerveroldali cache és nincs in-flight dedup, miközben a mondat azt sugallta,

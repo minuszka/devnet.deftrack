@@ -33,7 +33,7 @@ Minden domain állapotfrissítés CAS-szal történik. Általános, status mező
 
 ### `SimulationAuditEvent`
 
-Append-only igazságforrás run- és action-eseményekhez:
+Append-only igazságforrás a run eseményeihez, és csak azokhoz:
 
 - run/event/subject azonosító;
 - monoton sequence;
@@ -57,19 +57,18 @@ A worker számára optimalizált action projekció:
 - claim lease, attempt és strukturált result;
 - revision a későbbi action-CAS-hoz.
 
-**Az action audit-eseménytípusok definiálva vannak, és soha nem íródnak** —
-2026-09-05-én ellenőrizve. A `SimulationAuditEvent` unionje ismeri a
-`action_created`, `action_claimed`, `action_result` és `action_expired`
-típusokat, de a repository egyetlen írója a run-stream: `run_created` és a
-státuszátmenetek (`domain/simulationAudit.ts`). Az action-életút így nincs az
-append-only folyamban; ami róla megmarad, az a `SimulationAction` projekció
-saját mezői (`claim`, `attempts`, `result`), amelyek felülíródnak.
-
-Ez nem elírás a kódban, hanem be nem kötött ígéret a dokumentumban: az
-audit-folyam addig nem az action igazságforrása, amíg valaki nem írja bele.
-Két becsületes kimenet van, és mindkettő önálló munka — vagy a diszpécser és az
-executor írja ezeket az eseményeket, vagy a négy típus kikerül az unionből,
-hogy egy olvasó ne higgye, hogy létezik egy nyom, ami nincs.
+**Az actionöknek nincs append-only nyomuk — döntés, nem hiány (2026-09-07).**
+A 2026-09-05-i audit találta meg, hogy a `SimulationAuditEvent` unionja négy
+action-eseménytípust (`action_created`, `action_claimed`, `action_result`,
+`action_expired`), egy `action` stream-értéket és egy `actionAfter` mezőt
+ismert a 4. napi terv action-reducere számára, amely sosem épült meg: az
+egyetlen író a run-stream volt, és egy olvasónak egy nem létező nyomot
+ígértünk. A négy típus, a stream-érték és a mező 2026-09-07-én kikerült a
+modellből; a `stream` értéke mindig `run`. Ami egy action életéből megmarad,
+az a `SimulationAction` projekció saját mezői (`claim`, `attempts`, `result`),
+amelyek felülíródnak — ez a projekció valódi, a diszpécser és a lease-logika
+használja. Ha valaha kell az append-only action-nyom, az önálló munka, és a
+reducerrel kezdődik, nem a típusok visszaírásával.
 
 ### `SimulationTarget`
 

@@ -577,7 +577,13 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   tight loop whenever an observation's block was not indexed yet -- the
   normal order of events -- and the test worker ran out of heap. Fixed in the
   same change with a unit regression that hangs on the old code.
-- **The `action_*` audit events are declared and never written, and the
-  `SimulationResumeDirective` is computed and never read.** Both are recorded
-  in the simulator docs as unkept promises rather than features; closing either
-  is its own piece of work.
+- ~~**The `action_*` audit events are declared and never written, and the
+  `SimulationResumeDirective` is computed and never read.**~~ **Closed
+  2026-09-07 by removal** (the user's call: take them out and document that
+  they do not exist). The four event types, the `action` stream value and the
+  `actionAfter` slot are gone from the audit model -- nothing had ever written
+  them, and every stored event is a run event -- and the directive is gone from
+  the reconcile result, which nothing had ever read. The `SimulationAction`
+  projection stays: it is real and used. What the docs now say, as a decision:
+  actions have no append-only trace, and a run interrupted without expiring
+  waits for a person. Wiring either in later is its own piece of work.

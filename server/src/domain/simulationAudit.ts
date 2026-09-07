@@ -32,7 +32,6 @@ export interface SimulationRunAuditRecord {
   toStatus: SimulationRunState['status'];
   stateAfter: SimulationRunState;
   metadataOnCreate: SimulationRunMetadata | null;
-  actionAfter: null;
 }
 
 type AuditLike = SimulationRunAuditRecord | SimulationAuditEventDocument;
@@ -313,7 +312,6 @@ export function creationAuditRecord(input: {
     toStatus: 'draft',
     stateAfter: input.state,
     metadataOnCreate: input.metadata,
-    actionAfter: null,
   };
 }
 
@@ -347,6 +345,5 @@ export function transitionAuditRecord(input: {
     toStatus: transition.to,
     stateAfter: input.after,
     metadataOnCreate: null,
-    actionAfter: null,
   };
 }

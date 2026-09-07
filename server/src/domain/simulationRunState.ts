@@ -503,52 +503,23 @@ export function transitionSimulationRun(
   });
 }
 
-export type SimulationResumeDirective =
-  | 'none'
-  | 'resume-preflight'
-  | 'wait-scheduled'
-  | 'resume-baseline'
-  | 'resume-armed'
-  | 'resume-observation'
-  | 'resume-recovery'
-  | 'resume-cooldown'
-  | 'manual-recovery-required';
-
+/**
+ * What the reconcile decided. `reason` says why the state moved, or `current`
+ * when it did not.
+ *
+ * There is deliberately no "what to do next" here. A resume directive was
+ * computed for every status -- resume the observation, resume the preflight,
+ * wait for the schedule -- and nothing ever read it, so the record promised an
+ * automatic resume that did not exist. Removed 2026-09-07 rather than wired
+ * in. What does exist: this function moves an expired lease or run into
+ * recovery with abort intent, and lets a cooldown complete; the fault's own
+ * TTL and the wrapper watchdog restore the node; a run that is merely
+ * interrupted waits where it stopped for a person. See THREAT_MODEL_HU.md.
+ */
 export interface SimulationReconcileResult {
   state: SimulationRunState;
   changed: boolean;
-  directive: SimulationResumeDirective;
   reason: 'current' | 'run-expired' | 'fault-lease-expired' | 'abort-in-progress' | 'cooldown-budget-elapsed';
-}
-
-function resumeDirective(status: SimulationRunStatus): SimulationResumeDirective {
-  switch (status) {
-    case 'preflight':
-      return 'resume-preflight';
-    case 'scheduled':
-      return 'wait-scheduled';
-    case 'baseline':
-      return 'resume-baseline';
-    case 'armed':
-      return 'resume-armed';
-    case 'activation_pending':
-      return 'resume-recovery';
-    case 'fault_active':
-    case 'observing':
-      return 'resume-observation';
-    case 'aborting':
-    case 'recovery':
-      return 'resume-recovery';
-    case 'cooldown':
-      return 'resume-cooldown';
-    case 'failed':
-      return 'manual-recovery-required';
-    case 'draft':
-    case 'rejected':
-    case 'completed':
-    case 'aborted':
-      return 'none';
-  }
 }
 
 /**
@@ -575,7 +546,7 @@ export function reconcilePersistedSimulationRun(
       abortRequested: true,
       reason: 'process resumed an abort in progress',
     });
-    return { state: next, changed: true, directive: 'resume-recovery', reason: 'abort-in-progress' };
+    return { state: next, changed: true, reason: 'abort-in-progress' };
   }
 
   // A live run that recovers cleanly lands in `cooldown` and used to stop there
@@ -602,7 +573,7 @@ export function reconcilePersistedSimulationRun(
       to: 'completed',
       reason: 'cooldown-budget-elapsed',
     });
-    return { state: next, changed: true, directive: 'none', reason: 'cooldown-budget-elapsed' };
+    return { state: next, changed: true, reason: 'cooldown-budget-elapsed' };
   }
 
   const leaseExpired =
@@ -623,13 +594,8 @@ export function reconcilePersistedSimulationRun(
       abortRequested: true,
       reason,
     });
-    return { state: next, changed: true, directive: 'resume-recovery', reason };
+    return { state: next, changed: true, reason };
   }
 
-  return {
-    state,
-    changed: false,
-    directive: resumeDirective(state.status),
-    reason: 'current',
-  };
+  return { state, changed: false, reason: 'current' };
 }
