@@ -11,6 +11,43 @@ work from.
 
 ---
 
+## 0. Since this handoff (2026-09-07)
+
+Read `plan.md` first; this section only says what moved after the narrative
+below was written, so the numbers in it are not taken for current.
+
+- **The node is `c739d9f504` (#208) on all 162 daemons** since the 2026-09-07
+  rollout (`docs/devnet-rollouts.md`, run `fleet-rollout-208-2026-09-07`).
+  The `e15e29b136` in section 2 is history. One masternode was banned by two
+  interleaved profiles ten blocks apart during the roll and revived at 9234;
+  the network is 152/152.
+- **A passive observation is running and forbids every intervention until it
+  closes:** `absent-epoch-rate-post-208-2026-09-07`, boundary 9192 to 10608,
+  about 2026-09-09 evening UTC. No E4b, no roll, no restart, no revive, no
+  InstantSend probe before that; any intervened epoch comes out of the
+  sample. Intermediate readings at 9648, 9888 and 10128, none conclusive.
+- **The explorer gained five merged changes on 2026-09-07**, all deployed
+  (#126 to #130): the plan and CLAUDE.md caught up (the nonce rule #162 is
+  ungated everywhere); the four remaining writing services got integration
+  tests over a real MongoDB, which found and fixed a tight loop in the
+  ChainLock ZMQ derivation; an operator can now confirm a reorg deeper than
+  the 200-block cap through `GET`/`POST /api/v1/admin/sync/rewind` (runbook
+  in CLAUDE.md); the experiment outcome carries the mean block interval and
+  the producer concentration, and the InstantSend probe lives in the repo as
+  `ops/instantsend-probe.py` (dry-run proven on the VPS, not yet run for
+  real); and the simulator's two unkept promises -- action audit events,
+  resume directive -- were removed and documented as absent.
+- **Local integration tests need a throwaway, no-auth MongoDB** on 27018 in
+  WSL; the recipe is in CLAUDE.md under the local environment.
+- **What is owed next**, in the order agreed: the InstantSend probe's first
+  real run once the observation closes; E4b only after measuring what share
+  of the target's quorum links are inbound (the chaos filter reaches only
+  those); the `defcon-enable-staking` installation on the VPS and the eight
+  fullnodes (no restart needed); and the two M-02 measurements in `plan.md`
+  §5 if a later release schedules it.
+
+---
+
 ## 1. The task
 
 The newest binary had just been rolled out. Two questions: what is actually in
