@@ -18,18 +18,22 @@ export type SimulationAuditEventType =
   | (typeof SIMULATION_RUN_EVENT_TYPES)[number]
   | 'system_timeout'
   | 'system_resume_recovery'
-  | 'system_cooldown_complete'
-  | 'action_created'
-  | 'action_claimed'
-  | 'action_result'
-  | 'action_expired';
+  | 'system_cooldown_complete';
 
 /**
- * Authoritative append-only event. The mutable run/action collections are
- * projections which can be repaired by replaying this stream.
+ * Authoritative append-only event for a RUN. The mutable run collection is a
+ * projection that can be repaired by replaying this stream.
+ *
+ * Runs only. Four `action_*` event types, an `action` stream value and an
+ * `actionAfter` slot sat here from the day-4 design for an action reducer that
+ * was never built; nothing ever wrote them, so a reader was promised a trace
+ * that did not exist. Removed 2026-09-07 rather than left as a promise: an
+ * action's life is recorded in the `SimulationAction` projection's own mutable
+ * fields (claim, attempts, result) and nowhere append-only. If that ever
+ * changes it is its own piece of work, and it starts with the reducer.
  */
 export interface SimulationAuditEventDocument extends Document {
-  stream: 'run' | 'action';
+  stream: 'run';
   subjectId: string;
   runKey: string;
   eventId: string;
@@ -42,8 +46,6 @@ export interface SimulationAuditEventDocument extends Document {
   toStatus: SimulationRunStatus | null;
   stateAfter: SimulationRunState | null;
   metadataOnCreate: SimulationRunMetadata | null;
-  /** Reserved for the day-4 action reducer; never populated from raw API input. */
-  actionAfter: Record<string, unknown> | null;
   createdAt: Date;
 }
 
@@ -53,15 +55,11 @@ const eventTypes: readonly SimulationAuditEventType[] = [
   'system_timeout',
   'system_resume_recovery',
   'system_cooldown_complete',
-  'action_created',
-  'action_claimed',
-  'action_result',
-  'action_expired',
 ];
 
 export const simulationAuditEventSchema = new Schema<SimulationAuditEventDocument>(
   {
-    stream: { type: String, enum: ['run', 'action'], required: true, immutable: true },
+    stream: { type: String, enum: ['run'], required: true, immutable: true },
     subjectId: { type: String, required: true, immutable: true },
     runKey: { type: String, required: true, immutable: true },
     eventId: { type: String, required: true, immutable: true },
@@ -84,7 +82,6 @@ export const simulationAuditEventSchema = new Schema<SimulationAuditEventDocumen
     },
     stateAfter: { type: simulationRunStateSchema, default: null, immutable: true },
     metadataOnCreate: { type: simulationRunMetadataSchema, default: null, immutable: true },
-    actionAfter: { type: Schema.Types.Mixed, default: null, immutable: true },
   },
   {
     timestamps: { createdAt: true, updatedAt: false },

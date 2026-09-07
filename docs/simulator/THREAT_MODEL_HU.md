@@ -100,14 +100,17 @@ A mainnet hard-disable háromszoros: a típusszerződésben nincs mainnet, a wor
 
 ## Recovery követelmények
 
-> **Automatikus recovery indítás nincs, 2026-09-05-én ellenőrizve.**
-> A `simulationRunState.ts` kiszámol egy `SimulationResumeDirective`-et minden
-> státuszhoz — mit kellene tenni egy félbeszakadt runnal újraindulás után —, és
-> **semmi nem olvassa**: a projekt egyetlen fogyasztója sem hivatkozik rá.
-> Egy process-restart fault közben tehát nem indít magától recoveryt; ami
-> visszaállít, az a fault saját TTL-je és a wrapper watchdogja, ahogy az alábbi
-> pontok írják. Ez épp elég ahhoz, hogy a node ne maradjon hibás állapotban, de
-> a run rekordja emberi beavatkozásig ott marad, ahol elakadt.
+> **Automatikus továbbfuttatás újraindulás után nincs — döntés, nem hiány
+> (2026-09-07).** A `simulationRunState.ts` 2026-09-07-ig kiszámolt egy
+> `SimulationResumeDirective`-et minden státuszhoz (folytasd a megfigyelést,
+> folytasd a preflightot, várj az ütemezésre), és **semmi nem olvasta**: a
+> rekord egy automatikus folytatást ígért, ami nem létezett. A direktíva
+> kikerült a kódból. Ami létezik és tesztelt: a reconcile a lejárt fault-lease-t
+> vagy lejárt runt abort-szándékkal recoverybe viszi, és a cooldownt lezárja;
+> a node-ot a fault saját TTL-je és a wrapper watchdogja állítja vissza, ahogy
+> az alábbi pontok írják. Egy pusztán félbeszakadt run — process-restart
+> observing közben, lejárat nélkül — ott marad, ahol elakadt, amíg egy ember
+> nem lép; a `/recover` és az `abort` erre való.
 
 - A fault telepítése és a TTL/watchdog felélesítése egy műveleti egység; TTL nélkül nincs apply.
 - A watchdog a workertől, MongoDB-től és explorertől függetlenül takarít.

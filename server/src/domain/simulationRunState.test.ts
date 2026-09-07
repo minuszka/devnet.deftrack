@@ -152,9 +152,10 @@ describe('simulation run state machine', () => {
   it('keeps a failed recovery retryable while a fault may still be active', () => {
     const failed = stateAt('failed');
     expect(failed.faultMayBeActive).toBe(true);
+    // Nothing moves it on its own; a person retries the recovery.
     expect(reconcilePersistedSimulationRun(failed, 50)).toMatchObject({
       changed: false,
-      directive: 'manual-recovery-required',
+      reason: 'current',
     });
 
     const retry = transition(failed, 'begin_recovery', 50);
@@ -296,7 +297,6 @@ describe('persisted run reconciliation after restart', () => {
     expect(result).toEqual({
       state: active,
       changed: false,
-      directive: 'resume-observation',
       reason: 'current',
     });
   });
@@ -306,7 +306,6 @@ describe('persisted run reconciliation after restart', () => {
     const result = reconcilePersistedSimulationRun(active, 900);
     expect(result).toMatchObject({
       changed: true,
-      directive: 'resume-recovery',
       reason: 'fault-lease-expired',
       state: {
         status: 'recovery',
@@ -326,7 +325,6 @@ describe('persisted run reconciliation after restart', () => {
     const result = reconcilePersistedSimulationRun(observing, 500);
     expect(result).toMatchObject({
       changed: true,
-      directive: 'resume-recovery',
       reason: 'run-expired',
       state: { status: 'recovery', abortRequested: true },
     });
@@ -337,7 +335,6 @@ describe('persisted run reconciliation after restart', () => {
     const result = reconcilePersistedSimulationRun(aborting, 101);
     expect(result).toMatchObject({
       changed: true,
-      directive: 'resume-recovery',
       reason: 'abort-in-progress',
       state: { status: 'recovery', abortRequested: true },
     });

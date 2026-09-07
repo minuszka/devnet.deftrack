@@ -206,3 +206,14 @@ tervezetekre való.
   mondja, nem sikernek vagy kudarcnak.
 - **A jelentés-ablak a fault magasságából indul**, két blokk bemelegítéssel
   és négy blokk lecsengéssel; ami e kívül történt, nincs benne.
+- **Újraindulás után nincs automatikus továbbfuttatás.** A reconcile a lejárt
+  lease-t vagy runt abort-szándékkal recoverybe viszi és a cooldownt lezárja;
+  egy lejárat nélkül félbeszakadt run ott marad, ahol elakadt, amíg egy ember
+  `/recover`-t vagy `abort`-ot nem hív. A node-ot a fault TTL-je és a wrapper
+  watchdogja állítja vissza tőlünk függetlenül. (A soha nem olvasott
+  resume-direktíva 2026-09-07-én kikerült a kódból.)
+- **Az actionöknek nincs append-only audit-nyomuk.** Az audit-folyam a run
+  eseményeit rögzíti; egy action életét a `SimulationAction` projekció saját,
+  felülíródó mezői (`claim`, `attempts`, `result`) mutatják. Ha egy futam
+  utólagos vizsgálatához action-szintű idővonal kell, az a jelentés
+  `actions` szakasza és a wrapper naplója, nem az audit-gyűjtemény.
