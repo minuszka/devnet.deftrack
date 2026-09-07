@@ -5,6 +5,23 @@ tip at handoff **`27f6e7b10a`** (#192). Working tree `~/DEFCON` in WSL Ubuntu.
 
 Written in English to match the repo, commit messages and PR text.
 
+> **Correction, 2026-09-07.** The body below is left as written on 2026-09-04;
+> one of its headline risks has since been measured out of existence.
+>
+> **The mainnet premine cannot be frozen, because it is already spent.**
+> Verified on 2026-09-05 against a copy of mainnet at height 130,100, with a
+> control: `gettxout` on the coinbases of blocks 1, 2, 450, 899 and 900 all
+> answer spent, and `scantxoutset` on the premine script returns
+> `0.00000000` while a control script returns a real balance. The #184
+> finding stands as a bug -- a strict rule that compared against 96 bytes
+> would have refused every genuine 97-byte BLS spend -- but the sentence
+> "activating the gate would have made those outputs unspendable and split
+> the chain on the first spend" describes a spend that can no longer happen.
+> What remains open, and is the actual reason M-02 stays out of v23 (owner
+> decision, 2026-09-05), is whether any *other* unspent BLS-locked output
+> exists on mainnet: `dumptxoutset` plus a parser proven on a known output,
+> not `scantxoutset`, which cannot filter by type. See `plan.md` §5.
+
 ---
 
 ## 1. The task

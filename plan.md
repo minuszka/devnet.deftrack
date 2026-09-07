@@ -478,9 +478,10 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   returns `0.00000000` while a control script returns a real balance. The
   audit's headline risk — "activating M-02 would freeze the premine and split
   the chain on the first spend" — therefore rested on an assumption that no
-  longer holds. `HANDOFF-v23-audit-2026-09-04.md` and the
-  `m02-strict-blssig-size-gated` memory still carry the old framing and should
-  be corrected.
+  longer holds. `HANDOFF-v23-audit-2026-09-04.md` carries a dated correction
+  block at its head since 2026-09-07 (its body is left as the record of what
+  was believed on 2026-09-04), and the `m02-strict-blssig-size-gated` memory
+  was rewritten the same day.
 - **M-02's real benefit is not about BLS outputs.** Below the gate `IsBLSSig`
   returns true for *any* signature of 96 bytes or more, and
   `CheckSignatureEncoding` then returns immediately — skipping DER strictness,
