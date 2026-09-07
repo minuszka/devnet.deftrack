@@ -106,13 +106,63 @@ assumed:
 
 160 of 160 fleet instances on one chain at height 9147, zero forked, zero
 unreachable, every host reporting the shipped md5; seed and devnet2 at the same
-height and the same block hash; 152 of 152 masternodes enabled; ChainLock at
-the tip on `llmq_defcon`; no ban or penalty event from the roll. All nine
+height and the same block hash; ChainLock at the tip on `llmq_defcon`. All nine
 block-propagation observers kept reporting across their hosts' restarts.
 
 **devnet2 was included deliberately.** It runs `/usr/local/bin/defcond-nobdb`,
 a different path from the seed's `defcond`, and every earlier roll had left it
 behind on whatever build it happened to hold.
+
+Run closed at 9194. Frozen outcome over the 49-block window: 6 rounds formed
+and none failed, formation rate 1.00, median health 1.00 and worst 0.96,
+ChainLock coverage 1.00, 28 distinct stakers, median block interval 96 s —
+**and one ban, 8 penalty increases, 7 masternodes punished.**
+
+### What the restart cost, and the prediction that was wrong
+
+The DKG round with base block 9144 is the only one that spans the rollout.
+`llmq_defcon`, the ChainLock profile, formed at health 1.00 with nobody
+punished. `llmq_50_60` formed at 0.96 with 2 punished and `llmq_400_60` at 0.96
+with 6, all of them on `roland-node-5`, `-6` and `-8` — the hosts carrying 7 to
+14 instances each, which drop the most DKG connections at once.
+
+**One masternode was banned, and the run had predicted that none would be.**
+It took 100 at 9155 from `llmq_50_60`, then 100 again at 9165 from
+`llmq_400_60`: ten blocks apart, saturating at the 152 ceiling. The declared
+expectation reasoned from a single profile's 24-block interval and concluded
+that two exclusions could not fall close enough together. That was wrong for a
+reason `CLAUDE.md` already records — what bans is two exclusions from
+*different* interleaved profiles, and their gap has nothing to do with either
+one's interval. Enabled fell to 151.
+
+No cascade followed. The 9168 rounds formed at 1.00 with nobody punished, so
+the mesh had re-formed within one interval, and the five nodes left at 100
+decay from there at one point per block.
+
+### The two Sentinel fixes, measured
+
+The report pool was sampled on 11 hosts at every block from epoch position 17
+to 23, the same measurement taken before the rollout:
+
+| position | before the rollout | after |
+|---|---|---|
+| 18 | 189-988 of 1064 | 286-632, 11 distinct pool hashes |
+| 19 | 430-1064 | two distinct values |
+| 20 | two nodes still at 722 and 822 | **all identical**, unchanged through 23 |
+| 21 (signing starts) | first height where all agreed | already agreed |
+
+So convergence now completes a full block before signing begins rather than at
+the moment it begins. `missedreports` was 0 on every node at every position: no
+phantom MISSED reports in a quiet epoch, which is what #207 was expected to
+remove.
+
+Epoch 381 carries no commitment, but it contains the rollout restarts and is an
+artefact of the intervention rather than a measurement. Epoch 382, the first
+clean one, carries its commitment — a type-10 transaction in block 9192.
+
+**This does not close the absent-epoch question.** The single-block publication
+window and the fixed three-block signing offset are untouched by this rollout,
+and the decision recorded in `plan.md` stands.
 
 ## DSL shadow re-roll — reorg/signing hardening, activation brought forward to 5472
 
