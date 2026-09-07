@@ -4,7 +4,7 @@ Working queue for the devnet. Everything here was either measured or read from
 source; where something is *not* proven, this file says so rather than implying
 it. Public repository: host labels only, never addresses.
 
-Last updated 2026-09-05.
+Last updated 2026-09-07.
 
 ## 1. Experiment runs, in order
 
@@ -13,21 +13,42 @@ Last updated 2026-09-05.
 | **E1a** enforcement gate | `-dslenforcementheight` reaches every conf; nothing happens at the height | **CLOSED 2026-09-05 at 8348** (`dsl-enforcement-gate-2026-09-05`): 162/162 daemons answer 8304, 160/160 fleet instances on one chain, nobody suspended or banned, 13/13 rounds at health 1.00, ChainLock 1.00 |
 | **E1b** enforcement outage | The DSL punishing branch, first time on any chain: 5 nodes down, `nMissedEpochs` 1→4 → `fRewardSuspended`, 5 → `nDSLBanHeight`; one online epoch clears all three (#189, #190) | **CLOSED 2026-09-06 at 8592** (`dsl-enforcement-outage-2026-09-05`, 8353–8592). Proved on the schedule the rules promise: stop 8376; epochs 350–355 missedCount exactly 5, commits mined at the boundary blocks; `service_suspended` at 8496 (count 4), `service_banned` with `dslBanHeight` 8520 (count 5); restart 8544; epoch 356 (8568) cleared all three fields on all five **without a ProUpServTx** while every one of them also carried a DKG-PoSe ban (8387–8468) — that is #189 on-chain. Nobody else marked. 27/27 rounds formed, worst health 0.93, ChainLock 1.00. Caveat: payee exclusion by DSL alone is not separable, the PoSe bans from 8387 already skip payment. PoSe bans revived by ProUpServTx after the close (the plan's `feeAddress` entries hold no coins; fee paid from a funded wallet address) |
 | **E2** mass-outage guard | The edge pair: 23/152 = 15.13 % (guard on, nobody punished, counter neither advances nor resets) against 22/152 = 14.47 % (guard off) | **CLOSED 2026-09-06 at 8856** (`dsl-mass-outage-guard-2026-09-06`, 8613–8856). The guard opened exactly at the declared share: commits 8712/8736/8760 read 21/21/22 missed with counters 1/2/3, 8784 and 8808 read 23 and froze every counter at 3 (no suspension where 4 would have suspended all), 8832 and 8856 read 0 with `service_recovered` on 22 and every counter cleared; nobody outside the 23 touched, 28/28 rounds formed, ChainLock 1.00. Finding: fullnode-4 mn2 was read as present for two epochs after a clean stop (a false negative in detection, mechanism open), so the unguarded 8784 would have suspended 21, not 22. The 23 were DKG-PoSe-banned by the lottery (8699–8795, enabled 129 at close) and revived by ProUpServTx at 8870 from a funded fee address: enabled 152, nothing owed |
-| **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network; owed again once the fault can isolate a member |
+| **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network. Three of the four tool findings are closed in the merged package and proven on the pilot host (§4, 2026-09-07); the filter still reaches only the target's inbound connections (§3a, where the measurement owed before a re-run is stated). **Held back while `absent-epoch-rate-post-208-2026-09-07` runs** — its own exclusion clause removes any intervened epoch from the sample — so not before that run closes at 10608 |
 | **InstantSend security** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only |
 
-**Explorer tartozás (2026-09-06):** a lab explorer beragadt egy node-reindex utáni
-láncmozgás után – „block N follows X but Y was indexed before it; the chain moved
-mid-batch” minden ticken, a rollback-mélységen túl nincs önálló kiút, csak az
-adatbázis eldobása segített. A devneten ugyanez előfordulhat egy seed-reindex
-után; a sync-szolgáltatásnak vagy vissza kell tudnia gördülni ilyenkor, vagy
-kimondania, hogy emberi beavatkozás kell.
+**Running (2026-09-07): `absent-epoch-rate-post-208-2026-09-07`**, observation
+only, from boundary 9192 to 10608 — 60 Sentinel epochs, about 57 hours, closing
+around the evening of 2026-09-09 at the measured 152 s block interval. It asks
+whether the one block of report-pool margin that #207 and #208 bought is enough
+to stop the network losing one hour in twenty (7 absent epochs in 145 before the
+roll). Intermediate readings at 9648, 9888 and 10128, none of them conclusive by
+the run's own arithmetic. **Nothing may be applied to the network until it
+closes**: no E4b, no roll, no restart, no revive, no InstantSend probe — any
+intervened epoch comes out of the sample and the run is extended. The collector
+is a transient systemd unit on the VPS (`epoch-watch`) and does not survive a
+reboot; the epoch table itself comes from the chain and can be re-read.
+
+**Explorer tartozás (2026-09-06), fele lezárva 2026-09-07-én (#123):** a lab
+explorer beragadt egy node-reindex utáni láncmozgás után – „block N follows X
+but Y was indexed before it; the chain moved mid-batch” minden ticken, csak az
+adatbázis eldobása segített. Ugyanez a devneten is előállt 2026-09-07-én
+9188-nál, 14 blokkal a tip mögött, és az ok nem a mélység volt: a `syncOnce` a
+rollback *előtt* olvasott kurzor-hasht vitte a következő batchbe, így a
+visszagördítés utáni első blokk sosem illeszkedett, és minden tick ugyanazt a
+rewindet ismételte. A #123 a rewind pontján újraolvassa a folytatási hasht a
+node-tól, és a kurzort a törlés *előtt* írja ki; a regressziós teszt a
+production üzenetet szó szerint reprodukálja, negatív kontrollal. **Ami nyitva
+maradt:** a `MAX_ROLLBACK_DEPTH` (200) fölötti eltérésnél a szolgáltatás
+kimondja, hogy „an operator has to confirm a rewind that deep” – de nincs mivel
+megerősíteni: se env-kapcsoló, se admin-végpont (`domain/reorg.ts`,
+`rewindStep`). Ez a következő tétel.
 
 **Core döntés v23 előtt (2026-09-07):** az üres Sentinel-órák. 145-ből 7 óra
 jegyzőkönyv nélkül maradt a devneten; mérve: a jelentéskészlet 5–10 perc alatt
 egyezik össze, az aláírás rögzített három blokkal a kiküldés után indul, és a
 konszenzus a jegyzőkönyvnek egyetlen blokkot ad. A mechanizmus és a három
 lehetséges irány a handoff „Devnet-elemzés” szakaszában; a választás nyitva.
+A fenti futó megfigyelés ehhez a döntéshez szállít számot, nem dönt helyette.
 
 `E1a` is consensus: `IsBanned()` reads `nDSLBanHeight` (`dmnstate.h:454`) and
 `fRewardSuspended` changes payee selection, so a node started without the
@@ -173,9 +194,28 @@ findings, three of them about the tool rather than the chain.
   with "latency must be 1..2000 ms". The run had to be fired as 1 ms / 0 / 100 %.
   Harmless here, but every loss experiment silently carries a delay.
 
-Owed: fix the band binding before any further netem run, and re-run E4b once the
-fault can actually isolate a member — which needs a filter on the peer set, not
-on a port number.
+**Where the four stand on 2026-09-07, against the merged package**
+(`ops/chaos/defcon-chaos`, reinstalled and proven on the pilot host, §4):
+
+- Band binding: **closed.** `prio bands 4` with every TOS class mapped to band
+  1, netem on 1:4, nothing reachable without the filter; read live on the host.
+- Too broad: **closed** by the same change.
+- Pure loss: **closed.** `require_fault_numbers` now accepts latency 0 and
+  leaves `delay` off the netem command entirely.
+- Too narrow: **changed shape, still open.** The filter now matches the
+  target's listening port as the *source* port, so it impairs what leaves that
+  daemon's listening socket — replies on the connections peers opened to it —
+  and no longer touches other daemons on the host dialling the same remote
+  port. Connections the target itself initiated leave from an ephemeral port
+  and pass untouched; the wrapper's own comment says covering those needs a
+  per-process classifier (cgroup v2 plus an nftables mark) proven on a real
+  host first.
+
+So before E4b runs again, measure on the target how many of its quorum links
+are inbound (`getpeerinfo`, `inbound` against the masternode-connection flag):
+the filter reaches exactly those. If that is a minority, the re-run would
+measure the tool a second time. And it waits for the running observation
+regardless (§1).
 
 **Closed 2026-09-05 at height 8088**, not at the tip. Left open it had absorbed
 147 blocks — the whole of `stake-redistribution`'s recovery window, and it would
@@ -451,11 +491,14 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   shared hosts (a decision -- they carry production services) or a policy
   admits declared-but-unobserved targets, which the fail-closed design
   deliberately does not.
-- Refresh the inherited-failing tests listed in `CLAUDE.md`. **Two of the three
-  named there now pass**: `subsidy_tests` and `block_reward_reallocation_tests`
-  both came back clean on the deployed commit, so that paragraph is stale.
-  `validation_chainstate_tests/chainstate_update_tip` still aborts exactly as
-  described.
+- ~~Refresh the inherited-failing tests listed in `CLAUDE.md`.~~ **Done**:
+  `CLAUDE.md` now records `subsidy_tests` and `block_reward_reallocation_tests`
+  as passing (measured 2026-09-05 on the deployed commit) and keeps the rest
+  with the date they were last measured. **What that leaves owed:** the names
+  still on the list — `validation_chainstate_tests/chainstate_update_tip`, six
+  `wallet_tests` cases and `rpc_getblockstats.py` — were verified on the
+  unmodified `v22.1.x` tip on 2026-09-02 and not since; re-measure them on the
+  current tip the next time the suite runs, and move any that pass.
 - **The 16 suites outside the CI gate were measured (2026-09-05, on the
   deployed `e15e29b136`) and the gate's exclusion list is exactly right.**
   Full run: 738 test cases, 12 aborted, 744 of 9,003,312 assertions failed.

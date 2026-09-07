@@ -565,17 +565,27 @@ against the tree that became v22.1.5. The version bump itself is only
 unchanged version string, and three different binaries reported v22.1.4 at
 once. The string still does not identify a build -- compare `md5sum`.
 
-### Four gated proof-of-stake rules, active from height 7560 on devnet
+### Four proof-of-stake rules from one rollout; three gated at 7560 on devnet, one ungated
 
 All from the stake audit, shipped in one rollout on 2026-09-02 (`eb49a5c346`,
-run `pos-consensus-gate-7560-rollout-2026-09-02`); mainnet and testnet heights
-stay unset until v23, when every gated consensus change gets its height at
-once.
+run `pos-consensus-gate-7560-rollout-2026-09-02`); the three gated ones keep
+their mainnet and testnet heights unset until v23, when every gated consensus
+change gets its height at once.
 
 - **#162** a proof-of-stake block's nonce must be 0 (`CheckPosBlockNonce`,
   `bad-pos-nonce`). `AcceptBlockHeader` decides proof-of-work by height, so a
   header with a non-zero nonce entered the index and `CBlockIndex::IsProofOfStake()`
-  -- which reads the nonce -- judged it by the wrong rule.
+  -- which reads the nonce -- judged it by the wrong rule. **This one is
+  deliberately NOT height-gated** -- an earlier version of this entry listed it
+  with the 7560 gate, and that was wrong (found by the full-repo audit, Day 6,
+  2026-09-07): `CheckPosBlockNonce` is `nHeight <= lastPowBlock ? true : nNonce
+  == 0` (`validation.cpp:4007`), enforced in `ContextualCheckBlockHeader` from
+  the first PoS height on every network, and `consensus/params.h` has no
+  nonce-related activation parameter. The `validation.h` comment above it says
+  why: leaving it optional is what is dangerous, and no block on any network
+  violates it. Consequence: the "restart-brick reload" blocker of the
+  2026-09-03 v23 pre-release audit is closed at T0 -- a non-zero-nonce PoS
+  header never reaches the index.
 - **#163** the coinbase's value is bounded by subsidy plus fees as
   `GetBlockTxOuts` computes them (`CheckPosCoinbaseValue`, inside
   `IsBlockValueValid`); it had no bound at all.
