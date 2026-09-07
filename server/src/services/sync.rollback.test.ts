@@ -35,6 +35,25 @@ const state = vi.hoisted(() => ({
 
 const lean = <T>(value: T) => ({ select: () => ({ lean: async () => value }) });
 
+/**
+ * A query stub that answers every chain shape this service uses.
+ *
+ * `Block.find` is called both as `.select().sort().limit().lean()` and as
+ * `.sort().limit().lean()`; a stub that only knew the first made a test fail
+ * with "sort is not a function" from a path that had nothing to do with what it
+ * was testing. Declared through vi.hoisted because vi.mock factories are lifted
+ * above ordinary const declarations.
+ */
+const emptyQuery = vi.hoisted(() => (): any => {
+  const q: any = {
+    select: () => q,
+    sort: () => q,
+    limit: () => q,
+    lean: async () => [],
+  };
+  return q;
+});
+
 vi.mock('../config.js', () => ({
   config: {
     sync: { enabled: true, intervalMs: 20_000, batchSize: 50, txConcurrency: 2 },
@@ -76,7 +95,7 @@ vi.mock('../models/Block.js', () => ({
       ),
     deleteMany: state.deleteMany,
     updateOne: state.blockUpdateOne,
-    find: () => ({ select: () => ({ sort: () => ({ limit: () => ({ lean: async () => [] }) }) }) }),
+    find: emptyQuery,
     bulkWrite: vi.fn(),
   },
 }));
@@ -87,7 +106,7 @@ vi.mock('../models/ServiceEpoch.js', () => ({
 vi.mock('../models/QuorumCommitment.js', () => ({
   QuorumCommitment: {
     deleteMany: state.commitmentDeleteMany,
-    find: () => ({ select: () => ({ sort: () => ({ limit: () => ({ lean: async () => [] }) }) }) }),
+    find: emptyQuery,
     bulkWrite: vi.fn(),
   },
 }));
@@ -246,6 +265,49 @@ describe('a reorg that lands mid-batch', () => {
     await new SyncService().tick();
 
     expect(recordedError()).toContain('moved mid-batch');
+  });
+});
+
+describe('resuming after a rewind', () => {
+  it('follows the surviving tip, not the hash the rollback abandoned', async () => {
+    // The live devnet froze on this on 2026-09-07. `syncOnce` read SyncState,
+    // then rolled back, then carried the hash from that pre-rollback read into
+    // the next batch -- so the first block after the rewind was checked against
+    // a chain that no longer existed, `indexBlock` refused it, and the next
+    // tick repeated the identical rewind. Fourteen blocks behind and rising,
+    // once every 20 seconds, with nothing in the index actually wrong.
+    //
+    // Here the stored cursor hash is stale while the indexed BLOCK at that
+    // height is correct, which is exactly the shape that loops: the rewind
+    // settles at the same height it started from and changes nothing.
+    state.syncStateDoc = { lastSyncedHeight: 8028, lastSyncedHash: 'abandoned' };
+    state.stored = new Map([
+      [8028, 'aaaa'],
+      [8027, 'cccc'],
+    ]);
+    state.getBlockCount.mockResolvedValue(8029);
+    state.getBlockHash.mockImplementation(async (height: number) =>
+      height === 8029 ? 'hash-8029' : state.stored.get(height)
+    );
+    state.getBlockVerbose.mockImplementation(async (hash: string) => ({
+      hash,
+      height: 8029,
+      previousblockhash: 'aaaa',
+      time: 0, mediantime: 0, size: 0, version: 0, merkleroot: 'm',
+      bits: '1', nonce: 0, difficulty: 0, chainwork: 'c', nTx: 0, tx: [],
+    }));
+
+    await new SyncService().tick();
+
+    // Before the fix this recorded
+    //   "block 8029 follows aaaa but abandoned was indexed before it"
+    // and the index never advanced again.
+    expect(recordedError()).toBeNull();
+    // And the cursor must be persisted at the rewind point, so a crash between
+    // the rollback and the next batch cannot resume from the abandoned hash.
+    const cursorWrites = (state.syncUpdateOne.mock.calls as [unknown, Record<string, any>][])
+      .filter(([, update]) => update?.$set?.lastSyncedHash === 'aaaa');
+    expect(cursorWrites.length).toBeGreaterThan(0);
   });
 });
 
