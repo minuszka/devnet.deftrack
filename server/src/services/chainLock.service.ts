@@ -145,14 +145,14 @@ export class ChainLockService {
   private async applyPendingObservations(): Promise<void> {
     if (this.applying) return;
     this.applying = true;
-    // Preserve a notification that arrives while the current batch is being
-    // consumed. Missing blocks set this flag again via the return value.
+    // Cleared here so that a notification arriving while this batch runs can
+    // set it again and be told apart from what the batch itself leaves behind.
     this.deferredObservations = false;
+    let leftPending = false;
     try {
-      const deferred = await this.applyObservations();
-      this.deferredObservations = this.deferredObservations || deferred;
+      leftPending = await this.applyObservations();
     } catch (error) {
-      this.deferredObservations = true;
+      leftPending = true;
       logger.error(
         `ChainLock ZMQ derivation failed: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -160,12 +160,22 @@ export class ChainLockService {
       this.applying = false;
     }
 
+    // Two reasons to come back, and they must not share a trigger.
+    //
     // A notification that arrived while the batch was running set the flag
-    // again. Without this it would wait for the next block index or the next
-    // RPC tick -- which, now that ZMQ demoted polling to reconciliation, can be
-    // minutes. The stored arrival times are unaffected either way; what would
-    // lag is when the views can see them.
-    if (this.deferredObservations) void this.applyPendingObservations();
+    // again; without an immediate re-run it would wait for the next block
+    // index or the next RPC tick -- minutes, now that ZMQ demoted polling to
+    // reconciliation. That one is re-run here, once.
+    //
+    // A row left pending because its block is not indexed yet is the NORMAL
+    // order of events, and nothing here can hurry it: it waits for
+    // `notifyBlockIndexed` or the tick. Folding it into the same trigger made
+    // this method wake itself in a tight loop -- two Mongo queries per turn,
+    // for as long as the indexer took, and for an hour on a hash that never
+    // got indexed. The integration test found it by running out of heap.
+    const arrivedMeanwhile = this.deferredObservations;
+    this.deferredObservations = arrivedMeanwhile || leftPending;
+    if (arrivedMeanwhile) void this.applyPendingObservations();
   }
 
   private async recordSeedSighting(
