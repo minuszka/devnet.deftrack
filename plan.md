@@ -535,12 +535,18 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   The toggle bug is closed by `ops/defcon-enable-staking` and its test suite;
   the VPS (two units) and the 8 fullnode stakers still run the old copy until
   it is installed with the unit line changed to `ExecStartPost=-…`.
-- **The other four writing services have no integration test.** `quorumRound`
-  is covered end to end against a real MongoDB, and the repository-level claims
-  (unique index, `$setOnInsert`, the write race) are covered for the round and
-  ban-event patterns. `sync`, `masternodePoller`, `mnListDiff` and `chainLock`
-  still have only unit tests over faked models, which cannot catch a schema
-  path Mongoose silently drops.
+- ~~**The other four writing services have no integration test.**~~ **Done
+  2026-09-07.** `sync`, `masternodePoller`, `mnListDiff` and `chainLock` now
+  each write through the real models into a real MongoDB and read every
+  field the views depend on back (`server/src/integration/*.integration.test.ts`),
+  including the reorg rollback's deletes, the walker's replay and the
+  watcher's two pipeline backfills. Each suite was proven able to fail:
+  renaming one schema path per model (`missedProTxHashes`, `dslBanHeight`,
+  `operatorLabel`, `chainLockLlmqName`) made its suite fail and nothing else.
+  The first run found a real defect: the ZMQ derivation woke itself in a
+  tight loop whenever an observation's block was not indexed yet -- the
+  normal order of events -- and the test worker ran out of heap. Fixed in the
+  same change with a unit regression that hangs on the old code.
 - **The `action_*` audit events are declared and never written, and the
   `SimulationResumeDirective` is computed and never read.** Both are recorded
   in the simulator docs as unkept promises rather than features; closing either
