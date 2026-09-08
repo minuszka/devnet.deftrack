@@ -57,7 +57,7 @@ describe('classifying a masternode list diff', () => {
     const changes = classifyListDiff(
       diff({
         updatedMNs: [
-          { aa: { service: '1.2.3.4:19799' } },
+          { aa: { service: '203.0.113.4:19799' } },
           { bb: { pubKeyOperator: '99', votingAddress: 'Pxyz' } },
         ],
       })
