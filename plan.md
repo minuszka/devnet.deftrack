@@ -527,9 +527,20 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   the count, and the baseline comparison carries their deltas -- the model had
   stored all three since 2026-09-05 while the shared type and the client never
   read them.
-- ~~**devnet2 stakes, and nothing attributes its blocks.**~~ **Fixed in the
-  repository 2026-09-08; owed on the VPS is one `.env` block, no restart of any
-  node.** Re-measured that day at tip 9985: the single unattributed payee is
+- ~~**devnet2 stakes, and nothing attributes its blocks.**~~ **CLOSED
+  2026-09-08, deployed and measured.** Before: `hhi null`, `distinctHosts 8`,
+  `unattributedBlocks 21`. After, on the same 500-block window:
+  **`hhi 0.1179`, `distinctHosts 9`, `unattributedBlocks 0`**, with `seed` at
+  21 blocks (4.2 %). The index was hand-checked against the published shares
+  rather than taken from the service that computes it -- the nine squares sum
+  to 0.11792 against a reported 0.11791999999999998, and the shares sum to
+  1.0. For nine producers a perfectly even split would be 0.1111, so the
+  machine-level distribution is close to even; that is the sentence the null
+  had been withholding. The seed self-report went from 9 payout scripts to 10
+  on the first tick after the restart, with no "peer daemon did not answer"
+  line. Deployment was the `.env` block plus `ops/deploy.sh`; **no node was
+  restarted**, which the running observation required. Re-measured that day at
+  tip 9985: the single unattributed payee is
   `21037fe73c65a732…`, **22 blocks in a 500-block window**, and it is devnet2's
   one pay-to-pubkey payout script — confirmed by reading its wallet directly
   (112 outputs, all inside `stakeValueRange`, exactly one already-staked key).
