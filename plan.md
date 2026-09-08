@@ -171,14 +171,49 @@ assertion. What those eight are:
   allocations still live at process exit, in a test binary -- but until it is
   decided, a sanitizer run cannot be read as clean at a glance, which is the
   whole point of running one.
-- **One UBSan report, real and one line to fix.** `net_tests`:
+
+  **Why there is no upstream line to inherit, checked rather than assumed
+  (2026-09-08):** `test/sanitizer_suppressions/lsan` has never carried a BDB
+  entry in any commit of its history, the Bitcoin Core merges included.
+  Upstream needs none because its sanitizer builds do not link Berkeley DB;
+  this tree links it, because the seed keeps a legacy wallet. So the gap is
+  our configuration's own, not a dropped inherited line -- which adds a
+  third option worth a trial before choosing between the two above: run the
+  sanitizer suite on a `--without-bdb` build, the configuration 160 of the
+  162 daemons actually run. It would remove the leaks without suppressing
+  anything, at the cost of leaving the seed's wallet backend unmeasured, and
+  it needs a trial run to see which wallet suites survive without BDB at
+  all.
+- ~~**One UBSan report, real and one line to fix.**~~ **CLOSED 2026-09-08,
+  defcon-project/defcon#216** (`fb88a893da`, squashed onto `v22.1.x`).
+  `net_tests`:
   `streams.h:599` `null pointer passed as argument 1, which is declared to
   never be null`, from `CaptureMessageToFile` (`net.cpp:5201`). The last
   statement is `f.write(AsBytes(data))`, and on an empty message `data.data()`
   is null while `size()` is 0, so `fwrite(nullptr, 1, 0, file)` -- undefined by
   the standard even though every implementation copies nothing. Inherited from
   Bitcoin Core verbatim, reachable only through `-capturemessages`, which is a
-  debug switch no node here runs. A guard on an empty span closes it.
+  debug switch no node here runs.
+
+  Fixed by guarding the empty case in `CAutoFile::read` and `write`, which
+  changes no behaviour: per the C standard a zero-length `fread`/`fwrite`
+  returns 0 and leaves the buffer and stream state untouched, exactly what
+  the early return does. `read` had the same latent shape and was guarded
+  with it. A named `streams_tests` case now gives UBSan a direct site, so
+  the only trigger is no longer a captured VERACK deep inside `net_tests`.
+  Measured before and after in one worktree: `net_tests` from exit 1 with
+  one report to exit 0 with none over 19 cases, `streams_tests` 9 cases to
+  10, the neighbours unchanged. Consensus-neutral by the fingerprint rule --
+  179 strings, md5 `aa83d8f81eebff6a50013bb95e044a16` with and without, and
+  a narrower control pattern gives a different value.
+
+  **The same defect is in Dash**, unfixed and unsuppressed:
+  `dashpay/develop:src/streams.h:559` carries the identical unguarded
+  `fwrite`, their 95-line ubsan suppression file has no `nonnull` entry
+  (though it does suppress `shift-base:streams.h`, so they curate it and do
+  run UBSan), and their `net_tests` still sets `-capturemessages`. Recorded
+  for the owner's own list of inherited Dash defects; no PR is opened there
+  from here.
 - **One timeout, and it is the build, not the code.** `dsl_service_pose_tests`
   ran 190 s at `-O2` and was killed at 3959 s here, in its third case -- a
   Monte-Carlo sweep over population, concentration and sentinel counts. Twenty
