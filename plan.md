@@ -527,15 +527,50 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   the count, and the baseline comparison carries their deltas -- the model had
   stored all three since 2026-09-05 while the shared type and the client never
   read them.
-- **devnet2 stakes, and nothing attributes its blocks.** Measured 2026-09-07
-  over 200 blocks: eight fullnodes produced 196, and one payout key nobody
-  claims produced 4 -- devnet2's (`staking=1`, wallet `devnet2`, 10.05 M DFCN,
-  minter running). The VPS observer reports the seed's scripts under `seed`
-  and knows nothing of the second daemon on the same host, so the staking
-  view lists the key as unattributed and every participant count reads nine
-  stakers, correctly but unexplained. Either the observer learns to report
-  both daemons' scripts under their own labels, or devnet2's scripts are
-  declared by hand; until then read "9 stakers" as 8 fullnodes plus devnet2.
+- ~~**devnet2 stakes, and nothing attributes its blocks.**~~ **Fixed in the
+  repository 2026-09-08; owed on the VPS is one `.env` block, no restart of any
+  node.** Re-measured that day at tip 9985: the single unattributed payee is
+  `21037fe73c65a732…`, **22 blocks in a 500-block window**, and it is devnet2's
+  one pay-to-pubkey payout script — confirmed by reading its wallet directly
+  (112 outputs, all inside `stakeValueRange`, exactly one already-staked key).
+
+  **The consequence was larger than the 4 %.** `byHost.hhi` is deliberately
+  withheld while *any* producer is unmapped — "a concentration index computed
+  over part of the producers is not a measurement of concentration, and it
+  would read low precisely when the missing producer is the big one"
+  (`domain/stakingHealth.ts`). So one undeclared key held the devnet's
+  headline decentralisation figure at `null`, and had done for as long as
+  devnet2 had been staking. `topHostShare` and `distinctHosts` were still
+  published beside it, which is what made the gap easy to miss.
+
+  **This entry was wrong about the mechanism, and the wrong version cost a
+  detour.** It said "the VPS observer reports the seed's scripts under `seed`
+  and knows nothing of the second daemon". There is no observer process on the
+  VPS at all — `ops/devnet-observer.py` is deployed there but no unit runs it,
+  and `ps` finds nothing. The seed's sightings come from the explorer itself:
+  `SeedStatusService` polls the seed's own RPC every ten minutes and writes
+  both the `HostStatus` row and the append-only `StakeScriptObservation`
+  sightings. Checking `systemctl` first and believing the absence would have
+  been the wrong conclusion; the data said `seed` was reporting up to the
+  current height, which is what sent the search to the right place.
+
+  **The fix reads the peer's wallet from the same service**, behind an optional
+  `config.peerRpc` (off unless a port *and* credentials are given, so a
+  deployment without a second daemon is byte-identical in behaviour). Its
+  scripts are folded into the **`seed` host row**, not a label of their own:
+  `byHost` groups production by machine, and two daemons on one box are one
+  machine — a separate entry would split the seed host in two and understate
+  exactly the concentration the index exists to show. A configured peer that
+  does not answer leaves `stakeScripts` unwritten rather than publishing a list
+  short by a producer, which is the rule this service already applied to the
+  seed's own fields; the append-only sightings are *not* gated that way, since
+  each one records a script a host really did hold and a missing one is a gap
+  rather than a wrong answer.
+
+  Six cases in `seedStatus.peer.test.ts` pin all of it, including two negative
+  controls: a deployment with no peer must never construct the client, and a
+  port without credentials must stay off. The suite was proven able to fail —
+  disabling the union alone turns the union case red.
 - **A restored root qdisc comes back with a new handle.** `fq_codel 8001:` where
   it began as `fq_codel 0:`; the kernel assigns it on replacement. A checker
   comparing handles reports a false difference — compare parameters.

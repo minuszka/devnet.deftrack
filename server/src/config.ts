@@ -183,6 +183,29 @@ export const config = {
     timeoutMs: optionalNumber('RPC_TIMEOUT_MS', 10_000),
   },
 
+  /**
+   * A second staking daemon on the same machine as the seed, read only so its
+   * payout scripts can be attributed.
+   *
+   * `byHost` groups block production by **machine**, and this devnet runs two
+   * staking daemons on the seed host. Its scripts therefore join the seed's
+   * own rather than forming a host of their own: splitting one machine into
+   * two entries would dilute the concentration index in exactly the direction
+   * that index exists to resist. Until this was configured its 22 blocks in
+   * every 500 were unattributed, which is enough on its own to hold
+   * `byHost.hhi` at null -- the figure the staking view exists to publish.
+   *
+   * Off unless `PEER_RPC_PORT` names a port and credentials are given; a
+   * deployment without a second daemon reads exactly as it did before.
+   */
+  peerRpc: {
+    host: process.env.PEER_RPC_HOST ?? '127.0.0.1',
+    port: optionalNumber('PEER_RPC_PORT', 0),
+    user: process.env.PEER_RPC_USER ?? '',
+    pass: process.env.PEER_RPC_PASS ?? '',
+    timeoutMs: optionalNumber('RPC_TIMEOUT_MS', 10_000),
+  },
+
   sync: {
     enabled: optionalBool('SYNC_ENABLED', true),
     intervalMs: optionalNumber('SYNC_INTERVAL_MS', 20_000),

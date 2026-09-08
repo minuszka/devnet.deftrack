@@ -38,18 +38,36 @@ export interface CallOptions {
   tolerated?: RegExp;
 }
 
+/** Where an instance talks, so a second daemon can be read without a second class. */
+export interface RpcEndpoint {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  timeoutMs: number;
+}
+
 export class RpcService {
   private readonly client: AxiosInstance;
   private requestId = 0;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  /**
+   * Prefixes this instance's RPC metric names.
+   *
+   * Two instances calling `listunspent` against two different daemons would
+   * otherwise land in one histogram, and the merged latency would describe
+   * neither node. Empty for the primary, so its series keep their names.
+   */
+  private readonly metricsPrefix: string;
 
-  constructor() {
+  constructor(endpoint: RpcEndpoint = config.rpc, metricsPrefix = '') {
+    this.metricsPrefix = metricsPrefix;
     this.client = axios.create({
-      baseURL: `http://${config.rpc.host}:${config.rpc.port}/`,
-      auth: { username: config.rpc.user, password: config.rpc.pass },
+      baseURL: `http://${endpoint.host}:${endpoint.port}/`,
+      auth: { username: endpoint.user, password: endpoint.pass },
       headers: { 'Content-Type': 'application/json' },
-      timeout: config.rpc.timeoutMs,
+      timeout: endpoint.timeoutMs,
       // Keep-alive avoids fd exhaustion: indexing a block fans out one RPC per
       // transaction, and without pooling each would open a fresh TCP socket.
       httpAgent: new http.Agent({ keepAlive: true, maxSockets: 16 }),
@@ -166,7 +184,7 @@ export class RpcService {
       }
       throw new Error(`RPC ${method}: ${sanitised}`);
     } finally {
-      metricsService.observeRpc(method, performance.now() - startedAt, failed);
+      metricsService.observeRpc(this.metricsPrefix + method, performance.now() - startedAt, failed);
     }
   }
 
