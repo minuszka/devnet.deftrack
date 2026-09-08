@@ -22,11 +22,24 @@ around the evening of 2026-09-09 at the measured 152 s block interval. It asks
 whether the one block of report-pool margin that #207 and #208 bought is enough
 to stop the network losing one hour in twenty (7 absent epochs in 145 before the
 roll). Intermediate readings at 9648, 9888 and 10128, none of them conclusive by
-the run's own arithmetic. **Nothing may be applied to the network until it
-closes**: no E4b, no roll, no restart, no revive, no InstantSend probe — any
-intervened epoch comes out of the sample and the run is extended. The collector
-is a transient systemd unit on the VPS (`epoch-watch`) and does not survive a
-reboot; the epoch table itself comes from the chain and can be re-read.
+the run's own arithmetic.
+
+**What the run actually forbids, and what this file added on top.** The frozen
+`expected` excludes "any epoch containing a deliberate intervention" and names
+E4b, because that one applies a real network fault to a quorum member: no roll,
+no restart, no revive, no fault. This file also said "no InstantSend probe",
+which the record does not — a correction made 2026-09-08 rather than left to be
+read as the run's rule. **The probe is still held back, for a mechanism reason
+worth stating:** it sends twenty transactions that each open an InstantSend
+signing session on the same masternodes whose *signing convergence* this run
+measures, and the effect being looked for is about five per cent. Adding
+signing traffic to the window that measures signing is how a true number
+becomes unreadable. It costs 36 hours to wait, and nothing needs the probe
+sooner.
+
+The collector is a transient systemd unit on the VPS (`epoch-watch`) and does
+not survive a reboot; the epoch table itself comes from the chain and can be
+re-read.
 
 **Explorer tartozás (2026-09-06), fele lezárva 2026-09-07-én (#123):** a lab
 explorer beragadt egy node-reindex utáni láncmozgás után – „block N follows X
@@ -311,8 +324,10 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   InstantSend-lock ZMQ topic (`getzmqnotifications` on 2026-09-07: hashblock,
   hashchainlock, hashtx, sequence) and the VPS has no pyzmq, so that half
   needs a conf change and a seed restart -- not during the running
-  observation, and a separate decision. Not yet run against the chain, for
-  the same reason.
+  observation, and a separate decision. Not yet run against the chain either:
+  see §1 for why the wait is about signing traffic landing in a window that
+  measures signing, not about the run's declared exclusions, which do not
+  name the probe.
 - **`medianBlockIntervalSec` must not be compared against the target spacing.**
   Block intervals are a Poisson process, so they are exponentially distributed
   and the median is `mean x ln2` = 0.693 of the mean, never the mean itself.
