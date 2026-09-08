@@ -30,7 +30,7 @@ export class OperatorIndex {
   }
 }
 
-/** Host part of a `1.2.3.4:19799` service string. */
+/** Host part of a `203.0.113.4:19799` service string. */
 export function hostOf(service: string | null | undefined): string | null {
   if (!service) return null;
   const idx = service.lastIndexOf(':');

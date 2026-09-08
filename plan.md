@@ -892,11 +892,58 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   band binding proven on the host with a 1 ms fault and a clean recovery. See
   §4 for the evidence. **E4b is no longer blocked by tooling** -- it needs its
   own Experiments record, which the reinstall deliberately is not.
-- **A real host IP is in this repository's public git history**, at `fb6bb7c`
-  and replaced at `a2f86c6`. The decision -- rewrite the history, or accept it
-  and firewall -- is the owner's and has not been made. The CI secret gate
-  deliberately scans the tree and not the history, so it neither forces that
-  decision nor pretends it was made.
+- ~~**A real host IP is in this repository's public git history.**~~ **DECIDED
+  2026-09-08 (the owner's): do not rewrite. Harden instead.**
+
+  **What settled it is that the address is already on the chain.** It is one of
+  the sixteen masternode service addresses, and the deterministic masternode
+  list publishes those by protocol -- a masternode must be reachable, so its
+  address is in the list permanently and anyone with a devnet node reads all
+  sixteen with one `protx list registered true`. Checked rather than assumed:
+  the two routable addresses the history scan found were tested for membership
+  in the on-chain service set, and the real one is in it while the placeholder
+  is not. Rewriting would delete one copy of something the chain republishes to
+  every peer that connects, for as long as the chain exists.
+
+  Three supporting facts, none of them decisive on its own. The address left
+  the tree at `a2f86c6` after eleven days. A rewrite would not un-publish it on
+  GitHub either -- rewritten commits stay fetchable by SHA until Support purges
+  them, and forks, clones and archives may hold it. And the cost is real: the
+  address is in **150 commits**, and rewriting the earliest changes every
+  descendant -- **431 of the repository's 444** -- breaking the VPS deploy
+  clone, every PR association, and every SHA this file and `CLAUDE.md` cite.
+
+  **What the leak did prove is that the gate was looking for the wrong shape.**
+  It runs gitleaks' default ruleset, which finds *credentials*; a host address
+  is not one, so the gate that exists would not have caught this and would not
+  catch the next. `.gitleaks.toml` now carries a `routable-host-address` rule
+  that fails closed on anything outside loopback, the private and CGNAT ranges,
+  link-local, multicast, reserved, and the RFC 5737 / RFC 2544 documentation
+  blocks. Verified against the version CI pins (8.30.1, not the 8.21.2 first
+  tried -- the older binary does not honour the `[[allowlists]]` form and
+  reported fourteen findings that were all configuration, not content): the
+  tree is clean, a planted `185.199.108.153` **is** caught, and an RFC 5737
+  address passes. Both controls matter; a rule that flagged everything would
+  pass the first alone.
+
+  Two things fixed alongside it. The last routable placeholder in the tree --
+  `1.2.3.4`, an APNIC-allocated address, in a fixture and a doc comment -- is
+  now `203.0.113.4`. And `lab-compose.yml` / `.lab-state/` are excluded by
+  path: they are gitignored and CI never sees them, but they carry generated
+  regtest credentials, so a developer who had run the lab watched
+  `npm run verify:secrets` fail on seven findings that were neither real nor
+  committed. A gate that cries wolf locally is a gate people stop running.
+
+  **What is still owed is the part that actually reduces exposure.** The
+  addresses are public by protocol; which *ports answer* on them is not. Two of
+  the eight fullnodes run `ufw` with `-P INPUT DROP` and the other six have no
+  filtering at all (§4, `CLAUDE.md`). That is a fleet touch -- a wrong rule
+  drops quorum connections and disturbs the DKG mesh -- so it rides the roll
+  after 10608 rather than being done piecemeal now.
+
+  Repeatable: the history scan walks every blob in `git rev-list --all`,
+  keeps addresses outside the documentation and private ranges, and prints
+  masked. It found exactly two, and one of them was the placeholder.
 - **`defcon-enable-staking`: fixed in the repo, installation owed** (see §3).
   The toggle bug is closed by `ops/defcon-enable-staking` and its test suite;
   the VPS (two units) and the 8 fullnode stakers still run the old copy until

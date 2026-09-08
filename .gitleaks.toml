@@ -3,10 +3,16 @@
 # The scan in CI runs with --no-git: it reads the files as they stand, not the
 # history. That is deliberate and it is not laziness. A secret that reached a
 # past commit cannot be un-leaked by a scanner, it has to be rotated, and this
-# repository already carries one such decision -- a real host address at
-# fb6bb7c, replaced at a2f86c6 -- whose resolution (rewrite the history, or
-# accept and firewall) belongs to the owner and not to a build step that would
-# then fail on every push until it was made.
+# repository already carries one such case -- a real host address at fb6bb7c,
+# replaced at a2f86c6.
+#
+# That one is now decided, and the decision is not to rewrite (2026-09-08, the
+# owner's, recorded in plan.md §6). The address is one of the sixteen
+# masternode service addresses, which the deterministic masternode list
+# publishes on-chain by protocol and permanently: rewriting 431 commits would
+# delete one copy of something the chain republishes to anyone who connects.
+# What the leak did prove is that this gate was looking for the wrong shape,
+# and the rule below is the answer to that.
 #
 # So this gate answers one question, every time, before the push: does the tree
 # I am about to publish contain a credential?
@@ -15,6 +21,54 @@ title = "devnet.deftrack"
 
 [extend]
 useDefault = true
+
+# ── host addresses ────────────────────────────────────────────────────────
+#
+# The default ruleset looks for credentials. The one thing this repository has
+# actually leaked was not a credential: a real fleet host address reached
+# fb6bb7c on 2026-08-22 and stood until a2f86c6 on 2026-09-02. The gate that
+# existed would not have caught it, and would not catch the next one, so it
+# learns the shape here.
+#
+# It fails closed on anything routable. A genuine host address must be replaced
+# with an RFC 5737 documentation address, never allowlisted; a value that is
+# demonstrably not a host -- a version string that happens to have four parts,
+# say -- is allowlisted below by exact value and with the reason, which is the
+# same rule this file already applies to the regtest spork key.
+[[rules]]
+id = "routable-host-address"
+description = "A routable IPv4 address. This repository is public; the fleet's addresses are not."
+regex = '''\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\b'''
+
+  [rules.allowlist]
+  description = """
+  Address space that cannot identify one of our machines: loopback, the private
+  and carrier-grade ranges, link-local, multicast and reserved, and the blocks
+  RFC 5737 and RFC 2544 set aside precisely so documentation and fixtures have
+  something safe to say. Anything outside these is a real address somewhere.
+
+  Binary assets are excluded by path rather than by value: a PNG can carry four
+  bytes that read as an address, and a scanner reporting that is noise, not a
+  finding.
+  """
+  regexes = [
+    '''^0\.''',
+    '''^10\.''',
+    '''^127\.''',
+    '''^169\.254\.''',
+    '''^172\.(1[6-9]|2[0-9]|3[01])\.''',
+    '''^192\.168\.''',
+    '''^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.''',
+    '''^192\.0\.2\.''',
+    '''^198\.51\.100\.''',
+    '''^203\.0\.113\.''',
+    '''^198\.1[89]\.''',
+    '''^2(2[4-9]|3[0-9])\.''',
+    '''^2(4[0-9]|5[0-5])\.''',
+  ]
+  paths = [
+    '''\.(png|jpe?g|gif|ico|pdf|zip|gz|woff2?|ttf|eot|mp4|webm)$''',
+  ]
 
 [[allowlists]]
 description = """
@@ -39,4 +93,21 @@ paths = [
   '''(^|/)dist/''',
   '''(^|/)client/dist/''',
   '''\.playwright-mcp/''',
+]
+
+[[allowlists]]
+description = """
+Generated lab state, gitignored and never pushed.
+
+`lab-compose.yml` and `.lab-state/` are written by ops/lab-bringup.mjs with
+freshly generated RPC credentials for a throwaway regtest network. CI never
+sees them -- it scans a fresh checkout -- but a developer who has run the lab
+would watch `npm run verify:secrets` fail on seven findings that are neither
+real nor committed, and a gate that cries wolf locally is a gate people stop
+running. Excluded by path, not by value: the values are regenerated every
+bring-up, so there is nothing stable to allowlist.
+"""
+paths = [
+  '''(^|/)lab-compose\.yml$''',
+  '''(^|/)\.lab-state/''',
 ]
