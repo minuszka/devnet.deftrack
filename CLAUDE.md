@@ -111,7 +111,7 @@ would print the password in `claude mcp list` output.
 | | |
 |---|---|
 | Explorer + seed node | the devnet VPS; `deftrack-devnet.service`, `/opt/devnet-deftrack/app` |
-| Second devnet node | same host, `defcond-devnet2`, exists so the seed has a peer |
+| Second devnet node | same host, `defcond-devnet2`, exists so the seed has a peer -- **and it stakes**: `staking=1`, wallet `devnet2`, 10.05 M DFCN, about 2 % of blocks (measured 2026-09-07 over 200 blocks). It has no observer, so the staking view shows its payout key as unattributed and the health header counts nine stakers: the eight fullnodes plus this one |
 | 152 masternodes | 16 hosts, ports 19799-19808, `defcon-devnet-mn@N`. Eleven are in the rollout inventory and log in as root: the 8 DeFCoN fullnodes with 10 each, and three more with 9. The other five carry 14, 10, 7, 7 and 7, and log in as their own unprivileged users, not root |
 | 8 fleet stakers | **instance 11**, and only on the 8 DeFCoN fullnodes -- a masternode cannot stake, so block production needs its own daemon. The remaining hosts carry masternodes only, which is why a wallet-side staking fix gains them nothing and is not worth a restart |
 | Node binaries | `/usr/local/bin/defcond` (seed, BDB wallet) and a `--without-bdb` build for the fleet |
@@ -261,7 +261,12 @@ Two corrections to what this entry said before, both verified at
   for the object name given, once a backgrounded build was killed by a stray
   `&`, once the file simply was not rebuilt. Each time the exit code said 0.
   What actually settles it is the **object or binary timestamp against the build
-  start**, and the count of `CXX`/`CXXLD` lines in the log.
+  start**, and the count of `CXX`/`CXXLD` lines in the log. The no-rule case
+  has one everyday form: `make src/test/test_defcon` from the top of the tree
+  answers "Nothing to be done" with exit 0, because the top Makefile has no
+  rule for a path that already exists. It bit again on 2026-09-07 and a
+  measurement nearly ran on a stale binary; the form that builds is
+  `make -C src test/test_defcon`.
 
 - **The devnet's evodb was never corrupt -- the verifier was.** An earlier
   version of this note recorded that the diffs do not reproduce the snapshots
@@ -425,17 +430,23 @@ Two corrections to what this entry said before, both verified at
   `validation_chainstate_tests/chainstate_update_tip` (it activates a regtest
   assumeutxo snapshot at height 110 and compares the UTXO hash against Dash's
   constant, which this fork's regtest chain -- different genesis, subsidy and
-  premine -- never reproduces: `[snapshot] bad snapshot content hash`); six
-  `wallet_tests` cases (`scan_for_wallet_transactions`, `importwallet_rescan`,
-  `coin_mark_dirty_immature_credit`, `WatchOnlyPubKeys`, `ListCoins`,
-  `select_coins_grouped_by_addresses` -- 500-coin coinbase assumptions); and
-  the functional `rpc_getblockstats.py`, whose fixture expects a subsidy of
-  500 where this chain pays 11,000,000 per proof-of-work block. Those were
-  verified to fail identically on the unmodified `v22.1.x` tip (2026-09-02) and
-  have **not been re-measured since** -- unlike the two removed above, which
-  were. Prove a suite is inherited-failing by running it on the base commit in
-  the same tree before blaming a change, and treat a name on this list as an
-  observation with a date on it rather than a standing fact.
+  premine -- never reproduces; on 2026-09-07 the critical check
+  `CreateAndActivateUTXOSnapshot` fails outright); **five** `wallet_tests`
+  cases (`scan_for_wallet_transactions`, `importwallet_rescan`,
+  `coin_mark_dirty_immature_credit`, `ListCoins`,
+  `select_coins_grouped_by_addresses` -- 500-coin coinbase assumptions;
+  `WatchOnlyPubKeys` stood on this list until 2026-09-07 and **passes** on
+  `c739d9f504`); and the functional `rpc_getblockstats.py`, whose fixture
+  expects a subsidy of 500 where this chain pays 11,000,000 per proof-of-work
+  block (`{'subsidy': 1100000000000000} != {'subsidy': 50000000000}`).
+  **Re-measured 2026-09-07 on the deployed `c739d9f504`** (`~/DEFCON-tests`,
+  -O2, one process per suite so an abort cannot hide the rest): 156 suites,
+  764 cases entered, exactly 16 suites failing, and that set equals the CI
+  gate's exclusion list in `build.yml` name for name -- nothing newly broken,
+  nothing silently fixed at suite level. Prove a suite is inherited-failing by
+  running it on the base commit in the same tree before blaming a change, and
+  treat a name on this list as an observation with a date on it rather than a
+  standing fact.
 
 - **Two staking hardenings worth knowing about (#167).** Staking selection took
   `AvailableCoins` at its word and never read `fSpendable`, so a watch-only

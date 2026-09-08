@@ -114,9 +114,63 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   If a sanitizer build is wanted before the next roll, it needs the source tree,
   not the fleet.
 
+  **Proven 2026-09-07, in the source tree, both halves.** An ASan+UBSan
+  `-O0 -g3` build at the #209 tip (`37e845beb0`,
+  `~/DEFCON-verify-f107-37e845beb047`) links: `defcond` and `test_defcon` both
+  exist, every source older than the binaries. Negative control in the sibling
+  sanitizer tree (`~/DEFCON-indrev-san-3d03b3f492`, same fix as a local
+  commit): the pre-fix `stake.h` put back, nine translation units rebuilt, and
+  the link of `test_defcon` fails with **16 undefined references** to
+  `CStakeWallet::SHORTDELAY` and `LARGEDELAY` (`pos/minter.cpp:215`, `:260`,
+  ...; `make` exit 2). File restored, nine objects rebuilt, link succeeds, tree
+  clean. So the fix does exactly what its description says, and only a
+  non-optimised build ever sees the difference -- the fleet's `-O2` binaries
+  were never affected. The unit suite under the sanitizer build is recorded
+  below in §6, and what it found is §2b.
+
 - Nothing else is currently owed on a roll. The 2026-09-07 rollout
   (`c739d9f504`, 12 commits) reached all 162 daemons; see
   `docs/devnet-rollouts.md`.
+
+## 2b. What the first sanitizer run found (2026-09-07)
+
+The ASan+UBSan `-O0` build at the #209 tip ran all 156 suites, one process
+each, with the tree's own suppression files. **Zero AddressSanitizer reports**
+-- no use-after-free, no overflow, no bad free anywhere in the suite. Every
+suite that fails at `-O2` fails here too, so nothing is hidden by
+optimisation; eight suites fail *only* here, and none of them for a Boost
+assertion. What those eight are:
+
+- **Seven leak reports, and they are one leak, not seven.** `coinjoin_tests`,
+  `coinselector_tests`, `pos_multiwallet_tests`, `pos_stake_rules_tests`,
+  `psbt_wallet_tests`, `wallet_tests`, `walletdb_tests` -- every suite that
+  opens a wallet -- end with LeakSanitizer, and every stack roots in
+  `__os_malloc`, Berkeley DB's own allocator. The amount scales with wallets
+  opened, not with test logic: 554 bytes in 8 allocations for one wallet,
+  2493 in 36 for the heaviest suite. Nothing suppresses them because
+  `test/sanitizer_suppressions/lsan` carries exactly one line,
+  `leak:libQt5Widgets`, and BDB is **statically** linked here (`ldd` shows no
+  `libdb`; `__os_malloc` is a `T` symbol inside `test_defcon`), so even
+  upstream's usual `leak:libdb` form would not match -- it would have to be by
+  function name. **Owed decision, and it is a Core one:** suppress
+  `__os_malloc` with a comment saying why, or close the environment properly in
+  the wallet test teardown. Not a node-runtime concern -- these are
+  allocations still live at process exit, in a test binary -- but until it is
+  decided, a sanitizer run cannot be read as clean at a glance, which is the
+  whole point of running one.
+- **One UBSan report, real and one line to fix.** `net_tests`:
+  `streams.h:599` `null pointer passed as argument 1, which is declared to
+  never be null`, from `CaptureMessageToFile` (`net.cpp:5201`). The last
+  statement is `f.write(AsBytes(data))`, and on an empty message `data.data()`
+  is null while `size()` is 0, so `fwrite(nullptr, 1, 0, file)` -- undefined by
+  the standard even though every implementation copies nothing. Inherited from
+  Bitcoin Core verbatim, reachable only through `-capturemessages`, which is a
+  debug switch no node here runs. A guard on an empty span closes it.
+- **One timeout, and it is the build, not the code.** `dsl_service_pose_tests`
+  ran 190 s at `-O2` and was killed at 3959 s here, in its third case -- a
+  Monte-Carlo sweep over population, concentration and sentinel counts. Twenty
+  times slower under `-O0` plus sanitizers is ordinary; read it as "this suite
+  needs its own budget in a sanitizer run", never as a hang.
 
 ## 2. In the binary, not proven on-chain
 
@@ -282,6 +336,15 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   the count, and the baseline comparison carries their deltas -- the model had
   stored all three since 2026-09-05 while the shared type and the client never
   read them.
+- **devnet2 stakes, and nothing attributes its blocks.** Measured 2026-09-07
+  over 200 blocks: eight fullnodes produced 196, and one payout key nobody
+  claims produced 4 -- devnet2's (`staking=1`, wallet `devnet2`, 10.05 M DFCN,
+  minter running). The VPS observer reports the seed's scripts under `seed`
+  and knows nothing of the second daemon on the same host, so the staking
+  view lists the key as unattributed and every participant count reads nine
+  stakers, correctly but unexplained. Either the observer learns to report
+  both daemons' scripts under their own labels, or devnet2's scripts are
+  declared by hand; until then read "9 stakers" as 8 fullnodes plus devnet2.
 - **A restored root qdisc comes back with a new handle.** `fq_codel 8001:` where
   it began as `fq_codel 0:`; the kernel assigns it on replacement. A checker
   comparing handles reports a false difference — compare parameters.
@@ -553,6 +616,22 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   nothing new has broken. Everything the gate covers is green, including
   `pos_coinstake_fee_tests`, `logging_tests`, `llmq_chainlocks_tests`,
   `pos_stake_rules_tests`, `pos_multiwallet_tests` and `pos_kernel_tests`.
+- **First sanitizer run of the whole suite, 2026-09-07** (`-O0 -g3`,
+  ASan+UBSan, at the #209 tip): 156 suites, 24 failing -- the 16 the `-O2` gate
+  already excludes, plus seven BDB leak reports, one UBSan report and one
+  timeout. Zero AddressSanitizer findings. Detail and the owed decisions are
+  in §2b. Cost: about 105 minutes wall clock for the run.
+- **Re-measured 2026-09-07 on the deployed `c739d9f504`** (`~/DEFCON-tests`,
+  -O2, binary brought up to HEAD first -- it had been two source files behind
+  -- and one process per suite): 156 suites, 764 cases entered, exactly 16
+  suites failing, and the set equals `build.yml`'s exclusion list name for
+  name. One case moved inside a suite: `wallet_tests/WatchOnlyPubKeys` now
+  passes, so CLAUDE.md's named list is five wallet cases, not six.
+  `validation_chainstate_tests/chainstate_update_tip` fails on the critical
+  check `CreateAndActivateUTXOSnapshot`; `rpc_getblockstats.py` on the
+  subsidy fixture, as before. First attempt measured a stale binary because a
+  top-level `make src/test/test_defcon` "had nothing to do" (CLAUDE.md,
+  operational notes); the run was thrown away and repeated with `make -C src`.
 - **v22.1.4 cannot serve as the control for those 16.** Run there for exactly
   that purpose, it aborts 141 of 581 cases and skips 438 more -- the state
   #168/#169 was written to fix. A pre-#169 commit cannot distinguish "this
