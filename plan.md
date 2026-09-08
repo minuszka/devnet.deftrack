@@ -142,8 +142,8 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   below in §6, and what it found is §2b.
 
 - **#209 is no longer the only commit the fleet does not have — as of
-  2026-09-08 there are eleven, and two of them are a reason to roll.** The
-  paragraph above was written when `37e845beb0` stood alone; #210–#219 have
+  2026-09-08 there are thirteen, and three of them are a reason to roll.** The
+  paragraph above was written when `37e845beb0` stood alone; #210–#221 have
   merged since. Triaged by file list, not by commit title:
 
   | PR | Ships to a running daemon? | Verdict |
@@ -155,6 +155,8 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   | #210 | `src/qt/` only | no daemon behaviour |
   | #209 | `src/pos/stake.h`, +2/−2, values unchanged | rides, never leads |
   | #216 | `src/streams.h` +14, UB guard on an empty Span | rides |
+  | #221 | `src/rpc/misc.cpp` +18/−1 | rides |
+  | **#220** | **`src/net_processing.cpp` −1** | **a reason to roll** |
   | **#218** | **`src/validation.cpp` +5/−1** | **a reason to roll** |
   | **#217** | **`src/validation.cpp` +10/−1** | **a reason to roll** |
 
@@ -185,7 +187,35 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   now reads `(coin.IsCoinBase() || coin.IsCoinStake())`. Triggered by
   `invalidateblock` or an automatic ChainLock-conflict rollback.
 
-  **Neither changes block validity, so neither needs an activation height.**
+  **#220 (F-2026-130) is the third reason to roll, and it is one deleted
+  line.** Reading a plain `headers` message, `ProcessMessage` consumed **two**
+  CompactSize values per header — the tx count, and a second one commented
+  "needed for vchBlockSig" — where every writer emits one. The stream is
+  therefore misaligned after the first header and the rest of the message is
+  unreadable. It was measured against the node's own output: the node answers
+  `getheaders` with 81 bytes per header, and feeding that exact byte sequence
+  back could not be processed; across five test nodes' logs, **12 classic
+  `headers` messages arrived and all 12 were dropped**. The mutation control is
+  the part worth copying — restoring the line fails the new test immediately
+  with `Block not found`, and deleting it again produces a **bit-for-bit
+  identical binary**, so nothing else moved between the two measurements.
+
+  This devnet did not notice because its nodes speak `HEADERS2` to each other.
+  Any peer that sends a classic `headers` message — an older node, another
+  implementation, a light client — silently fails header sync against us. Not
+  consensus, and **not a compatibility break in either direction**: the fix
+  corrects the *reader* while writers are untouched, so a mixed fleet is safe.
+
+  **#221 (F-2026-129) rides.** `getaddressbalance` counted a freshly staked
+  coinstake as spendable while the node still refused to spend it
+  (`bad-txns-premature-spend-of-coinbase`); it now lands in `balance_immature`
+  until `COINBASE_MATURITY`. The fix reads position 1 above `lastPowBlock` as
+  the coinstake and leaves *spends* in the spendable column, which is right on
+  both counts. No consensus, no reindex — and **the explorer does not call it**
+  (checked across `server/`, `client/`, `shared/` and `ops/`), so nothing this
+  repository publishes changes.
+
+  **None of them changes block validity, so none needs an activation height.**
   Source-side fingerprint over the reject-reason literals — the pattern
   `"(bad-|pos-|pow-|dsl|posechallenge|poseresponse|posereport)…"` across
   `src/*.cpp` and `src/*.h` — gives **181 strings, md5
@@ -212,16 +242,24 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
 - **The artefacts are built and fingerprinted; only `systemctl` is left
   (2026-09-08).** Both deployable binaries were built at the branch tip
   `1887b036c9` in their own worktrees and staged in `~/roll-2026-09-08` on the
-  workstation's WSL (never committed).
+  workstation's WSL (never committed). **Rebuilt at `55174597ed` when #220 and
+  #221 landed** — the 1887b036c9 artefacts are gone, so nothing stale can be
+  shipped by reaching for the wrong file.
 
   | artefact | bytes | md5 |
   |---|---|---|
-  | `DEFCON-seed/src/defcond` | 396,488,688 | `c2ebc951790bc95f631585b70b85cca3` |
-  | `DEFCON-seed/src/defcon-cli` | 20,510,344 | `2e29c5ab5eea95a3205c4bfb0a898dc4` |
-  | `DEFCON-fleet/src/defcond` | 393,064,336 | `aefb020cd36e6ee168719e1cc74177a8` |
-  | `DEFCON-fleet/src/defcon-cli` | 20,510,344 | `3e85cac8d906f3cb49b35e2812d5121b` |
+  | `DEFCON-seed/src/defcond` | 396,489,512 | `b0e4033e3c39fb0a5f5cd19099f6841b` |
+  | `DEFCON-fleet/src/defcond` | 393,065,144 | `6696eff7b96bc040affd1e212a573eea` |
 
-  **The build is proven to have happened, not assumed.** Seed: 157 `CXX` lines,
+  The rebuild recompiled **3 of 679** objects, and the three were hand-checked
+  rather than accepted: `libbitcoin_server_a-misc.o` (#221),
+  `libbitcoin_server_a-net_processing.o` (#220) and
+  `libbitcoin_util_a-clientversion.o`, which any commit change rebuilds. Two
+  changed `.cpp` files plus the build-info object is exactly right, and it is
+  **not** the mixed-ABI signature: that alarm is few objects after a *header*
+  change, and neither commit touches a header.
+
+  **The first build was proven to have happened, not assumed.** Seed: 157 `CXX` lines,
   5 `CXXLD`, **157 of 679** objects newer than a timestamp taken before `make`
   started, and the binary newer than every object. Fleet: 155 `CXX`, 5 `CXXLD`,
   **155 of 677**. The two-object difference is the BDB-only translation units.
