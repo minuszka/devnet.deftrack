@@ -4,7 +4,7 @@ Working queue for the devnet. Everything here was either measured or read from
 source; where something is *not* proven, this file says so rather than implying
 it. Public repository: host labels only, never addresses.
 
-Last updated 2026-09-07.
+Last updated 2026-09-08.
 
 ## 1. Experiment runs, in order
 
@@ -141,9 +141,121 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   were never affected. The unit suite under the sanitizer build is recorded
   below in §6, and what it found is §2b.
 
-- Nothing else is currently owed on a roll. The 2026-09-07 rollout
-  (`c739d9f504`, 12 commits) reached all 162 daemons; see
-  `docs/devnet-rollouts.md`.
+- **#209 is no longer the only commit the fleet does not have — as of
+  2026-09-08 there are eleven, and two of them are a reason to roll.** The
+  paragraph above was written when `37e845beb0` stood alone; #210–#219 have
+  merged since. Triaged by file list, not by commit title:
+
+  | PR | Ships to a running daemon? | Verdict |
+  |---|---|---|
+  | #211, #213, #214 | no — `test/functional/` only | irrelevant to a roll |
+  | #215 | no — `src/test/` + `Makefile.test.include` | irrelevant to a roll |
+  | #219 | no — `.github/workflows/build.yml` | irrelevant to a roll |
+  | #212 | `src/chainparams.cpp` +34, but **verified regtest-only** | irrelevant to a roll |
+  | #210 | `src/qt/` only | no daemon behaviour |
+  | #209 | `src/pos/stake.h`, +2/−2, values unchanged | rides, never leads |
+  | #216 | `src/streams.h` +14, UB guard on an empty Span | rides |
+  | **#218** | **`src/validation.cpp` +5/−1** | **a reason to roll** |
+  | **#217** | **`src/validation.cpp` +10/−1** | **a reason to roll** |
+
+  #212's "test-only" claim was checked rather than taken: every addition sits
+  inside `CRegTestParams` — the constructor call, the method, and the
+  `FromArgs` reader — and the new `-minstaticcollateral` is `DEBUG_ONLY`. No
+  other network's constructor calls it, so mainnet, testnet and devnet are
+  byte-identical without the argument.
+
+  **#217 (F-2026-119) is a use-after-free, and it is one of the four v23
+  release-gate findings.** `ConnectBlock` inserted `pindex` into
+  `m_blockman.m_dirty_blockindex` on every proof-of-stake block, including
+  when `fJustCheck` is set — and under `fJustCheck` the caller owns `pindex`:
+  `TestBlockValidity` passes the address of a `CBlockIndex` living in its own
+  stack frame, and that frame is gone by the time `FlushStateToDisk`
+  serialises the set. The fix is one `if (!fJustCheck)`; the writes below it
+  still happen either way, because `CheckProofOfStake` and the modifier need
+  them. Reachable through `getblocktemplate` in proposal mode, the
+  `generateblock` RPC, **and validation of a valid, not-yet-indexed PoS
+  block** — the last of which is ordinary operation, not an RPC an operator
+  has to invoke. The regression suite segfaults 5 of 5 times on the unfixed
+  `-O2` build and passes 3 of 3 with the fix.
+
+  **#218 (F-2026-125) costs a whole block.** `MaybeUpdateMempoolForReorg`
+  re-checked maturity for `coin.IsCoinBase()` only, so a coinstake spend that
+  a rollback had made immature again stayed in the mempool: the producer could
+  include it, sign the block, and then have its own node reject it. The check
+  now reads `(coin.IsCoinBase() || coin.IsCoinStake())`. Triggered by
+  `invalidateblock` or an automatic ChainLock-conflict rollback.
+
+  **Neither changes block validity, so neither needs an activation height.**
+  Source-side fingerprint over the reject-reason literals — the pattern
+  `"(bad-|pos-|pow-|dsl|posechallenge|poseresponse|posereport)…"` across
+  `src/*.cpp` and `src/*.h` — gives **181 strings, md5
+  `9740ca2cf39a9e5fed084797eef35512`, identical on `c739d9f504` and
+  `v22.1.x`**, and a `diff` of the two sets prints nothing. Negative control
+  passed: the narrower `bad-` pattern gives 165 strings and md5
+  `086ce7176939f3b8f786852430e6dc91`, so the probe is reading something rather
+  than silently matching nothing. This is a **proxy for, not a replacement
+  of,** the binary-side check — `strings` on the built artefacts, same tool
+  and same host, still has to run before anything is installed
+  ([[devnet-binary-build-path]]).
+
+- **The roll is blocked until height 10608, and not by a technical
+  dependency.** `absent-epoch-rate-post-208-2026-09-07` runs from boundary
+  9192 to 10608, and its frozen `expected` excludes any epoch containing a
+  deliberate intervention. A roll restarts 162 daemons: the 2026-09-07 roll at
+  9147 produced eight `penalty_up` events, one PoSe ban (9165, revived 9234)
+  and one absent Sentinel epoch (381) — exactly the contamination that clause
+  names. **Build and fingerprint the artefacts now**, in the worktrees, so that
+  nothing but `systemctl` is left when the run closes on the evening of
+  2026-09-09. Take `ops/defcon-enable-staking` (§6) with it; that installation
+  is owed on a host touch and there is no reason to spend a second one.
+
+- **The artefacts are built and fingerprinted; only `systemctl` is left
+  (2026-09-08).** Both deployable binaries were built at the branch tip
+  `1887b036c9` in their own worktrees and staged in `~/roll-2026-09-08` on the
+  workstation's WSL (never committed).
+
+  | artefact | bytes | md5 |
+  |---|---|---|
+  | `DEFCON-seed/src/defcond` | 396,488,688 | `c2ebc951790bc95f631585b70b85cca3` |
+  | `DEFCON-seed/src/defcon-cli` | 20,510,344 | `2e29c5ab5eea95a3205c4bfb0a898dc4` |
+  | `DEFCON-fleet/src/defcond` | 393,064,336 | `aefb020cd36e6ee168719e1cc74177a8` |
+  | `DEFCON-fleet/src/defcon-cli` | 20,510,344 | `3e85cac8d906f3cb49b35e2812d5121b` |
+
+  **The build is proven to have happened, not assumed.** Seed: 157 `CXX` lines,
+  5 `CXXLD`, **157 of 679** objects newer than a timestamp taken before `make`
+  started, and the binary newer than every object. Fleet: 155 `CXX`, 5 `CXXLD`,
+  **155 of 677**. The two-object difference is the BDB-only translation units.
+  157 is the right order of magnitude for a `streams.h` change in a
+  `--disable-tests --with-gui=no` tree, and a *small* number here would have
+  been the mixed-ABI alarm, not a gift.
+
+  **Both baselines were preserved before `make` overwrote them, and both match
+  what is deployed**: seed `a1ad976f18016c5a67672adacdb8f4f5`, fleet
+  `406828f76173a5a23f3dd6db740afc76` — the values `docs/devnet-rollouts.md`
+  records for the 2026-09-07 roll. That is what makes the comparison below a
+  real before/after and not two unrelated builds.
+
+  **Consensus fingerprint, binary side, same tool and same host, all four
+  artefacts at once:** `strings … | grep -aE
+  '^(bad-|pos-|pow-|dsl|posechallenge|poseresponse|posereport)' | sort -u |
+  md5sum` gives **178 strings, `559683c468564314759dfe943705e359`** on the old
+  seed, the new seed, the old fleet and the new fleet alike, and `diff` of the
+  old and new sets prints nothing for either artefact. That is the same
+  four-way match, to the same value, as the 2026-09-07 roll. Negative control
+  passed: the narrower `^bad-` pattern gives 165 strings and
+  `e2cb189210bb49c76e035a7ea3f2c2f0`, so the probe is reading the binary rather
+  than silently matching nothing. Together with the source-side check above,
+  **the eleven commits move no consensus rule.**
+
+  **What is deliberately NOT done yet**, and must run at roll time rather than
+  now: `ldd` on a **real fleet host** (the build host answers 0 missing
+  libraries, which is exactly the check that passed before a binary linked
+  against the build host's `libminiupnpc` was installed and would not start);
+  the `defcon-cli` comparison against the deployed copies; and the install
+  itself. `ops/fleet-deploy.sh` does the first; the roll waits on 10608.
+
+- The 2026-09-07 rollout (`c739d9f504`, 12 commits) reached all 162 daemons;
+  see `docs/devnet-rollouts.md`.
 
 ## 2b. What the first sanitizer run found (2026-09-07)
 
@@ -682,11 +794,15 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
 - ~~Refresh the inherited-failing tests listed in `CLAUDE.md`.~~ **Done**:
   `CLAUDE.md` now records `subsidy_tests` and `block_reward_reallocation_tests`
   as passing (measured 2026-09-05 on the deployed commit) and keeps the rest
-  with the date they were last measured. **What that leaves owed:** the names
-  still on the list — `validation_chainstate_tests/chainstate_update_tip`, six
-  `wallet_tests` cases and `rpc_getblockstats.py` — were verified on the
-  unmodified `v22.1.x` tip on 2026-09-02 and not since; re-measure them on the
-  current tip the next time the suite runs, and move any that pass.
+  with the date they were last measured. ~~**What that leaves owed:** the names
+  still on the list were verified on 2026-09-02 and not since.~~ **Discharged
+  2026-09-07/08.** The list was re-measured on the deployed `c739d9f504`
+  (`~/DEFCON-tests`, -O2, one process per suite): 156 suites, 764 cases,
+  exactly 16 failing, and that set equals `build.yml`'s exclusion list name for
+  name. `WatchOnlyPubKeys` came off the list by that run; `CLAUDE.md` carries
+  the current set with its date. The `--without-bdb` sanitizer run at
+  `fb88a893da` agrees (§2b): 17 of 157, the same 16 plus `dsl_service_pose_tests`
+  on its timeout.
 - **The 16 suites outside the CI gate were measured (2026-09-05, on the
   deployed `e15e29b136`) and the gate's exclusion list is exactly right.**
   Full run: 738 test cases, 12 aborted, 744 of 9,003,312 assertions failed.
