@@ -922,13 +922,22 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
   blocks. Verified against the version CI pins (8.30.1, not the 8.21.2 first
   tried -- the older binary does not honour the `[[allowlists]]` form and
   reported fourteen findings that were all configuration, not content): the
-  tree is clean, a planted `185.199.108.153` **is** caught, and an RFC 5737
+  tree is clean, a planted address from a real routable block **is** caught,
+  and an RFC 5737
   address passes. Both controls matter; a rule that flagged everything would
   pass the first alone.
 
+  **And it caught its own documentation, which is how the sequencing lesson was
+  learned.** The three checks were run, passed, and *then* this entry was
+  written -- with two routable literals in it, quoted as examples. CI failed on
+  exactly those two lines. The gate was right and the verification was stale:
+  proving a scanner clean before the last edit proves nothing about what is
+  pushed. Re-run it against `git archive HEAD`, which is the tree CI actually
+  sees, rather than a working copy that still has to be committed.
+
   Two things fixed alongside it. The last routable placeholder in the tree --
-  `1.2.3.4`, an APNIC-allocated address, in a fixture and a doc comment -- is
-  now `203.0.113.4`. And `lab-compose.yml` / `.lab-state/` are excluded by
+  an APNIC-allocated address of the `1.2.x.x` shape, in a fixture and a doc
+  comment -- is now an RFC 5737 one. And `lab-compose.yml` / `.lab-state/` are excluded by
   path: they are gitignored and CI never sees them, but they carry generated
   regtest credentials, so a developer who had run the lab watched
   `npm run verify:secrets` fail on seven findings that were neither real nor
