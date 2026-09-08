@@ -177,13 +177,42 @@ assertion. What those eight are:
   entry in any commit of its history, the Bitcoin Core merges included.
   Upstream needs none because its sanitizer builds do not link Berkeley DB;
   this tree links it, because the seed keeps a legacy wallet. So the gap is
-  our configuration's own, not a dropped inherited line -- which adds a
-  third option worth a trial before choosing between the two above: run the
-  sanitizer suite on a `--without-bdb` build, the configuration 160 of the
-  162 daemons actually run. It would remove the leaks without suppressing
-  anything, at the cost of leaving the seed's wallet backend unmeasured, and
-  it needs a trial run to see which wallet suites survive without BDB at
-  all.
+  our configuration's own, not a dropped inherited line.
+
+  **Settled 2026-09-08 by measurement: run the sanitizer suite
+  `--without-bdb`.** That is the configuration 160 of the 162 daemons already
+  run, and it removes the leaks without suppressing anything. Built at the
+  current tip `fb88a893da` (`~/DEFCON-nobdb-san`, same options as the BDB
+  sanitizer tree but `--without-bdb --with-sqlite=yes`; 5 min at `-O0`) and
+  run over all 157 suites:
+
+  | | with BDB (`37e845beb0`) | without BDB (`fb88a893da`) |
+  |---|---|---|
+  | AddressSanitizer | 0 | 0 |
+  | UndefinedBehaviourSanitizer | 1 | **0** (#216 fixed it) |
+  | LeakSanitizer | **7 suites** | **0** |
+  | failing suites | 24 of 156 | 17 of 157 |
+
+  All seven leaks are gone, and **nothing broke to buy that**: the set of
+  suites failing without BDB but not with it is empty. Six of the seven now
+  exit 0 clean; `wallet_tests` still fails, for its own inherited reason and
+  with `leak=0`. What remains failing is exactly `build.yml`'s 16-name
+  exclusion list plus `dsl_service_pose_tests`, which is a budget problem, not
+  a defect -- it is compute-bound at 98 % CPU (6453 s of CPU in 6603 s
+  elapsed) and hit the 7200 s cap; give it its own budget or run it at `-O2`.
+
+  The coverage is not bought by skipping: `CreateMockWalletDatabase()`
+  switches to SQLite under `#ifdef USE_BDB / #elif USE_SQLITE`
+  (`wallet/walletdb.cpp:1233`), so the suites run the same cases either way --
+  `wallet_tests` 17 and 17, `coinselector_tests` 4 and 4,
+  `pos_multiwallet_tests` 6 and 6.
+
+  **What it costs, stated rather than glossed:** `db_tests` is not compiled
+  without BDB -- it tests the Berkeley DB wrapper itself -- so that path stays
+  unmeasured under sanitizers. It matters for exactly one daemon of 162, the
+  seed, which is the only one with a legacy wallet. Suppressing `__os_malloc`
+  or rewriting the wallet teardown are both still available if that ever
+  matters; neither is needed for a clean baseline now.
 - ~~**One UBSan report, real and one line to fix.**~~ **CLOSED 2026-09-08,
   defcon-project/defcon#216** (`fb88a893da`, squashed onto `v22.1.x`).
   `net_tests`:
