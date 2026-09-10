@@ -67,6 +67,13 @@ export interface QuorumRoundView {
   roundKey: string;
   llmqName: string;
   llmqType: number;
+  /**
+   * Whether this profile forms on the v23 mainnet. Registry data derived at
+   * read time: the devnet punishes on profiles mainnet never runs, and a row
+   * without this reads as if its penalties had a mainnet counterpart. Absent
+   * from rows served before it was carried.
+   */
+  formsOnV23Mainnet?: boolean;
   quorumIndex: number;
   expectedHeight: number;
 
@@ -145,6 +152,23 @@ export type QuorumRoundListItem = Omit<QuorumRoundView, 'invalidMembers'> & {
 
 export interface QuorumRoundDetail extends QuorumRoundView {
   members: RoundMemberView[];
+  /** The registry's one-line reason for `formsOnV23Mainnet`; null for an unknown profile. */
+  mainnetNote?: string | null;
+}
+
+/** The LLMQ profile registry as the server reads rounds under it. */
+export interface LlmqProfileView {
+  llmqName: string;
+  llmqType: number;
+  size: number;
+  minSize: number;
+  threshold: number;
+  dkgInterval: number;
+  /** Whether a DKG schedule is reconstructed for it on this deployment. */
+  tracked: boolean;
+  formsOnV23Mainnet: boolean;
+  mainnetNote: string;
+  formationGateHeight: number | null;
 }
 
 export interface HealthTimelinePoint {
@@ -499,6 +523,25 @@ export interface ProfileOutcome {
   worstHealthRatio: number | null;
   longestFailureStreak: number;
   membersPunished: number;
+  /** Registry data added on read; absent from rows served before it was carried. */
+  formsOnV23Mainnet?: boolean;
+}
+
+/**
+ * The same window with the profiles the v23 mainnet never forms held out. The
+ * devnet punishes on four profiles and mainnet will punish on two, so a figure
+ * quoted from here without this is pessimistic for mainnet by an unknown
+ * amount -- on 2026-09-10, by all of it. Ban and penalty events are
+ * network-wide and are not split; only DKG-invalid members are counted.
+ */
+export interface MainnetRelevantOutcome {
+  profiles: string[];
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
+  formationRate: number | null;
+  medianHealthRatio: number | null;
+  worstHealthRatio: number | null;
+  longestFailureStreak: number;
+  membersPunished: number;
 }
 
 /** Sentinel epochs judged inside a run's window, counted by status. */
@@ -546,6 +589,11 @@ export interface ExperimentOutcome {
   dsl?: DslEpochOutcome | null;
   /** Absent on runs closed before more than one quorum type was tracked. */
   byProfile?: ProfileOutcome[];
+  /**
+   * Filled in on read for outcomes frozen before it existed, from the rounds
+   * still on record; null only when that was not possible.
+   */
+  mainnetRelevant?: MainnetRelevantOutcome | null;
 }
 
 export interface ExperimentRow {
@@ -560,7 +608,14 @@ export interface ExperimentRow {
   endHeight: number | null;
   nodeVersion: string;
   nodeGitSha: string | null;
-  profile: { llmqName: string; size: number; minSize: number; threshold: number; dkgInterval: number };
+  profile: {
+    llmqName: string;
+    size: number;
+    minSize: number;
+    threshold: number;
+    dkgInterval: number;
+    formsOnV23Mainnet?: boolean;
+  };
   participants: { masternodes: number; hosts: number; stakers: number };
   intervention: { kind: string; description: string; targets: string[] } | null;
   baselineRunKey: string | null;
@@ -586,6 +641,9 @@ export interface ExperimentDetail extends ExperimentRow {
       stakerHhi: number | null;
       stakerGini: number | null;
       dslConvergenceRate: number | null;
+      /** Formation and punishment with the profiles mainnet never forms held out. */
+      mainnetFormationRate: number | null;
+      mainnetMembersPunished: number | null;
     };
   } | null;
 }

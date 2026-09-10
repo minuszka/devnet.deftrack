@@ -7,10 +7,13 @@ import { MasternodeState } from '../models/MasternodeState.js';
 import { HostStatus } from '../models/HostStatus.js';
 import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { roundStats } from '../domain/roundStats.js';
+import { mainnetRelevantStats } from '../domain/mainnetRelevant.js';
+import { formsOnV23Mainnet } from '../config/llmq.js';
 import type {
   DslEpochOutcome,
   ExperimentOutcome,
   ExperimentRunDocument,
+  MainnetRelevantOutcome,
   ProfileOutcome,
 } from '../models/ExperimentRun.js';
 
@@ -97,6 +100,10 @@ export async function computeOutcome(
     worstHealthRatio: overall.worstHealthRatio,
     longestFailureStreak: longest,
     byProfile,
+    // The window as the v23 mainnet would count it: the devnet punishes on
+    // four profiles, mainnet will punish on two, and a penalty figure quoted
+    // without this is pessimistic for mainnet by an unknown amount.
+    mainnetRelevant: mainnetRelevantStats(rounds, formsOnV23Mainnet),
 
     banEvents: events.filter((e) => e.type === 'banned').length,
     revivalEvents: events.filter((e) => e.type === 'revived').length,
@@ -127,6 +134,25 @@ export async function computeOutcome(
     // that one.
     dsl: dslOutcome(epochs),
   };
+}
+
+/**
+ * The mainnet view alone, for an outcome frozen before it was carried. The
+ * rounds are still in the collection, so an old run can answer the question at
+ * read time; nothing is written back, and a run closed with the field keeps
+ * what it froze.
+ */
+export async function mainnetRelevantForRun(
+  run: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>,
+  tipHeight: number
+): Promise<MainnetRelevantOutcome> {
+  const rounds = await QuorumRound.find({
+    expectedHeight: { $gte: run.startHeight, $lte: run.endHeight ?? tipHeight },
+  })
+    .sort({ expectedHeight: 1 })
+    .select('llmqName status healthRatio invalidMembers')
+    .lean();
+  return mainnetRelevantStats(rounds, formsOnV23Mainnet);
 }
 
 /**
@@ -223,6 +249,13 @@ export interface OutcomeDelta {
    * before epochs were carried or watched none -- never zero for "unknown".
    */
   dslConvergenceRate: number | null;
+  /**
+   * Formation rate and members punished with the profiles mainnet never forms
+   * held out. Null when either side lacks the mainnet view -- which the read
+   * path only leaves unset when it could not recompute one from the rounds.
+   */
+  mainnetFormationRate: number | null;
+  mainnetMembersPunished: number | null;
 }
 
 /** Run minus baseline, field by field. Null where either side has no value. */
@@ -243,5 +276,13 @@ export function compareOutcomes(run: ExperimentOutcome, baseline: ExperimentOutc
     stakerHhi: diff(run.stakerHhi ?? null, baseline.stakerHhi ?? null),
     stakerGini: diff(run.stakerGini ?? null, baseline.stakerGini ?? null),
     dslConvergenceRate: diff(run.dsl?.convergenceRate ?? null, baseline.dsl?.convergenceRate ?? null),
+    mainnetFormationRate: diff(
+      run.mainnetRelevant?.formationRate ?? null,
+      baseline.mainnetRelevant?.formationRate ?? null
+    ),
+    mainnetMembersPunished:
+      run.mainnetRelevant && baseline.mainnetRelevant
+        ? run.mainnetRelevant.membersPunished - baseline.mainnetRelevant.membersPunished
+        : null,
   };
 }

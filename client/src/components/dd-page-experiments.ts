@@ -74,6 +74,22 @@ export class DdPageExperiments extends LitElement {
         color: var(--crit);
         font-weight: 600;
       }
+      /* A type the v23 mainnet never forms, beside its name in every table
+         that counts its penalties. */
+      .badge {
+        margin-left: 6px;
+        padding: 1px 5px;
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--radius);
+        color: var(--ink-3);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        vertical-align: middle;
+        cursor: help;
+      }
     `,
   ];
 
@@ -217,8 +233,91 @@ export class DdPageExperiments extends LitElement {
             </section>
           `
         : nothing}
-      ${this._found(d)} ${this._byProfile(d)} ${this._declared(d)}
+      ${this._found(d)} ${this._byProfile(d)} ${this._mainnetView(d)} ${this._declared(d)}
       ${d.comparison ? this._comparison(d) : nothing}
+    `;
+  }
+
+  /** The tag a profile the v23 mainnet never forms carries wherever it is named. */
+  private _devnetTag(formsOnV23Mainnet: boolean | undefined): TemplateResult | typeof nothing {
+    if (formsOnV23Mainnet !== false) return nothing;
+    return html`<span
+      class="badge"
+      title="Forms on this devnet and not on the v23 mainnet: the node admits this profile on testnet and devnet only. Its exclusions carry the same PoSe penalty here, and none on mainnet."
+      >devnet-only</span
+    >`;
+  }
+
+  /**
+   * The same window with the profiles the v23 mainnet never forms held out.
+   *
+   * The devnet punishes on four profiles; mainnet will punish on two. So a
+   * roll that "punished three" here may have punished nobody as mainnet would
+   * count it -- which is exactly what the 2026-09-10 roll did, all three in
+   * one llmq_50_60 round. Without this row every devnet figure is quoted for
+   * mainnet pessimistically, by an amount the reader cannot see.
+   */
+  private _mainnetView(d: ExperimentDetail): TemplateResult | typeof nothing {
+    const o = d.outcome;
+    const m = o?.mainnetRelevant;
+    if (!o || m == null) return nothing;
+    const devnetOnly = (o.byProfile ?? []).filter((p) => p.formsOnV23Mainnet === false);
+    const heldOut = devnetOnly.map((p) => `${p.llmqName} ${num(p.membersPunished)}`).join(', ');
+
+    return html`
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">As the v23 mainnet would count it</div>
+          <div class="page-sub mono">
+            ${m.profiles.length === 0 ? 'no mainnet-forming round in the window' : m.profiles.join(' · ')}
+          </div>
+        </div>
+        <div class="card-body flush">
+          <div class="twrap">
+            <table>
+              <caption class="sr-only">This run's rounds with the profiles the v23 mainnet never forms held out.</caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="r">Formed</th>
+                  <th scope="col" class="r">Failed</th>
+                  <th scope="col" class="r">Pending</th>
+                  <th scope="col" class="r">Impossible</th>
+                  <th scope="col" class="r">Formation</th>
+                  <th scope="col" class="r">Median health</th>
+                  <th scope="col" class="r">Worst</th>
+                  <th scope="col" class="r">Longest streak</th>
+                  <th scope="col" class="r">Members punished</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="r mono">${num(m.rounds.formed)}</td>
+                  <td class="r mono ${m.rounds.failed > 0 ? 'bad' : ''}">${num(m.rounds.failed)}</td>
+                  <td class="r mono">${num(m.rounds.pending)}</td>
+                  <td class="r mono muted">${num(m.rounds.impossible)}</td>
+                  <td class="r mono">${m.formationRate === null ? '—' : ratio(m.formationRate)}</td>
+                  <td class="r mono">${m.medianHealthRatio === null ? '—' : ratio(m.medianHealthRatio)}</td>
+                  <td class="r mono ${(m.worstHealthRatio ?? 1) < 0.5 ? 'bad' : ''}">
+                    ${m.worstHealthRatio === null ? '—' : ratio(m.worstHealthRatio)}
+                  </td>
+                  <td class="r mono ${m.longestFailureStreak > 0 ? 'bad' : ''}">${num(m.longestFailureStreak)}</td>
+                  <td class="r mono ${m.membersPunished > 0 ? 'bad' : ''}">${num(m.membersPunished)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="caveat">
+            The devnet forms four punishing quorum types; the v23 mainnet will form two of them.
+            Every figure at the top of this page counts all four. This row counts only the types
+            mainnet runs${devnetOnly.length > 0
+              ? html` — the devnet-only types marked invalid, in this window: ${heldOut}, penalties
+                  mainnet would never have handed out`
+              : nothing}.
+            Ban and penalty <em>events</em> are network-wide and are not split: a masternode banned
+            by two llmq_50_60 exclusions still counts in “Masternodes punished” above.
+          </div>
+        </div>
+      </section>
     `;
   }
 
@@ -283,7 +382,7 @@ export class DdPageExperiments extends LitElement {
                 ${rows.map(
                   (p) => html`
                     <tr>
-                      <td class="mono">${p.llmqName}</td>
+                      <td class="mono">${p.llmqName}${this._devnetTag(p.formsOnV23Mainnet)}</td>
                       <td class="r mono">${num(p.dkgInterval)} blk</td>
                       <td class="r mono">${num(p.rounds.formed)}</td>
                       <td class="r mono ${p.rounds.failed > 0 ? 'bad' : ''}">
@@ -321,6 +420,10 @@ export class DdPageExperiments extends LitElement {
             members than the network has cannot form however well every masternode behaves —
             llmq_400_85 asks for 350 against a devnet of at most 80 — so those rounds are held
             out of the formation rate rather than counted against it.
+            <br /><br />
+            <strong>devnet-only</strong> marks a type the v23 mainnet never forms: the node admits
+            llmq_50_60 and llmq_60_75 on testnet and devnet only. Their exclusions carry the same
+            penalty here and none on mainnet — the next card counts this window as mainnet would.
           </div>
         </div>
       </section>
@@ -349,7 +452,7 @@ export class DdPageExperiments extends LitElement {
             <dd class="mono">v${d.nodeVersion}${d.nodeGitSha ? ` @ ${d.nodeGitSha.slice(0, 10)}` : ''}</dd>
             <dt>Profile</dt>
             <dd class="mono">
-              ${d.profile.llmqName} · size ${num(d.profile.size)} / min ${num(d.profile.minSize)} /
+              ${d.profile.llmqName}${this._devnetTag(d.profile.formsOnV23Mainnet)} · size ${num(d.profile.size)} / min ${num(d.profile.minSize)} /
               threshold ${num(d.profile.threshold)} · dkgInterval ${num(d.profile.dkgInterval)}
             </dd>
             <dt>Participants</dt>
@@ -391,6 +494,11 @@ export class DdPageExperiments extends LitElement {
       { label: 'Median health', run: o?.medianHealthRatio ?? null, base: b.medianHealthRatio, delta: c.delta.medianHealthRatio, kind: 'ratio', higherIsBetter: true },
       { label: 'ChainLock coverage', run: o?.chainLockCoverage ?? null, base: b.chainLockCoverage, delta: c.delta.chainLockCoverage, kind: 'ratio', higherIsBetter: true },
       { label: 'Masternodes punished', run: o?.masternodesPunished ?? null, base: b.masternodesPunished, delta: c.delta.masternodesPunished, kind: 'number', higherIsBetter: false },
+      // The same two figures as the v23 mainnet would count them: the devnet
+      // punishes on four profiles, mainnet will punish on two, and a roll that
+      // "punished three" here punished nobody by mainnet's count (2026-09-10).
+      { label: 'Formation rate (v23 mainnet types)', run: o?.mainnetRelevant?.formationRate ?? null, base: b.mainnetRelevant?.formationRate ?? null, delta: c.delta.mainnetFormationRate, kind: 'ratio', higherIsBetter: true },
+      { label: 'Members punished (v23 mainnet types)', run: o?.mainnetRelevant?.membersPunished ?? null, base: b.mainnetRelevant?.membersPunished ?? null, delta: c.delta.mainnetMembersPunished, kind: 'number', higherIsBetter: false },
       // The spacing target governs the MEAN. Intervals are exponentially
       // distributed, so the median sits at 0.693 of the mean and reads 30%
       // fast against the target; both are shown so neither is read as the

@@ -1,6 +1,7 @@
 import type {
   ApiEnvelope,
   HealthTimeline,
+  LlmqProfileView,
   OperatorReliabilityRow,
   Page,
   QuorumRoundDetail,
@@ -136,6 +137,13 @@ function makeApi(signal?: AbortSignal) {
       get<Page<QuorumRoundListItem>>('/quorum-rounds', params),
 
     round: (id: string) => get<QuorumRoundDetail>(`/quorum-rounds/${encodeURIComponent(id)}`),
+
+    /**
+     * The profile registry, for the one fact no round row can carry on its
+     * own: whether its type forms on the v23 mainnet, and why. Fetched once
+     * per page rather than per poll; it changes with the binary, not the tip.
+     */
+    llmqProfiles: () => get<{ items: LlmqProfileView[] }>('/quorum-rounds/profiles'),
 
     /**
      * Without `llmqName` the server does not filter, and the summary is computed
