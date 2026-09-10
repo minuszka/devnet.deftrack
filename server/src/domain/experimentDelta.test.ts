@@ -94,3 +94,16 @@ describe('comparing a run against its baseline', () => {
     expect(compareOutcomes(outcome({}), outcome({ topStakerShare: 0.44 })).topStakerShare).toBeNull();
   });
 });
+
+describe('the Sentinel convergence delta', () => {
+  it('is the signed change in convergence, and null where a side carried no epochs', () => {
+    const withEpochs = (rate: number | null) =>
+      outcome({ dsl: rate === null ? null : { epochs: 60, committed: Math.round(rate * 60), absent: 60 - Math.round(rate * 60), missedBits: 0, convergenceRate: rate } });
+
+    expect(compareOutcomes(withEpochs(1), withEpochs(0.9517)).dslConvergenceRate).toBeCloseTo(0.0483, 6);
+    // Neither an outcome frozen before epochs were carried nor a window that
+    // judged none has a rate; the delta must say so rather than say zero.
+    expect(compareOutcomes(withEpochs(1), outcome({})).dslConvergenceRate).toBeNull();
+    expect(compareOutcomes(withEpochs(null), withEpochs(1)).dslConvergenceRate).toBeNull();
+  });
+});

@@ -474,6 +474,15 @@ export interface ProfileOutcome {
   membersPunished: number;
 }
 
+/** Sentinel epochs judged inside a run's window, counted by status. */
+export interface DslEpochOutcome {
+  epochs: number;
+  committed: number;
+  absent: number;
+  missedBits: number;
+  convergenceRate: number | null;
+}
+
 export interface ExperimentOutcome {
   rounds: { formed: number; failed: number; pending: number; impossible: number };
   formationRate: number | null;
@@ -506,6 +515,8 @@ export interface ExperimentOutcome {
   stakerGini?: number | null;
   chainLockedBlocks: number;
   chainLockCoverage: number | null;
+  /** Absent on runs closed before epochs were carried; null when none was judged. */
+  dsl?: DslEpochOutcome | null;
   /** Absent on runs closed before more than one quorum type was tracked. */
   byProfile?: ProfileOutcome[];
 }
@@ -547,6 +558,7 @@ export interface ExperimentDetail extends ExperimentRow {
       topStakerShare: number | null;
       stakerHhi: number | null;
       stakerGini: number | null;
+      dslConvergenceRate: number | null;
     };
   } | null;
 }
