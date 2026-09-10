@@ -485,6 +485,41 @@ Two corrections to what this entry said before, both verified at
   on the sync cursor (`operatorRewind`: who, when, to where, how many blocks
   dropped) and the next tick follows the surviving chain.
 
+- **A rolling restart fails the Q60 DKG cycle whose base block falls inside
+  it, and loses the Sentinel epoch that contains it.** Measured 2026-09-10: a
+  16-host, 17-minute roll straddled the `llmq_defcon` base at 10920; 38 of the
+  60 selected members were on hosts restarted at or after the session's
+  Initialized stage, and `dkgsessionhandler.cpp:756-786` lets a daemon join a
+  DKG only at that stage -- a later start waits for the next cycle. Fewer than
+  `minSize` 44 remained, so no commitment was possible; `llmq_50_60` at the
+  same base formed 47/50 because its `minSize` is 3 and mid-session restarters
+  had already sent contributions. The three penalised were all on the host
+  restarted **13 s before the base block**: a roll punishes the node that is
+  down around the base, not the one restarting mid-session. To the sentinels a
+  fleet-wide restart is an outage, and that epoch went absent. Time a roll to
+  start right after a cycle's Commit stage (base + 8..10 blocks) and finish
+  before the next base; declare the absent epoch as expected. The explorer
+  now names the covering run on such a round ("Explained"), and every failed
+  round since the first masternode existed has one -- 20 of 20.
+
+- **A leading dash on `ExecStartPost=` discounts the exit status, not the
+  waiting.** `ops/defcon-enable-staking` used to wait 60 x 5 s = 300 s for a
+  staking wallet, every unit carrying it has `TimeoutStartSec` 90 s, and a
+  hook still running at 90 s fails the start and `Restart=on-failure` loops
+  the daemon. On the seed (`staking=0`) that was a certainty, not a race: the
+  node's RPC answers `{}` from `liststakingwallets` both when staking is off
+  and while the wallet vector is not built yet (`src/pos/minter.cpp:189`
+  returns before `MultiwalletInitialize`), so the hook can only spend its whole
+  budget there. Measured before installing, 2026-09-10; the budget is now 12
+  tries, the seed carries no hook, and the node-side gap is with the audit.
+  Any hook wired into a unit must fit inside that unit's start timeout.
+
+- **`ops/deploy.sh` reported a finished, working deploy as failed** because its
+  readiness check asked the API once at 0 ms after `systemctl restart` and got
+  "Couldn't connect"; under `set -e` that also hid the served-bundle check. It
+  polls for 60 s now. A tool whose last word is wrong in the alarming direction
+  trains the operator to ignore it, which is the more dangerous failure.
+
 ## Measurement caveats that are easy to get wrong
 
 - **ChainLock coverage starts at the first lock ever seen,** not at the start
