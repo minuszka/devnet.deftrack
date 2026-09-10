@@ -581,6 +581,25 @@ Two corrections to what this entry said before, both verified at
   locked, never when the CLSIG arrived, so resolution equals the poll interval
   and blocks locked before the watcher started carry `null`, not a number.
 
+- **A node's tip is not the network's tip, and on this devnet the gap reaches
+  minutes.** Measured 2026-09-10 with `ops/block-arrival-lag.py` over one
+  window (heights 10540–11125, the rollout excluded) on five daemons: the
+  time between a block's own header timestamp and the node connecting it is
+  median 2 s and p90 6–9 s everywhere, but **0.7 % to 3.6 % of blocks land more
+  than 120 s late**, p99 82–297 s, max 448 s. The seed — the explorer's own RPC
+  source — is the worst of the five; devnet2 on the same machine is three times
+  better, so it follows the peer set rather than the host. In eleven of the
+  seed's twenty late blocks the node names the culprit itself
+  (`Timeout downloading block … from peer=N, disconnecting`, one full
+  block-download timeout), twice with two peers in a row for one block.
+
+  Consequence for every measurement taken at the seed: a lock, a ChainLock or a
+  transaction that "did not arrive" may be a block that had not arrived, and
+  nothing in RPC says so while it lasts. Two of the sixty InstantSend
+  transactions on 2026-09-10 were exactly that. Run the tool over the window
+  before attributing a delay to a quorum, and prefer a second observer for any
+  wall-clock claim.
+
 - **A median block interval is 0.693 of the mean, and the target governs the
   mean.** Intervals are exponentially distributed (a Poisson process), so the
   median sits at `mean x ln 2`: measured over 40 blocks on 2026-09-05, mean
