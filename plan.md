@@ -640,6 +640,36 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   - mainnet from its public explorer: **217 masternodes**, tip 133285, and
     every measured peer on `/DeFCoN:22.1.4/` (54 of 55) — adoption starts at
     zero, and the explorer's own node is under the H−120 deadline too.
+  - **Phase-1 pre-rehearsal on the deployed tree, 2026-09-10 (`25c3966adc`,
+    fleet build `c07037160d46fc152dfb4417f4e78a90`), against the pristine
+    v22.1.4 mainnet datadir** (`~/mainnet-2214-backup-2214`, height 129777,
+    evodb `b_b4`/`dmn_S3`; the `d:\x\Defcon` copy the 2026-09-04 note names is
+    gone, and this copy's tip is 129777, not 130100). Three derivations, one
+    tip, `831cc9352ac13eb8bc6cb27436e2e1819d2fd5fc8766b9c424dec3af66082e32`:
+    **A**, in-place migration — 234 migrate lines, `b_b4`→`b_b6`,
+    `dmn_S3`→`dmn_S5`, 0 errors, up in 4 s; **B**, full reindex with
+    `-assumevalid=0 -txindex=1` — same tip in 214 s, 220 masternodes / 138
+    enabled from blocks alone, 0 validation problems; **C**, reindex killed -9
+    at 65021 and restarted with no flag — up at the flushed tip 61709 in 2 s,
+    every migration gate "already done", the import continued to 129777 within
+    a minute, 224 snapshot pairs verified. C is #222 on real mainnet data, and
+    it passed by the *other* half of the fix: nine evodb flushes during the
+    import kept the evodb level with the coins, so `ReconcileEvoDBToTip` had
+    nothing to replay and wrote nothing. The reconciliation half acts only on a
+    datadir an older binary left lagging.
+
+    One correction owed to the audit note: `ReconcileEvoDBToTip` is not silent
+    on every idle start — Test A logged `evodb carries the older marker b_b4 and
+    no b_b6: this database is not migrated, not stranded; leaving it to the
+    migration gates`. It is silent on a migrated database already at the tip,
+    which is every healthy restart, and that is the case the note meant.
+
+    Harness lesson, so the next run does not lose twenty minutes to it: a
+    daemon started inside `PID=$(start …)` holds the command substitution's
+    stdout open, so the substitution never returns while the daemon runs;
+    redirect the daemon's stdout and stderr before backgrounding it. And the
+    node shrinks a `debug.log` over 10 MB at startup, so a line count taken
+    before a restart cannot be used to `tail` the lines after it.
   - **Phase 2 delivered here:** the software census (`/masternodes/versions`,
     off the seed's peer table, 151/152 coverage) — the instrument the phase-3
     go/no-go reads. Owed: the same on the production explorer, the countdown
