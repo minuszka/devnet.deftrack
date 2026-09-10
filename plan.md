@@ -509,7 +509,14 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   host was restarting. 0 bans, 152/152 enabled, ZMQ 0 missed, and Sentinel
   epoch 454 at that same boundary **committed with 0 missed bits**: no absent
   epoch this time, where 2026-09-07 lost one (381) and had eight `penalty_up`
-  and a ban. The `llmq_defcon` round at 10920 is still pending. One exclusion
+  and a ban. The `llmq_defcon` round at 10920 -- the ChainLock profile -- **failed**:
+  no commitment, nobody punished, which is what a failed DKG is. It left no
+  ChainLock gap (500/500 locked, every block 10917-10941 locked; the other
+  active Q60 quorums carried it). This is the one respect in which this roll
+  was noisier than 2026-09-07, whose run had 0 failed rounds in its window:
+  the restarts fell inside the 10920 cycle's DKG phases. Whether it recurs at
+  10944 is the decisive reading, and it decides just before the window
+  closes. One exclusion
   cannot ban (100 < 152), but a second within 48 blocks would (200 - g >= 152),
   and the next `llmq_50_60` round is at 10944, 24 blocks later — inside that
   window for those three. Nothing is done about it: the mesh re-forms on its

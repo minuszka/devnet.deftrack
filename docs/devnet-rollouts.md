@@ -132,7 +132,12 @@ excluded three members — masternodes drawn into a round while their host was
 restarting, each left with a PoSe penalty of 98 that decays by one per block.
 No ban, 152/152 enabled, ZMQ 0 missed, and the Sentinel epoch at that same
 boundary committed with 0 missed bits, where the previous roll lost an epoch
-outright and produced eight penalty increases and a ban. A second exclusion of
+outright and produced eight penalty increases and a ban. The ChainLock profile's own round at that base, `llmq_defcon` at 10920,
+**failed** -- no commitment, nobody punished -- and left no ChainLock gap:
+500/500 blocks locked, the other active quorums carrying it. That is the one
+respect in which this roll was noisier than the previous one, which had no
+failed round in its window; whether it recurs at the next cycle is the
+reading the close waits for. A second exclusion of
 any of the three within 48 blocks would ban it, and the next round of that
 profile falls inside that window; if that happens it is the "possibly one
 PoSe ban" the run declared, not a finding. The two-hour quiet window after a
