@@ -702,6 +702,21 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
     page, and the phase-1 rehearsals once an RC exists (migration on the
     mainnet datadir copy, the proto-floor exclusion, the lab switchover).
 
+    **The production half is specified, not started
+    (`docs/v23-production-explorer-port.md`, 2026-09-10).** Read out of
+    `d:\www\DeFCoN_Explorer` with a negative control on every search and
+    nothing modified there, because CLAUDE.md makes the reference projects
+    read-only: that explorer already stores a per-node version
+    (`NodeInventory.walletVersion`, a scanner with four sources), but it
+    attributes it **by host IP** -- `verified_proregtx_hash` occurs zero times
+    in the repository -- so every masternode behind one address is counted as
+    whatever the first peer row said. And the constraint that shapes the whole
+    thing: its node answered **55 connections against 217 masternodes** today,
+    so a peer-table reading there is a sample of at most a quarter of the
+    network, never the census the devnet's fleet-dials-the-seed topology
+    gives us. Three owner decisions are named at the end of that file, and the
+    work cannot start without the first.
+
 - The 2026-09-07 rollout (`c739d9f504`, 12 commits) reached all 162 daemons;
   see `docs/devnet-rollouts.md`.
 
@@ -1043,6 +1058,18 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   Open, and worth a decision rather than a guess: whether the seed's share is
   its peer count, its RPC load, or the announcing peers it happens to pick. The
   tool makes any of those measurable on a second window.
+
+  **One structural fact is in already (2026-09-10, `getpeerinfo`).** The seed
+  holds **169 peers, 161 of them inbound** against 8 outbound; devnet2, three
+  times better on every lag percentile, holds **28, every one outbound** (16 of
+  them masternode connections). So the daemon that waits to be dialled is the
+  one that waits for blocks, and the one that chooses its peers does not. That
+  is consistent with the mechanism the log names -- the body is requested from
+  whoever announced it, and the seed's announcers are the whole fleet,
+  including nodes that are themselves behind -- but it is a correlation of two
+  daemons, not a cause. Settling it needs either a controlled change (more
+  outbound slots on the seed) or a window in which the two are compared with
+  the RPC load moved, and neither is worth a restart on its own.
 - **`medianBlockIntervalSec` must not be compared against the target spacing.**
   Block intervals are a Poisson process, so they are exponentially distributed
   and the median is `mean x ln2` = 0.693 of the mean, never the mean itself.

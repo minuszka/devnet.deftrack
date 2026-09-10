@@ -54,3 +54,6 @@ __pycache__/
 # the session's shell started. Kept out of git status so a real change stays
 # visible; nothing in the tree references them.
 audit-scratch/
+
+# Playwright MCP session output (page snapshots taken while verifying a view).
+.playwright-mcp/
