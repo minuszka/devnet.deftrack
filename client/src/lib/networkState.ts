@@ -9,7 +9,7 @@ import type { QuorumRoundListItem } from '@devnet-deftrack/shared';
  * is the finding this whole project exists to catch. Reading 0.0% in red during
  * bootstrap trains the eye to ignore the number that matters later.
  */
-export type NetworkState = 'bootstrap' | 'healthy' | 'investigate';
+export type NetworkState = 'bootstrap' | 'healthy' | 'investigate' | 'intervened';
 
 export interface NetworkStatus {
   state: NetworkState;
@@ -27,6 +27,8 @@ export interface NetworkStatus {
   progress: number;
   /** Height of the next round still inside its window, if one is scheduled. */
   nextRoundHeight: number | null;
+  /** The declared intervention whose window covers the latest failed round, if any. */
+  intervention: { runKey: string; title: string } | null;
 }
 
 export interface NetworkStateInput {
@@ -45,7 +47,16 @@ export function classifyNetwork(input: NetworkStateInput): NetworkStatus {
   const nextRoundHeight = pending?.expectedHeight ?? null;
   const progress = minSize > 0 ? Math.min(1, enabled / minSize) : 0;
 
-  const base = { enabledMasternodes: enabled, minSize, progress, nextRoundHeight };
+  // The latest failed round and, if a declared intervention covers its DKG
+  // window, that run. Looked up first because every state carries it: a
+  // failure explained by a rollout is not a finding about the network, and
+  // the page said "inspect quorum connectivity" about exactly such a round
+  // while its own Experiments record already held the explanation.
+  const lastFailed = input.rounds.find((r) => r.status === 'failed') ?? null;
+  const cover = lastFailed?.interventions?.[0] ?? null;
+  const intervention = cover ? { runKey: cover.runKey, title: cover.title } : null;
+
+  const base = { enabledMasternodes: enabled, minSize, progress, nextRoundHeight, intervention };
 
   // Not enough masternodes for a quorum to exist at all. Nothing here is a
   // fault, and a failed round in this state carries no evidence about anyone.
@@ -65,7 +76,16 @@ export function classifyNetwork(input: NetworkStateInput): NetworkStatus {
 
   // Enough masternodes exist, so a round that failed to form is a real finding
   // and not arithmetic.
-  const lastFailed = input.rounds.find((r) => r.status === 'failed') ?? null;
+  if (lastFailed && cover) {
+    return {
+      ...base,
+      state: 'intervened',
+      label: 'Explained',
+      headline: `DKG failed at height ${lastFailed.expectedHeight} inside a declared intervention`,
+      detail:
+        'A restart inside a DKG window fails the round by construction and mines no commitment, so nobody is punished. The next round says whether the network is healthy. Covered by:',
+    };
+  }
   if (lastFailed) {
     return {
       ...base,
