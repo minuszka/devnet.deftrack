@@ -126,22 +126,59 @@ their own users. One observation against the declared expectation:
 same in the journal as a start on a binary that never had the reconciler. The
 proof it is there is `nm`.
 
-**Noise: the declared kind, and less of it than on 2026-09-07.** The first
-DKG round after the restarts, `llmq_50_60` at 10920, formed at 47/50 and
-excluded three members — masternodes drawn into a round while their host was
-restarting, each left with a PoSe penalty of 98 that decays by one per block.
-No ban, 152/152 enabled, ZMQ 0 missed, and the Sentinel epoch at that same
-boundary committed with 0 missed bits, where the previous roll lost an epoch
-outright and produced eight penalty increases and a ban. The ChainLock profile's own round at that base, `llmq_defcon` at 10920,
-**failed** -- no commitment, nobody punished -- and left no ChainLock gap:
-500/500 blocks locked, the other active quorums carrying it. That is the one
-respect in which this roll was noisier than the previous one, which had no
-failed round in its window; whether it recurs at the next cycle is the
-reading the close waits for. A second exclusion of
-any of the three within 48 blocks would ban it, and the next round of that
-profile falls inside that window; if that happens it is the "possibly one
-PoSe ban" the run declared, not a finding. The two-hour quiet window after a
-restart of this size stands regardless, and the run is closed after it.
+**Noise, final.** The run closed at 10983, two and a quarter hours after the
+last restart: 3 penalty increases, 3 masternodes punished, no ban; 7 of 8
+decided rounds formed, the one failure being the ChainLock profile's round
+at 10920 (below); ChainLock coverage 69 of 69 blocks; Sentinel epochs 454
+committed, **455 absent**, 456 committed. Against the previous roll's 8
+penalty increases, 1 ban and 1 absent epoch: fewer penalties and no ban, the
+same one lost epoch, and one failed round more -- the last two are one event
+seen by two layers, and both are the restarts.
+
+### Why the Q60 round at 10920 failed, and what the next roll does differently
+
+The explorer reproduces the node's quorum member selection, order included,
+and it was checked against two formed quorums before being asked about the
+failed one: the `llmq_50_60` round at the same base and the `llmq_defcon`
+round one cycle earlier both match the node exactly. The sixty members the
+failed round expected were then mapped to the fleet hosts and to the moment
+each host restarted, against the cycle's DKG stages taken from block times.
+
+Thirty-eight of the sixty were on hosts restarted at or after the session's
+Initialized stage. A daemon that starts after that stage does not join the
+session in progress -- the handler waits for the next Initialized -- so at
+most 22-25 members were still in the session when it came to commit, under
+the profile's `minSize` of 44. The round could not have formed. The
+`llmq_50_60` round at the same base formed at 47/50 because its `minSize` is
+3, and a member restarted mid-session had already sent its contribution. The
+three it excluded, and the three left with a penalty, are all on the host
+that restarted thirteen seconds *before* the base block: its daemons missed
+the base tip, never joined, never contributed. A roll punishes the node that
+is down around the base block, not the one that restarts mid-session.
+
+The next cycle, 10944, was the first with every host up, and it formed at
+60/60 with nobody punished -- which settles the cause as the restarts. The
+rule that follows: a rolling restart of this size fails any Q60 cycle whose
+base block falls inside it. Start the roll just after a cycle's Commit stage
+(base + 8..10 blocks) so it finishes before the next base, and neither the
+round nor anyone's penalty happens.
+
+### The Sentinel record for the restart hour is missing, and that is a data point
+
+Epoch 455, whose boundary is block 10944, has no commitment: the hour it
+covers is the one in which all 160 fleet daemons restarted. The Sentinel
+layer's own observation run, closed the same morning with sixty clean epochs,
+had said in advance that sixty quiet hours prove nothing about an hour with
+an outage in it -- and a fleet-wide rolling restart is an outage as far as the
+sentinels are concerned. The one block of margin the September 7 fixes bought
+held for sixty quiet hours and did not hold here. Nothing on the network says
+why: the layer writes no log line at all, on any node, which has gone to the
+audit as its own item. The quorum that should have signed existed -- the
+signer is chosen among the quorums active before the epoch began, not the one
+that failed to form -- so what did not happen is an agreed report pool signed
+inside the window. The remedy the plan already names, a wall-clock margin for
+the signing, more than one block for the record, or a retry, now has an
+outage-shaped data point it did not have before.
 
 ### Also shipped, without a restart: the staking hook — and what its install note got wrong
 

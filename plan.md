@@ -482,8 +482,8 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   Tip 10021, so 10608 is ~587 blocks — the evening of 2026-09-09 at the
   measured mean interval.
 
-- **Rolled 2026-09-10 at `25c3966adc`: 162 of 162 daemons, one chain, zero
-  noise at T+1h.** Order as declared in `fleet-rollout-222-2026-09-10` (opened
+- **Rolled 2026-09-10 at `25c3966adc`: 162 of 162 daemons, one chain; the run
+  closed at 10983 (12:23 CEST) with its outcome frozen.** Order as declared in `fleet-rollout-222-2026-09-10` (opened
   at 10915, before any restart): devnet2 09:47 CEST, seed 09:48, then the 16
   fleet hosts 09:5x–10:25 through `FLEET_INVENTORY=/root/fleet-nodes-all.txt
   ops/fleet-deploy.sh` — 160 instances, "hosts with a problem: 0".
@@ -501,32 +501,108 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   start and a start on which the reconciler was never compiled in look the same
   in the journal, and the only proof it is there is `nm` (2 symbols).
 
-  **Noise: the declared kind, and less of it than on 2026-09-07.** The first
-  DKG round after the restarts, `llmq_50_60` at 10920, formed at 47/50 and
-  excluded three members, each now carrying a PoSe penalty of 98 —
-  `CalcPenalty(66)` is 100 at 152 registered, minus two blocks of decay —
-  which is what `expected` declared: masternodes drawn into a round while their
-  host was restarting. 0 bans, 152/152 enabled, ZMQ 0 missed, and Sentinel
-  epoch 454 at that same boundary **committed with 0 missed bits**: no absent
-  epoch this time, where 2026-09-07 lost one (381) and had eight `penalty_up`
-  and a ban. The `llmq_defcon` round at 10920 -- the ChainLock profile -- **failed**:
-  no commitment, nobody punished, which is what a failed DKG is. It left no
-  ChainLock gap (500/500 locked, every block 10917-10941 locked; the other
-  active Q60 quorums carried it). This is the one respect in which this roll
-  was noisier than 2026-09-07, whose run had 0 failed rounds in its window:
-  the restarts fell inside the 10920 cycle's DKG phases. Whether it recurs at
-  10944 is the decisive reading, and it decides just before the window
-  closes. One exclusion
-  cannot ban (100 < 152), but a second within 48 blocks would (200 - g >= 152),
-  and the next `llmq_50_60` round is at 10944, 24 blocks later — inside that
-  window for those three. Nothing is done about it: the mesh re-forms on its
-  own, and a ban there would be the declared "possibly one PoSe ban", an
-  artefact of the intervention. The last fleet restart was at 10:08:10 CEST, so the
-  quiet window runs to about 12:08; **closing the run is owed after it**, and `computeOutcome` will
-  then carry whatever the window produced. (An earlier version of this
-  paragraph, written about fifteen minutes after the last restart, said "none so
-  far" and mis-dated the reading as T+1h; corrected once the 10920 round
-  decided.)
+  **Noise, final (run closed at 10983, 12:23 CEST, 2 h 15 min after the last
+  restart):** 3 `penalty_up`, 3 masternodes punished, **0 bans**, 0 revivals;
+  8 decided rounds in the window, **7 formed, 1 failed** (`llmq_defcon` at
+  10920 -- forensics below), formation rate 0.875, median health 1.00, worst
+  0.94 (the 47/50); ChainLock 69/69; mean block interval 148.9 s. Sentinel
+  epochs in the window: **454 committed, 455 absent, 456 committed**, 0 missed
+  bits -- and the `dsl` field is in the frozen outcome, because #143 was
+  merged and deployed twenty minutes before the close. The three penalties
+  stood at 49 at close and reach 0 around 11032. Against 2026-09-07 (8
+  `penalty_up`, 1 ban, 1 absent epoch, 0 failed rounds): fewer penalties, no
+  ban, the same one absent epoch, and one failed Q60 round more -- the last
+  two are one event seen by two layers, and both are the restarts.
+
+  **Why the Q60 round at 10920 failed, and the rule that follows (forensics,
+  2026-09-10).** The explorer's member selection reproduces the node's own
+  member list **order-exact** for two formed quorums at the same two heights
+  (`llmq_50_60` at 10920 and `llmq_defcon` at 10896), so the failed round's
+  sixty expected members are trusted. Mapping them by service address to the
+  16 inventory hosts and to each host's `ActiveEnterTimestamp`, then to the
+  DKG stage that time fell in (stage arithmetic from
+  `dkgsessionhandler.cpp:160-161`, block times converted to CEST; base 10920
+  at 09:57:30, Contribute 09:58:42-10:04:34, Commit 10:08:48-10:12:08):
+
+  | the member's host restarted ... | Q60 (60) | 50_60 (50) |
+  |---|---|---|
+  | before the base block (09:51-09:57:17) | 22 | 17 |
+  | during Initialized | 3 | 2 |
+  | during Contribute | 20 | 15 |
+  | during Complain | 4 | 2 |
+  | during Justify | 11 | 14 |
+
+  The mechanism is in `dkgsessionhandler.cpp:756-786`: the session handler
+  waits for the **Initialized** stage and only then calls `InitNewQuorum`, so a
+  daemon that starts after that stage waits for the *next* cycle and never
+  joins the one in progress. Thirty-eight of the sixty Q60 members were on
+  hosts restarted at or after Initialized; at most 22-25 were in the session
+  at Commit, under `minSize` 44, so no final commitment was possible. The
+  `llmq_50_60` round at the same base formed at 47/50 because its `minSize` is
+  **3** and a member restarted during Contribute had already *sent* its
+  contribution before going down -- valid in the commitment, absent from the
+  finish. The three it excluded, and the three carrying a penalty, are all on
+  host #6, restarted at 09:57:17: **thirteen seconds before the base block**,
+  so the daemon missed the 10920 tip, never became a session member and never
+  contributed. A roll punishes the node that is down *around the base block*,
+  not the one that restarts mid-session.
+
+  **The rule for the next roll:** a 16-host, ~17-minute rolling restart fails
+  any Q60 cycle whose base block falls inside it, because fewer than 44 members
+  are then on hosts restarted *before* the base. Start the roll right after a
+  cycle's Commit stage (base + 8..10 blocks) so it finishes before the next
+  base, ~35-40 minutes later; no round fails and nobody is penalised. The
+  2026-09-07 roll had 0 failed rounds and 8 penalties + 1 ban for the same
+  reason in the other direction: it landed in a different stage. The 10944
+  cycle, the first with every host up, formed at 60/60 with nobody punished,
+  which is what settles the cause as the restarts. Inputs and the script are in
+  the session scratchpad (`forensics/forensics.mjs`); the reproduction needs
+  only `protx diff 1 <base>`, `getblockhash <base>` and `quorum info` for the
+  controls.
+
+  **Sentinel epoch 455 (boundary 10944) is absent, and that is the roll's most
+  useful by-product.** Block 10944 carries a CbTx and the coinstake and no
+  type-10 commitment; the explorer judged the epoch absent at 11:01:58. The
+  epoch spans 10920-10944, and blocks 10917-10928 are the ones during which
+  all 160 fleet daemons restarted -- so from the Sentinel's point of view this
+  epoch *contained an outage*, the case the absent-epoch run declared it could
+  not speak to ("a quiet network is the easy case ... the absent epochs that
+  were explained sat in an outage window, where 35 missed reports per hour had
+  to reach 60 signers inside three blocks"). The one block of margin that
+  #207/#208 bought held for sixty quiet epochs and did not hold for the first
+  epoch with a fleet-wide restart in it. The signing-window remedy the plan
+  names (a wall-clock margin, more than one block for the record, or a retry
+  when a signature does not finish) now has an outage-shaped data point,
+  produced by an intervention that was not aimed at it.
+
+  Two things this does NOT establish, stated so nobody quotes it further than
+  it goes. First, the mechanism is inferred, not observed: **the DSL layer
+  writes no log line at all** -- zero `LogPrint` calls in the five
+  `src/evo/pose_service*.cpp` files, and the node's forty logging categories
+  have none for it -- so no daemon on the network recorded why 455 has no
+  record, and the same is true of every earlier absent epoch. That is an
+  observability gap worth an audit item beside the staking-status one: at
+  minimum, a category and a line at the commit decision (pool size, whether
+  the threshold was reached, and why not). Second, the missing Q60 quorum from
+  the 10920 cycle is not the cause: the commitment's signing quorum is chosen
+  by `SelectQuorumForSigningAt` among the quorums *active at the epoch base
+  minus `SIGN_HEIGHT_OFFSET`* (`pose_service.cpp:123-128`), all four of which
+  existed, so a quorum was available to sign; what did not happen is a
+  threshold signature over an agreed pool.
+
+  Epoch 454 (boundary 10920, spanning 10896-10920) committed with 0 missed
+  bits because the restarts began at block 10917, three blocks before its
+  boundary and after its reports had gone out.
+
+  **`ops/deploy.sh` reported this very deploy as failed while it had
+  succeeded.** Its readiness check asked the API once, immediately after
+  `systemctl restart`, got "Couldn't connect", and under `set -e` exited 1
+  before the served-bundle check -- on a deploy whose publish and restart
+  were complete and whose API answered `ok` thirty seconds later. Fixed in the
+  same PR as this record: the check now polls for up to 60 s and prints how
+  long the API took. A deploy script whose last word can be wrong in the
+  reassuring direction is bad; one wrong in the alarming direction trains the
+  operator to ignore it, which is worse.
 
   **Hook wiring applied without a restart**, as approved: on the 8 stakers
   `/opt/defcon-devnet/bin/defcon-enable-staking` is now

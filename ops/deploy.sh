@@ -59,7 +59,25 @@ sleep 6
 echo "==> readiness"
 # The endpoint answers 503 when Mongo, the RPC or the indexer is failing, so a
 # broken deploy fails here rather than being discovered by a person later.
-curl -fsS localhost:4100/api/v1/health | python3 -m json.tool | head -20
+#
+# Polled, not asked once: `systemctl restart` returns as soon as the process
+# is spawned, and the API takes a few seconds to listen. Asked at 0 ms, this
+# check reported a finished, working deploy as failed (2026-09-10) and, under
+# set -e, hid the served-bundle check below it. Sixty seconds is far more
+# than a healthy start needs and far less than a person waits to notice.
+for attempt in $(seq 1 30); do
+  if curl -fsS localhost:4100/api/v1/health > /tmp/deftrack-health.json 2>/dev/null; then
+    echo "    answered after ~$(( (attempt - 1) * 2 )) s"
+    python3 -m json.tool < /tmp/deftrack-health.json | head -20
+    rm -f /tmp/deftrack-health.json
+    break
+  fi
+  if [ "$attempt" -eq 30 ]; then
+    echo "    no healthy answer from the API within 60 s of the restart" >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 echo "==> served bundle"
 grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$WEBROOT/index.html"
