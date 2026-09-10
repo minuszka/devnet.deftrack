@@ -86,6 +86,22 @@ describe('classifyNetwork', () => {
     expect(at.headline).toContain('100');
   });
 
+  it('explains a failure whose window a declared intervention covers, instead of asking for an investigation', () => {
+    const failed = {
+      ...round('failed', 10920),
+      interventions: [
+        { runKey: 'fleet-rollout-222-2026-09-10', title: 'Can a node repair its own interrupted database instead of refusing to start?', kind: 'binary-rollout', status: 'closed' },
+      ],
+    };
+    const status = classifyNetwork(input({ rounds: [failed, round('formed', 10896)] }));
+    expect(status.state).toBe('intervened');
+    expect(status.intervention?.runKey).toBe('fleet-rollout-222-2026-09-10');
+    expect(status.headline).toContain('10920');
+    // The same failure with nothing on record is still the finding.
+    expect(classifyNetwork(input({ rounds: [round('failed', 10920)] })).state).toBe('investigate');
+    expect(classifyNetwork(input({ rounds: [round('failed', 10920)] })).intervention).toBeNull();
+  });
+
   it('reports healthy when rounds are forming and none failed', () => {
     const s = classifyNetwork(input({ rounds: [round('formed', 200)], formedRounds: 4 }));
     expect(s.state).toBe('healthy');

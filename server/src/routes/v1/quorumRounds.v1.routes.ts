@@ -13,6 +13,12 @@ import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
 import { redactService } from '../../domain/hostRedaction.js';
 import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
+import { ExperimentRun } from '../../models/ExperimentRun.js';
+import {
+  interventionsCovering,
+  type InterventionRun,
+  type RoundIntervention,
+} from '../../domain/roundInterventions.js';
 
 const router = Router();
 
@@ -113,9 +119,44 @@ function churnView(round: ChurnSource, predecessors: Map<string, ChurnSource>): 
   };
 }
 
-function baseView(r: RoundBaseSource, membershipChurnView: MembershipChurnView) {
+/**
+ * The declared interventions whose window meets any of these rounds. One
+ * query for the page: runs with an intervention, started no later than the
+ * last round's span and not ended before the first round's base. Observation
+ * runs are left out at the query, not filtered later -- watching is not a
+ * cause, and must never be shown as one.
+ */
+async function interventionRunsFor(
+  rounds: ReadonlyArray<Pick<RoundBaseSource, 'expectedHeight' | 'dkgInterval'>>
+): Promise<InterventionRun[]> {
+  if (rounds.length === 0) return [];
+  const lo = Math.min(...rounds.map((r) => r.expectedHeight));
+  const hi = Math.max(...rounds.map((r) => r.expectedHeight + r.dkgInterval - 1));
+  const runs = await ExperimentRun.find({
+    intervention: { $ne: null },
+    startHeight: { $lte: hi },
+    $or: [{ endHeight: null }, { endHeight: { $gte: lo } }],
+  })
+    .select('runKey title status startHeight endHeight intervention.kind')
+    .lean();
+  return runs.map((run) => ({
+    runKey: run.runKey,
+    title: run.title,
+    kind: run.intervention?.kind ?? 'intervention',
+    status: run.status,
+    startHeight: run.startHeight,
+    endHeight: run.endHeight ?? null,
+  }));
+}
+
+function baseView(
+  r: RoundBaseSource,
+  membershipChurnView: MembershipChurnView,
+  interventions: RoundIntervention[]
+) {
   return {
     membershipChurn: membershipChurnView,
+    interventions,
     roundKey: r.roundKey,
     llmqName: r.llmqName,
     llmqType: r.llmqType,
@@ -176,9 +217,9 @@ router.get(
       QuorumRound.countDocuments(filter),
     ]);
 
-    const predecessors = await predecessorsFor(rounds);
+    const [predecessors, runs] = await Promise.all([predecessorsFor(rounds), interventionRunsFor(rounds)]);
     const items: QuorumRoundListItem[] = rounds.map((r) => ({
-      ...baseView(r, churnView(r, predecessors)),
+      ...baseView(r, churnView(r, predecessors), interventionsCovering(r, runs)),
       invalidMemberCount: r.invalidMembers.length,
       failuresByOperator: failuresByOperator(r),
     }));
@@ -291,7 +332,11 @@ router.get(
     }
 
     const detail: QuorumRoundDetail = {
-      ...baseView(round, churnView(round, await predecessorsFor([round]))),
+      ...baseView(
+        round,
+        churnView(round, await predecessorsFor([round])),
+        interventionsCovering(round, await interventionRunsFor([round]))
+      ),
       invalidMembers: round.invalidMembers,
       members: round.members.map((m) => ({
         proTxHash: m.proTxHash,

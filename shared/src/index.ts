@@ -55,6 +55,14 @@ export interface RoundMemberView {
   operatorLabel: string | null;
 }
 
+/** A declared intervention run whose window covers a round's DKG. */
+export interface RoundIntervention {
+  runKey: string;
+  title: string;
+  kind: string;
+  status: string;
+}
+
 export interface QuorumRoundView {
   roundKey: string;
   llmqName: string;
@@ -86,6 +94,12 @@ export interface QuorumRoundView {
   /** effectiveSize - minSize: the ceiling on what a single round can punish. */
   maxPossibleBan: number | null;
   consecutiveFailures: number;
+  /**
+   * Declared interventions whose window meets this round's DKG span, oldest
+   * first. A failure inside one is explained by it, not a finding about the
+   * network. Absent from rows served before it was carried.
+   */
+  interventions?: RoundIntervention[];
 
   /**
    * How this round's membership differs from the round before it, and whether

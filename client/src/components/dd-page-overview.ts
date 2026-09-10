@@ -100,6 +100,9 @@ export class DdPageOverview extends LitElement {
         border-left-color: var(--crit);
         background: color-mix(in srgb, var(--crit) 6%, var(--surface));
       }
+      .alert.intervened {
+        border-left-color: var(--ink-2);
+      }
       .alert-chip {
         margin-top: 3px;
         font-family: var(--font-mono);
@@ -119,6 +122,9 @@ export class DdPageOverview extends LitElement {
       }
       .alert.investigate .alert-chip {
         color: var(--crit);
+      }
+      .alert.intervened .alert-chip {
+        color: var(--ink-2);
       }
       .alert-body {
         min-width: 0;
@@ -595,7 +601,12 @@ export class DdPageOverview extends LitElement {
         <span class="alert-chip">${status.label}</span>
         <div class="alert-body">
           <div class="alert-title">${status.headline}</div>
-          <div class="alert-detail">${status.detail}</div>
+          <div class="alert-detail">
+            ${status.detail}
+            ${status.intervention
+              ? html` <a href="/experiments/${status.intervention.runKey}">${status.intervention.title}</a>`
+              : nothing}
+          </div>
           <div class="alert-meta">
             <span>eligible masternodes <b>${num(status.enabledMasternodes)}</b></span>
             ${status.minSize > 0 ? html`<span>profile minimum <b>${num(status.minSize)}</b></span>` : nothing}
