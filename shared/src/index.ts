@@ -198,6 +198,19 @@ export interface MasternodeRow {
   lastPaidHeight: number;
   payoutAddress: string | null;
   lastSeenAt: string;
+  /** The build last seen on this masternode, off the seed's peer table; null until seen. */
+  nodeVersion?: { subversion: string; protocol: number | null; seenAt: string | null } | null;
+}
+
+/** GET /api/v1/masternodes/versions -- shares are over `total`, so they are adoption ratios. */
+export interface MasternodeVersions {
+  total: number;
+  known: number;
+  stale: number;
+  unknown: number;
+  staleAfterMs: number;
+  byVersion: Array<{ subversion: string; release: string; protocol: number | null; count: number; share: number }>;
+  observedAt: string;
 }
 
 export interface MasternodeTimelinePoint {

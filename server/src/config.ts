@@ -223,6 +223,16 @@ export const config = {
     intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),
   },
 
+  nodeVersion: {
+    // The software census off the seed's peer table. A minute matches the
+    // masternode poller; the census is cheap (one getpeerinfo) and a
+    // switchover decision wants a fresh number.
+    intervalMs: optionalNumber('NODE_VERSION_POLL_INTERVAL_MS', 60_000),
+    // A masternode not seen for this long counts as stale rather than
+    // known: still probably running what it ran, but no longer evidence.
+    staleAfterMs: optionalNumber('NODE_VERSION_STALE_MS', 24 * 60 * 60_000),
+  },
+
   stake: {
     // consensus.stakeValueRange on this devnet (chainparams.cpp:572). An output
     // outside it can never stake, whatever its age, so it is not a payout

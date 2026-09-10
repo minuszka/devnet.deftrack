@@ -54,6 +54,15 @@ export interface MasternodeStateDocument extends Document {
   hostIp: string | null;
 
   /**
+   * The build this masternode was last seen running, read off the seed's
+   * peer table (`getpeerinfo`, rows with `verified_proregtx_hash`). Null until
+   * it has authenticated to the seed once; the time says how fresh it is.
+   */
+  nodeSubversion: string | null;
+  nodeProtocol: number | null;
+  versionSeenAt: Date | null;
+
+  /**
    * Still present in `protx list registered`.
    *
    * A masternode can leave the list -- collateral spent, ProUpRevTx -- and the
@@ -97,6 +106,10 @@ const masternodeStateSchema = new Schema<MasternodeStateDocument>(
 
     operatorLabel: { type: String, default: null, index: true },
     hostIp: { type: String, default: null, index: true },
+
+    nodeSubversion: { type: String, default: null, index: true },
+    nodeProtocol: { type: Number, default: null },
+    versionSeenAt: { type: Date, default: null },
 
     active: { type: Boolean, default: true, index: true },
     removedAt: { type: Date, default: null },

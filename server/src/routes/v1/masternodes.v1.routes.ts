@@ -8,6 +8,8 @@ import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
 import { hostLabel, redactService } from '../../domain/hostRedaction.js';
 import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
+import { summariseVersions } from '../../domain/nodeVersions.js';
+import { config } from '../../config.js';
 
 const router = Router();
 
@@ -67,7 +69,8 @@ router.get(
         .limit(q.limit)
         .select(
           'proTxHash service hostIp operatorLabel banned poSePenalty poSeBanHeight poSeRevivedHeight ' +
-            'missedServiceEpochs rewardSuspended dslBanHeight registeredHeight lastPaidHeight payoutAddress lastSeenAt'
+            'missedServiceEpochs rewardSuspended dslBanHeight registeredHeight lastPaidHeight payoutAddress lastSeenAt ' +
+            'nodeSubversion nodeProtocol versionSeenAt'
         )
         .lean(),
       MasternodeState.countDocuments(filter),
@@ -92,6 +95,9 @@ router.get(
           lastPaidHeight: m.lastPaidHeight,
           payoutAddress: m.payoutAddress,
           lastSeenAt: m.lastSeenAt,
+          nodeVersion: m.nodeSubversion
+            ? { subversion: m.nodeSubversion, protocol: m.nodeProtocol ?? null, seenAt: m.versionSeenAt ?? null }
+            : null,
         })),
         total,
         q.limit,
@@ -287,6 +293,28 @@ router.get(
       waves: rows,
       largestWave: rows[0]?.size ?? 0,
       totalBans: bans.length,
+    });
+  })
+);
+
+/**
+ * GET /api/v1/masternodes/versions -- the software census.
+ *
+ * Counts over every active masternode, so `share` is the adoption ratio the
+ * switchover asks for and not a ratio over the ones that happened to be
+ * connected. Known, stale and unknown add up to `total`.
+ */
+router.get(
+  '/versions',
+  withCachePolicy('short'),
+  asyncRoute(async (_req, res) => {
+    const rows = await MasternodeState.find({ active: true })
+      .select('nodeSubversion nodeProtocol versionSeenAt')
+      .lean();
+    const now = new Date();
+    sendData(res, {
+      ...summariseVersions(rows, now, config.nodeVersion.staleAfterMs),
+      observedAt: now.toISOString(),
     });
   })
 );

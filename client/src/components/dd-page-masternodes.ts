@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import type { MasternodeRow } from '@devnet-deftrack/shared';
+import type { MasternodeRow, MasternodeVersions } from '@devnet-deftrack/shared';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
@@ -18,6 +18,8 @@ export class DdPageMasternodes extends LitElement {
 
   private _rows: MasternodeRow[] = [];
   private _total = 0;
+  /** The software census; null until the first answer, and left standing if a later one fails. */
+  private _versions: MasternodeVersions | null = null;
   private _error = '';
   private _loading = true;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
@@ -45,12 +47,33 @@ export class DdPageMasternodes extends LitElement {
     `,
   ];
 
+  /**
+   * Which build the masternodes run, as the seed's peer table sees them. The
+   * share is over every masternode, so it reads as the adoption ratio the
+   * switchover go/no-go asks for; more than one build on the network is
+   * worth a warning tone, because that is exactly the window a rollout is in.
+   */
+  private _versionTile(): TemplateResult {
+    const v = this._versions;
+    if (!v) return html`<dd-stat label="Versions" value="—" sub="census not read yet"></dd-stat>`;
+    const top = v.byVersion[0];
+    const value = top ? `${top.release} · ${Math.round(top.share * 100)}%` : '—';
+    const sub = `${num(v.known)} of ${num(v.total)} seen · ${num(v.unknown)} never · ${v.byVersion.length} build${v.byVersion.length === 1 ? '' : 's'}`;
+    return html`<dd-stat label="Versions" value=${value} sub=${sub} tone=${v.byVersion.length > 1 ? 'warn' : 'good'}></dd-stat>`;
+  }
+
   private async _load(run: PollRun): Promise<void> {
     try {
-      const p = await run.api.masternodes({ limit: 200 });
+      const [p, versions] = await Promise.all([
+        run.api.masternodes({ limit: 200 }),
+        // A census that cannot be read leaves the previous one on the page
+        // rather than blanking a tile the switchover decision reads.
+        run.api.masternodeVersions().catch(() => null),
+      ]);
       if (run.stale) return;
       this._rows = p.items;
       this._total = p.total;
+      if (versions) this._versions = versions;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -109,6 +132,7 @@ export class DdPageMasternodes extends LitElement {
           tone=${penalised === 0 ? 'good' : 'warn'}
         ></dd-stat>
         <dd-stat label="Hosts" value=${num(this._byHost().length)} sub="distinct addresses"></dd-stat>
+        ${this._versionTile()}
       </section>
 
       ${this._hostTable()} ${this._table()}
