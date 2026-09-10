@@ -5,8 +5,10 @@ import { Transaction } from '../models/Transaction.js';
 import { stakingHealth, type BlockSample } from '../domain/stakingHealth.js';
 import { MasternodeState } from '../models/MasternodeState.js';
 import { HostStatus } from '../models/HostStatus.js';
+import { ServiceEpoch } from '../models/ServiceEpoch.js';
 import { roundStats } from '../domain/roundStats.js';
 import type {
+  DslEpochOutcome,
   ExperimentOutcome,
   ExperimentRunDocument,
   ProfileOutcome,
@@ -28,7 +30,7 @@ export async function computeOutcome(
   const to = run.endHeight ?? tipHeight;
   const heightRange = { $gte: from, $lte: to };
 
-  const [rounds, events, blocks, coinstakes, chainLocked] = await Promise.all([
+  const [rounds, events, blocks, coinstakes, chainLocked, epochs] = await Promise.all([
     // Every tracked profile, not just the one the run was opened against. A
     // run that watched only its own profile reported no rounds at all while
     // three of another type had already decided inside its window.
@@ -40,6 +42,9 @@ export async function computeOutcome(
     Block.find({ height: heightRange, isProofOfStake: true }).select('height time').lean(),
     Transaction.find({ isCoinstake: true, height: heightRange }).select('height vout').lean(),
     Block.countDocuments({ height: heightRange, hasChainLock: true }),
+    // Sentinel epochs are keyed by their boundary block, so "inside the
+    // window" means the boundary is; an epoch is judged as a whole.
+    ServiceEpoch.find({ boundaryHeight: heightRange }).select('status missedCount').lean(),
   ]);
 
   // Per profile first: the schedules are interleaved, so a streak or a median
@@ -116,6 +121,30 @@ export async function computeOutcome(
     // Coverage over the run's own blocks only. Counting an era in which a lock
     // was impossible would report a failure that never happened.
     chainLockCoverage: blocks.length > 0 ? chainLocked / blocks.length : null,
+
+    // The count a DSL observation run exists to produce. Until this was
+    // carried, the frozen outcome of such a run held every number except
+    // that one.
+    dsl: dslOutcome(epochs),
+  };
+}
+
+/**
+ * Count by `status`, never by document: an absent epoch is a row too, and a
+ * count of rows would report a window of pure absence as fully converged.
+ */
+function dslOutcome(
+  rows: ReadonlyArray<{ status: 'committed' | 'absent'; missedCount: number | null }>
+): DslEpochOutcome | null {
+  if (rows.length === 0) return null;
+  const committed = rows.filter((r) => r.status === 'committed');
+  const absent = rows.length - committed.length;
+  return {
+    epochs: rows.length,
+    committed: committed.length,
+    absent,
+    missedBits: committed.reduce((sum, r) => sum + (r.missedCount ?? 0), 0),
+    convergenceRate: committed.length / rows.length,
   };
 }
 
@@ -189,6 +218,11 @@ export interface OutcomeDelta {
   topStakerShare: number | null;
   stakerHhi: number | null;
   stakerGini: number | null;
+  /**
+   * Sentinel convergence, run minus baseline. Null when either side closed
+   * before epochs were carried or watched none -- never zero for "unknown".
+   */
+  dslConvergenceRate: number | null;
 }
 
 /** Run minus baseline, field by field. Null where either side has no value. */
@@ -208,5 +242,6 @@ export function compareOutcomes(run: ExperimentOutcome, baseline: ExperimentOutc
     topStakerShare: diff(run.topStakerShare ?? null, baseline.topStakerShare ?? null),
     stakerHhi: diff(run.stakerHhi ?? null, baseline.stakerHhi ?? null),
     stakerGini: diff(run.stakerGini ?? null, baseline.stakerGini ?? null),
+    dslConvergenceRate: diff(run.dsl?.convergenceRate ?? null, baseline.dsl?.convergenceRate ?? null),
   };
 }

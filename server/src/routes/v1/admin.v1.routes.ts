@@ -165,12 +165,13 @@ const experimentSchema = z.object({
   hypothesis: z.string().max(2000).default(''),
   expected: z.string().max(2000).default(''),
   baselineRunKey: z.string().max(80).nullable().default(null),
-  notes: z.string().max(2000).nullable().default(null),
+  notes: z.string().max(6000).nullable().default(null),
   nodeGitSha: z.string().max(64).nullable().default(null),
   intervention: z
     .object({
       kind: z.string().min(1).max(80),
-      description: z.string().max(1000).default(''),
+      // 2000: a fifteen-commit rollout could not name every change in 1000.
+      description: z.string().max(2000).default(''),
       targets: z.array(z.string().max(120)).max(500).default([]),
     })
     .nullable()
@@ -233,7 +234,9 @@ router.post(
  * run declared beforehand can be edited here -- a hypothesis that can be
  * rewritten once the answer is known is not a hypothesis.
  */
-const notesSchema = z.object({ notes: z.string().max(2000).nullable() });
+// 6000, not 2000: closing the two runs of 2026-09-10 meant overwriting the
+// pre-run context to fit the result, because the cap held one or the other.
+const notesSchema = z.object({ notes: z.string().max(6000).nullable() });
 
 router.patch(
   '/experiments/:runKey',

@@ -35,6 +35,27 @@ export interface ProfileOutcome {
   membersPunished: number;
 }
 
+/**
+ * Sentinel (DSL) epochs whose boundary block fell inside the run's window,
+ * counted by status -- the same counting the /dsl/summary endpoint does, over
+ * the window instead of all time.
+ *
+ * Added because the absent-epoch run of 2026-09-07 closed with an outcome that
+ * did not contain the one number it was opened to produce: the count of absent
+ * epochs lived only in `notes`, as prose, and the record could not answer its
+ * own question without a human reading a paragraph.
+ */
+export interface DslEpochOutcome {
+  /** committed + absent: every epoch the collector judged in the window. */
+  epochs: number;
+  committed: number;
+  absent: number;
+  /** Set bits summed over the committed epochs; an absent epoch has none. */
+  missedBits: number;
+  /** committed / epochs; null when nothing was judged. */
+  convergenceRate: number | null;
+}
+
 export interface ExperimentOutcome {
   rounds: { formed: number; failed: number; pending: number; impossible: number };
   /** Excludes pending: a round still inside its window has not failed. */
@@ -76,6 +97,12 @@ export interface ExperimentOutcome {
 
   chainLockedBlocks: number;
   chainLockCoverage: number | null;
+  /**
+   * Null on outcomes snapshotted before this was carried, and null when the
+   * window holds no judged epoch at all -- not a zeroed object, which would
+   * read as "sixty epochs, none absent" on a run that never watched any.
+   */
+  dsl?: DslEpochOutcome | null;
 
   /**
    * The same window seen per quorum type. Absent on outcomes snapshotted
@@ -168,6 +195,22 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
 
     chainLockedBlocks: { type: Number, default: 0 },
     chainLockCoverage: { type: Number, default: null },
+
+    // Defaulted to null for the same reason as the concentration figures: a
+    // run closed before this existed measured no epochs, and 0/0 is not that.
+    dsl: {
+      type: new Schema<DslEpochOutcome>(
+        {
+          epochs: { type: Number, default: 0 },
+          committed: { type: Number, default: 0 },
+          absent: { type: Number, default: 0 },
+          missedBits: { type: Number, default: 0 },
+          convergenceRate: { type: Number, default: null },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
 
     byProfile: {
       type: [

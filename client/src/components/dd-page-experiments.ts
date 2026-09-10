@@ -199,6 +199,12 @@ export class DdPageExperiments extends LitElement {
                 sub="${num(o.chainLockedBlocks)} of ${num(o.blocks)} blocks"
               ></dd-stat>
               <dd-stat
+                label="Sentinel epochs"
+                value=${o.dsl == null ? '—' : `${num(o.dsl.committed)} of ${num(o.dsl.epochs)}`}
+                sub=${o.dsl == null ? 'none judged in the window' : `${num(o.dsl.absent)} absent · ${num(o.dsl.missedBits)} missed bits`}
+                tone=${o.dsl != null && o.dsl.absent > 0 ? 'warn' : 'good'}
+              ></dd-stat>
+              <dd-stat
                 label="Block interval"
                 value=${o.meanBlockIntervalSec == null ? '—' : `${num(Math.round(o.meanBlockIntervalSec))} s`}
                 sub=${intervalNote(o)}
@@ -399,6 +405,10 @@ export class DdPageExperiments extends LitElement {
       { label: 'Top staker share', run: o?.topStakerShare ?? null, base: b.topStakerShare ?? null, delta: c.delta.topStakerShare, kind: 'ratio', higherIsBetter: false },
       { label: 'Staker HHI', run: o?.stakerHhi ?? null, base: b.stakerHhi ?? null, delta: c.delta.stakerHhi, kind: 'index', higherIsBetter: false },
       { label: 'Staker Gini', run: o?.stakerGini ?? null, base: b.stakerGini ?? null, delta: c.delta.stakerGini, kind: 'index', higherIsBetter: false },
+      // The share of Sentinel epochs that produced a record. A DSL run is
+      // about this number and nothing else; until it was carried the table
+      // compared everything but the question asked.
+      { label: 'Sentinel convergence', run: o?.dsl?.convergenceRate ?? null, base: b.dsl?.convergenceRate ?? null, delta: c.delta.dslConvergenceRate, kind: 'ratio', higherIsBetter: true },
     ];
 
     return html`

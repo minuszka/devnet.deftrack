@@ -51,11 +51,11 @@ frozen `outcome` of a run whose entire purpose was an epoch count does not
 contain that count. It lives in `notes` as prose, and nowhere else in the
 record. The epoch table is still on the chain and re-readable, so nothing is
 lost; what is missing is the run record's ability to answer its own question
-without a human reading a paragraph. Worth adding before the next DSL run.
+without a human reading a paragraph. Worth adding before the next DSL run. **Added 2026-09-10** (PR `feat/outcome-dsl-epochs`): the outcome carries `dsl` -- epochs, committed, absent, missedBits and convergenceRate over the window -- the comparison a `dslConvergenceRate` delta, and the caps that this day's two closes hit are raised (`notes` 6000, `intervention.description` 2000). Outcomes frozen before it carry `dsl: null`, this run's own included; the count by status matches what /dsl/summary does, over the window instead of all time.
 
 **A second constraint met at the same moment:** `notes` is capped at 2000
 characters and the pre-run declaration context already filled 1947 of them, so
-recording the result *overwrote* it. Preserved here rather than lost:
+recording the result *overwrote* it. (The cap is 6000 since the PR above.) Preserved here rather than lost:
 
 - **Why 9192 is the floor.** Epoch 381 at boundary 9168 is absent, but it
   contains the rollout's own restarts — an artefact of the intervention, not a
