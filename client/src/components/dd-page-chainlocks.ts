@@ -335,11 +335,18 @@ export class DdPageChainLocks extends LitElement {
                   <div class="note caveat">
                     The timestamp is the producing node's clock and the sighting is ours, so a
                     negative value means the two disagree rather than that a block arrived early;
-                    it is kept rather than clamped. Shares are over the ${num(a.measured)} measured
-                    blocks, never over the ${num(a.blocksConsidered)} in the window
-                    (${num(a.unmeasured)} were never seen arriving). The tail is the whole story:
-                    on this devnet the median is a couple of seconds while a few per cent of blocks
-                    land minutes late, and while that lasts nothing in RPC says so.
+                    it is kept rather than clamped.
+                    ${a.unmeasured > 0
+                      ? html`Shares are over the ${num(a.measured)} measured blocks, never over the
+                          ${num(a.blocksConsidered)} in the window — ${num(a.unmeasured)} were never
+                          seen arriving and are not counted as instant.`
+                      : html`Every block in this window was seen arriving, so the shares are over
+                          all ${num(a.measured)} of them.`}
+                    The tail is the whole story: on this devnet the median is a couple of seconds
+                    while a few per cent of blocks land minutes late, and while that lasts nothing
+                    in RPC says so. A stall here also inflates the ChainLock latency above for the
+                    block before it — the CLSIG and the next block both arrive when the feed
+                    resumes, so that latency is partly this gap rather than the quorum's speed.
                   </div>
                 `}
         </div>

@@ -1015,6 +1015,18 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   keep the same block count. Proven able to fail (last-tip-wins mutation: 4
   failures, byte-identical restore).
 
+  **And it contaminates a number this site already published.** With both
+  series live, the overlap was read off the deployed API over the same 500
+  blocks: three of the four largest ChainLock latencies sit immediately before
+  a block that arrived minutes late -- 11058 (lock 207 s, next block 173 s
+  late), 11130 (127 s, 308 s) and 11106 (124 s, 152 s) -- while 11034 (165 s)
+  and 11082 (110 s) have prompt neighbours and are something else. The
+  mechanism is one event seen twice: the block arrives, the feed stalls, and
+  the CLSIG for that block and the next block both land when it resumes, so
+  `chainLockLatencyMs` charges our own gap to the quorum. The ChainLocks page
+  now says so in the panel; what it does not do is subtract it, because two of
+  the five show the effect is not the whole story.
+
   **The explorer publishes it since 2026-09-10, so the caveat is no longer
   only in this file.** `GET /api/v1/block-arrival` reports the distribution
   over a window from `Block.firstSeenAt` — the ZMQ sighting the collector has
