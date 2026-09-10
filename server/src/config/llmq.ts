@@ -59,6 +59,26 @@ export interface LlmqProfile {
    * the same way it treats heights beyond the RPC's observation window.
    */
   formationGateHeight?: number;
+  /**
+   * Whether this profile forms on the v23 MAINNET -- the network every
+   * measurement here is ultimately about. Registry data, never snapshotted
+   * onto a round: it is a fact about chainparams.cpp and llmq/options.cpp, not
+   * about any round, and it is derived at read time wherever a profile name is
+   * shown.
+   *
+   * Why a reader needs it: the devnet punishes on profiles mainnet never runs.
+   * IsQuorumTypeEnabledInternal (llmq/options.cpp:188-191) admits llmq_50_60,
+   * llmq_60_75 and llmq_25_67 on TESTNET or DEVNET only, so every DKG exclusion
+   * those two hand out here -- roughly half the devnet's PoSe pressure, on the
+   * 24- and 48-block schedules -- has no mainnet counterpart. The 2026-09-10
+   * fleet roll punished three members, all in one llmq_50_60 round: as mainnet
+   * would count it, that roll punished nobody. A figure quoted from this devnet
+   * without saying which profiles produced it is pessimistic for mainnet by an
+   * unknown amount.
+   */
+  formsOnV23Mainnet: boolean;
+  /** Why, in one line a reader can quote. */
+  mainnetNote: string;
 }
 
 const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
@@ -85,6 +105,8 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 2,
     useRotation: false,
     signingActiveQuorumCount: 2,
+    formsOnV23Mainnet: false,
+    mainnetNote: 'regtest lab profile; no mainnet counterpart',
   },
   llmq_50_60: {
     llmqType: 1,
@@ -99,6 +121,9 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 40, // 80% of size, the mainnet proportion; 3-of-50 was the ban-wave engine
     useRotation: false,
     signingActiveQuorumCount: 2,
+    formsOnV23Mainnet: false,
+    mainnetNote:
+      'gated to testnet and devnet by IsQuorumTypeEnabledInternal (llmq/options.cpp:188-191); registered on mainnet but never forms there, and v23 leaves that as it is',
   },
   llmq_60_75: {
     llmqType: 5,
@@ -113,6 +138,9 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 48, // 80% of size, the mainnet proportion (see llmq_50_60)
     useRotation: false,
     signingActiveQuorumCount: 2,
+    formsOnV23Mainnet: false,
+    mainnetNote:
+      'gated to testnet and devnet by IsQuorumTypeEnabledInternal (llmq/options.cpp:188-191); registered on mainnet but never forms there, and v23 leaves that as it is',
   },
   llmq_400_85: {
     llmqType: 3,
@@ -127,6 +155,9 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 300,
     useRotation: false,
     signingActiveQuorumCount: 4,
+    formsOnV23Mainnet: true,
+    mainnetNote:
+      'in the mainnet list and ungated, but needs 350 of 400 members; on this devnet every one of its rounds is impossible',
   },
   llmq_100_67: {
     llmqType: 4,
@@ -141,6 +172,9 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 80,
     useRotation: false,
     signingActiveQuorumCount: 24,
+    formsOnV23Mainnet: false,
+    mainnetNote:
+      'gated on DEPLOYMENT_DIP0020, whose height is INT_MAX on mainnet and devnet alike; never forms anywhere',
   },
   llmq_400_60: {
     llmqType: 2,
@@ -158,6 +192,9 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThresholdV2: 300,
     useRotation: false,
     signingActiveQuorumCount: 4,
+    formsOnV23Mainnet: true,
+    mainnetNote:
+      "mainnet's ChainLock quorum today; v23 keeps it forming beside llmq_defcon (retiring it is deferred and needs its own gate)",
   },
   llmq_defcon: {
     llmqType: 7,
@@ -175,6 +212,8 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     // nChainLocksV2ActivationHeight 3240 - (4 + 1) * 24; verified live: the
     // first llmq_defcon commitment on this chain sits at exactly 3120.
     formationGateHeight: 3120,
+    formsOnV23Mainnet: true,
+    mainnetNote: 'added to mainnet by the v23 bundle: AddLLMQ(LLMQ_DEFCON) with llmqTypeChainLocksV2 at H',
   },
   llmq_devnet: {
     llmqType: 101,
@@ -189,6 +228,8 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 7,
     useRotation: false,
     signingActiveQuorumCount: 4,
+    formsOnV23Mainnet: false,
+    mainnetNote: 'retired here by the mainnet-parity change; never a mainnet profile',
   },
 };
 
@@ -449,4 +490,19 @@ export function dkgBadVotesThresholdAtHeight(profile: LlmqProfile, height: numbe
 
 export function maxPossibleBan(effectiveSize: number, minSize: number): number {
   return Math.max(0, effectiveSize - minSize);
+}
+
+/**
+ * Whether a profile, named as a round names it, forms on the v23 mainnet. An
+ * unknown name answers false: a profile this registry cannot place is not one
+ * anybody has shown mainnet to run, and the aggregate built on this predicate
+ * must never widen on a typo.
+ */
+export function formsOnV23Mainnet(llmqName: string): boolean {
+  return LLMQ_PROFILES[llmqName]?.formsOnV23Mainnet ?? false;
+}
+
+/** The registry's one-line reason, or null for a name it does not know. */
+export function mainnetNoteFor(llmqName: string): string | null {
+  return LLMQ_PROFILES[llmqName]?.mainnetNote ?? null;
 }

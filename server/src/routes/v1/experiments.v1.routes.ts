@@ -1,8 +1,18 @@
 import { Router } from 'express';
 import type { ExperimentDetail, ExperimentRow } from '@devnet-deftrack/shared';
 import { z } from 'zod';
-import { ExperimentRun, type ExperimentRunDocument } from '../../models/ExperimentRun.js';
-import { computeOutcome, compareOutcomes, currentParticipants } from '../../services/experiment.service.js';
+import {
+  ExperimentRun,
+  type ExperimentOutcome,
+  type ExperimentRunDocument,
+} from '../../models/ExperimentRun.js';
+import {
+  computeOutcome,
+  compareOutcomes,
+  currentParticipants,
+  mainnetRelevantForRun,
+} from '../../services/experiment.service.js';
+import { formsOnV23Mainnet } from '../../config/llmq.js';
 import { rpc } from '../../services/rpc.service.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
@@ -44,6 +54,21 @@ type ExperimentViewSource = Pick<
 const EXPERIMENT_VIEW_FIELDS =
   'runKey title hypothesis expected status startedAt endedAt startHeight endHeight nodeVersion nodeGitSha llmqName llmqSize llmqMinSize llmqThreshold dkgInterval participants intervention baselineRunKey outcome notes';
 
+/**
+ * Registry facts beside the frozen figures. Whether a profile forms on the v23
+ * mainnet is a property of the node's chainparams, not of the run, so it is
+ * derived here on every read rather than snapshotted into the outcome -- the
+ * same rule the LLMQ registry applies to the bad-votes threshold.
+ */
+function enrichOutcome(o: ExperimentOutcome | null | undefined): ExperimentRow['outcome'] {
+  if (!o) return null;
+  if (!o.byProfile) return o;
+  return {
+    ...o,
+    byProfile: o.byProfile.map((p) => ({ ...p, formsOnV23Mainnet: formsOnV23Mainnet(p.llmqName) })),
+  };
+}
+
 function view(r: ExperimentViewSource): ExperimentRow {
   return {
     runKey: r.runKey,
@@ -63,11 +88,12 @@ function view(r: ExperimentViewSource): ExperimentRow {
       minSize: r.llmqMinSize,
       threshold: r.llmqThreshold,
       dkgInterval: r.dkgInterval,
+      formsOnV23Mainnet: formsOnV23Mainnet(r.llmqName),
     },
     participants: r.participants,
     intervention: r.intervention,
     baselineRunKey: r.baselineRunKey,
-    outcome: r.outcome,
+    outcome: enrichOutcome(r.outcome),
     notes: r.notes,
   };
 }
@@ -121,7 +147,16 @@ router.get(
     }
 
     const tip = await rpc.getBlockCount().catch(() => run.endHeight ?? run.startHeight);
-    const live = run.status === 'running' ? await computeOutcome(run, tip) : run.outcome;
+    // An outcome frozen before the mainnet view existed answers it from its
+    // rounds now, which are still on record. Nothing is written back; a run
+    // closed with the field keeps what it froze.
+    const withMainnet = async (
+      o: ExperimentOutcome | null | undefined,
+      r: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>
+    ): Promise<ExperimentOutcome | null> =>
+      o ? (o.mainnetRelevant === undefined ? { ...o, mainnetRelevant: await mainnetRelevantForRun(r, tip) } : o) : null;
+
+    const live = await withMainnet(run.status === 'running' ? await computeOutcome(run, tip) : run.outcome, run);
 
     // The declared participants stay frozen -- that is the point of declaring
     // them. A running experiment also shows the network as it stands now, so a
@@ -135,13 +170,15 @@ router.get(
         .select('status outcome startHeight endHeight llmqName')
         .lean();
       const baselineOutcome =
-        baseline && (baseline.status === 'closed'
-          ? baseline.outcome
-          : await computeOutcome(baseline, tip));
+        baseline &&
+        (await withMainnet(
+          baseline.status === 'closed' ? baseline.outcome : await computeOutcome(baseline, tip),
+          baseline
+        ));
       if (baselineOutcome) {
         comparison = {
           baselineRunKey: run.baselineRunKey,
-          baseline: baselineOutcome,
+          baseline: enrichOutcome(baselineOutcome) ?? baselineOutcome,
           delta: compareOutcomes(live, baselineOutcome),
         };
       }
@@ -149,7 +186,7 @@ router.get(
 
     const body: ExperimentDetail = {
       ...view(run),
-      outcome: live,
+      outcome: enrichOutcome(live),
       comparison,
       currentParticipants: current,
       tipHeight: tip,

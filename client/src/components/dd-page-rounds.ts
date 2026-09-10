@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import type { QuorumRoundListItem } from '@devnet-deftrack/shared';
+import type { LlmqProfileView, QuorumRoundListItem } from '@devnet-deftrack/shared';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
@@ -21,6 +21,7 @@ export class DdPageRounds extends LitElement {
     _types: { state: true },
     _runs: { state: true },
     _revives: { state: true },
+    _profiles: { state: true },
     _error: { state: true },
     _loading: { state: true },
   };
@@ -45,6 +46,13 @@ export class DdPageRounds extends LitElement {
    */
   private _runs: InterventionRun[] = [];
   private _revives: number[] = [];
+  /**
+   * The server's profile registry, read once: which types form on the v23
+   * mainnet and why. The devnet punishes on four profiles and mainnet will
+   * punish on two, and a row of the other two carries penalties with no
+   * mainnet counterpart -- which the row has to say, in the registry's words.
+   */
+  private _profiles: LlmqProfileView[] = [];
   private _error = '';
   private _loading = true;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
@@ -96,6 +104,12 @@ export class DdPageRounds extends LitElement {
         border-color: var(--accent);
         color: var(--accent);
       }
+      /* A type the v23 mainnet never forms. Dashed and dim: it qualifies the
+         penalties on the row, not the round's own health. */
+      .badge.devnet {
+        border-style: dashed;
+        color: var(--ink-3);
+      }
       a.badge:hover {
         text-decoration: none;
         background: var(--surface-3);
@@ -126,16 +140,19 @@ export class DdPageRounds extends LitElement {
       };
       if (this._status) params.status = this._status;
       if (this._llmq) params.llmqName = this._llmq;
-      const [p, runs, revives] = await Promise.all([
+      const [p, runs, revives, profiles] = await Promise.all([
         run.api.rounds(params),
         // Neither is worth an error bar of its own: without them the rows are
         // simply unbadged, which is where they were before.
         run.api.experiments({ limit: 50 }).catch(() => null),
         run.api.masternodeEvents({ hours: 24 * 90, type: 'revived', limit: 500 }).catch(() => null),
+        // Once per page: the registry changes with the binary, not the tip.
+        this._profiles.length === 0 ? run.api.llmqProfiles().catch(() => null) : Promise.resolve(null),
       ]);
       if (run.stale) return;
       this._rounds = p.items;
       this._total = p.total;
+      if (profiles) this._profiles = profiles.items;
       if (runs) {
         this._runs = runs.items.map((r) => ({
           runKey: r.runKey,
@@ -185,6 +202,10 @@ export class DdPageRounds extends LitElement {
             Every scheduled round, including the ones that left no trace on the chain. A round with
             no commitment has no quorum hash — it is here because the schedule is reconstructed, not
             read back.
+            ${this._profiles.some((p) => p.tracked && !p.formsOnV23Mainnet)
+              ? html` Types tagged <span class="badge devnet">devnet-only</span> form on this devnet
+                  and not on the v23 mainnet; their penalties have no counterpart there.`
+              : nothing}
           </div>
         </div>
         <div class="filters">
@@ -302,6 +323,20 @@ export class DdPageRounds extends LitElement {
     >`;
   }
 
+  /**
+   * A type the v23 mainnet never forms, said beside its name. The reason is
+   * the server registry's own sentence, so the tag cannot drift from the node.
+   */
+  private _devnetTag(r: QuorumRoundListItem) {
+    if (r.formsOnV23Mainnet !== false) return nothing;
+    const note = this._profiles.find((p) => p.llmqName === r.llmqName)?.mainnetNote;
+    return html`<span
+      class="badge devnet"
+      title=${note ?? 'Forms on this devnet and not on the v23 mainnet.'}
+      >devnet-only</span
+    >`;
+  }
+
   private _row(r: QuorumRoundListItem): TemplateResult {
     const who =
       r.failuresByOperator.length === 0
@@ -320,7 +355,7 @@ export class DdPageRounds extends LitElement {
         <td class="mono">
           <a href=${roundHref(r.roundKey)}>${r.roundKey}</a>${this._badges(r)}
         </td>
-        <td class="mono">${r.llmqName}</td>
+        <td class="mono">${r.llmqName}${this._devnetTag(r)}</td>
         <td class="r mono">${num(r.expectedHeight)}</td>
         <td class="c"><span class="pill ${verdict.tone}">${verdict.label}</span></td>
         <td class="r mono">

@@ -65,6 +65,22 @@ export class DdPageRound extends LitElement {
       .verdict.quiet {
         color: var(--ink-2);
       }
+      /* A type the v23 mainnet never forms: its penalties are real here and
+         have no counterpart there. Said beside the name, not in a footnote. */
+      .badge {
+        margin-left: 8px;
+        padding: 1px 5px;
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--radius);
+        color: var(--ink-3);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        vertical-align: middle;
+        cursor: help;
+      }
 
       dl {
         display: grid;
@@ -155,7 +171,7 @@ export class DdPageRound extends LitElement {
       <div class="page-head">
         <div>
           <div class="page-title">
-            Round ${num(r.expectedHeight)} <span class="dim">${r.llmqName}</span>
+            Round ${num(r.expectedHeight)} <span class="dim">${r.llmqName}</span>${this._devnetTag(r)}
           </div>
           <div class="page-sub mono">${r.roundKey}</div>
         </div>
@@ -207,6 +223,21 @@ export class DdPageRound extends LitElement {
     `;
   }
 
+  /**
+   * A profile the v23 mainnet never forms, named where the type is named. The
+   * devnet punishes on four profiles and mainnet will punish on two; a round
+   * of the other two hands out real penalties here that have no counterpart
+   * there, and a reader quoting it for mainnet needs to see that on the page.
+   */
+  private _devnetTag(r: QuorumRoundDetail) {
+    if (r.formsOnV23Mainnet !== false) return '';
+    return html`<span
+      class="badge"
+      title=${r.mainnetNote ?? 'Forms on this devnet and not on the v23 mainnet.'}
+      >devnet-only</span
+    >`;
+  }
+
   private _identity(r: QuorumRoundDetail): TemplateResult {
     return html`
       <section class="card">
@@ -214,7 +245,15 @@ export class DdPageRound extends LitElement {
         <div class="card-body flush">
           <dl>
             <dt>type</dt>
-            <dd>${r.llmqName} <span class="subtle">(${num(r.llmqType)})</span></dd>
+            <dd>
+              ${r.llmqName} <span class="subtle">(${num(r.llmqType)})</span>
+              ${r.formsOnV23Mainnet === false
+                ? html`<div class="subtle">
+                    devnet-only — ${r.mainnetNote ?? 'does not form on the v23 mainnet'}. Its
+                    exclusions carry the same PoSe penalty here, and none on mainnet.
+                  </div>`
+                : ''}
+            </dd>
             <dt>index</dt>
             <dd>${num(r.quorumIndex)}</dd>
             <dt>expected height</dt>

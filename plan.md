@@ -1345,6 +1345,25 @@ halves of one decision. The `CMainParams` comment above `posLimit` in
 
 ## 6. Housekeeping
 
+- **Every devnet figure now says what mainnet would make of it (2026-09-10).**
+  The devnet forms four punishing profiles and the v23 mainnet will form two
+  (`llmq_defcon`, `llmq_400_60`); `llmq_50_60` and `llmq_60_75` are admitted
+  on testnet and devnet only (`llmq/options.cpp:188-191`) and v23 leaves that
+  as it is. So every "this roll punished N" from here was pessimistic for
+  mainnet by an unknown amount -- for the #222 roll by all three. The registry
+  carries `formsOnV23Mainnet` with a one-line reason per profile; round rows
+  and per-profile outcome rows are tagged `devnet-only` on read (registry data,
+  never snapshotted); every experiment outcome carries `mainnetRelevant` --
+  the same window with the devnet-only profiles held out (rounds, formation,
+  health, streak, DKG-invalid members) -- frozen at close and recomputed from
+  the rounds on read for the runs closed before it existed; the baseline
+  comparison gains the two mainnet-counted deltas; `GET
+  /api/v1/quorum-rounds/profiles` serves the registry. Ban and penalty
+  *events* stay network-wide and unsplit, by design: a ban earned by two
+  `llmq_50_60` exclusions cannot be attributed away afterwards. Decided the
+  same day: the two profiles stay switched on here (see CLAUDE.md, measurement
+  caveats). Owed: quote both counts in every roll's closing notes from now on.
+
 - **The simulator's 16-host fleet manifest exists and is waiting for the
   import decision** (2026-09-05 evening, `docs/SIMULATOR_HANDOFF.md` top
   addendum). 160 targets (152 masternodes, 8 fleet stakers), schema-valid,

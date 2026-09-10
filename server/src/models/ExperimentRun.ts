@@ -56,6 +56,27 @@ export interface DslEpochOutcome {
   convergenceRate: number | null;
 }
 
+/**
+ * The same window with the profiles the v23 mainnet never forms held out.
+ *
+ * The devnet punishes on four profiles and mainnet will punish on two, so a
+ * penalty count quoted from here without this is pessimistic for mainnet by
+ * an unknown amount -- on 2026-09-10 by all of it. Which profiles count is
+ * registry data (config/llmq.ts, formsOnV23Mainnet), applied at close; on an
+ * outcome frozen before this existed it is recomputed from the rounds at read
+ * time rather than left null, because the rounds are still there.
+ */
+export interface MainnetRelevantOutcome {
+  profiles: string[];
+  rounds: { formed: number; failed: number; pending: number; impossible: number };
+  formationRate: number | null;
+  medianHealthRatio: number | null;
+  worstHealthRatio: number | null;
+  longestFailureStreak: number;
+  /** DKG-invalid members only; ban and penalty events are network-wide and stay out. */
+  membersPunished: number;
+}
+
 export interface ExperimentOutcome {
   rounds: { formed: number; failed: number; pending: number; impossible: number };
   /** Excludes pending: a round still inside its window has not failed. */
@@ -110,6 +131,9 @@ export interface ExperimentOutcome {
    * a single type and cannot be broken down after the fact.
    */
   byProfile?: ProfileOutcome[];
+
+  /** Absent on outcomes frozen before it was carried; the read path fills it in. */
+  mainnetRelevant?: MainnetRelevantOutcome | null;
 }
 
 export interface ExperimentRunDocument extends Document {
@@ -206,6 +230,29 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
           absent: { type: Number, default: 0 },
           missedBits: { type: Number, default: 0 },
           convergenceRate: { type: Number, default: null },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
+
+    // Defaulted to null: a run closed before this existed has no mainnet
+    // view frozen, and the read path recomputes one from its rounds.
+    mainnetRelevant: {
+      type: new Schema<MainnetRelevantOutcome>(
+        {
+          profiles: { type: [String], default: [] },
+          rounds: {
+            formed: { type: Number, default: 0 },
+            failed: { type: Number, default: 0 },
+            pending: { type: Number, default: 0 },
+            impossible: { type: Number, default: 0 },
+          },
+          formationRate: { type: Number, default: null },
+          medianHealthRatio: { type: Number, default: null },
+          worstHealthRatio: { type: Number, default: null },
+          longestFailureStreak: { type: Number, default: 0 },
+          membersPunished: { type: Number, default: 0 },
         },
         { _id: false }
       ),

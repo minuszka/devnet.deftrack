@@ -3,11 +3,18 @@ import { z } from 'zod';
 import type {
   HealthTimeline,
   HealthTimelinePoint,
+  LlmqProfileView,
   MembershipChurnView,
   QuorumRoundDetail,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
 import { churnPredecessorKey, membershipChurn } from '../../domain/membershipChurn.js';
+import {
+  LLMQ_PROFILES,
+  TRACKED_PROFILE_NAMES,
+  formsOnV23Mainnet,
+  mainnetNoteFor,
+} from '../../config/llmq.js';
 import { QuorumRound, type QuorumRoundDocument } from '../../models/QuorumRound.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
@@ -160,6 +167,9 @@ function baseView(
     roundKey: r.roundKey,
     llmqName: r.llmqName,
     llmqType: r.llmqType,
+    // Registry data, derived on read: whether this profile's penalties have any
+    // mainnet counterpart is a fact about chainparams, not about the round.
+    formsOnV23Mainnet: formsOnV23Mainnet(r.llmqName),
     quorumIndex: r.quorumIndex,
     expectedHeight: r.expectedHeight,
     status: r.status,
@@ -311,6 +321,38 @@ router.get(
   })
 );
 
+/**
+ * GET /api/v1/quorum-rounds/profiles
+ *
+ * The profile registry as this deployment reads rounds under it, with the one
+ * fact a reader of any round table needs and the node exposes nowhere: whether
+ * the profile forms on the v23 mainnet. Two of the devnet's four punishing
+ * profiles do not, so their rows carry penalties mainnet will never hand out.
+ * Declared before `/:id` so the literal path is not read as a round key.
+ */
+router.get(
+  '/profiles',
+  withCachePolicy('long'),
+  asyncRoute(async (_req, res) => {
+    const tracked = new Set(TRACKED_PROFILE_NAMES);
+    const items: LlmqProfileView[] = Object.values(LLMQ_PROFILES)
+      .map((p) => ({
+        llmqName: p.llmqName,
+        llmqType: p.llmqType,
+        size: p.size,
+        minSize: p.minSize,
+        threshold: p.threshold,
+        dkgInterval: p.dkgInterval,
+        tracked: tracked.has(p.llmqName),
+        formsOnV23Mainnet: p.formsOnV23Mainnet,
+        mainnetNote: p.mainnetNote,
+        formationGateHeight: p.formationGateHeight ?? null,
+      }))
+      .sort((a, b) => Number(b.tracked) - Number(a.tracked) || a.dkgInterval - b.dkgInterval || a.llmqName.localeCompare(b.llmqName));
+    sendData(res, { items });
+  })
+);
+
 /** GET /api/v1/quorum-rounds/:roundKey -- also accepts a quorumHash. */
 router.get(
   '/:id',
@@ -338,6 +380,7 @@ router.get(
         interventionsCovering(round, await interventionRunsFor([round]))
       ),
       invalidMembers: round.invalidMembers,
+      mainnetNote: mainnetNoteFor(round.llmqName),
       members: round.members.map((m) => ({
         proTxHash: m.proTxHash,
         service: redactService(m.service, hostRedactionPolicy()),

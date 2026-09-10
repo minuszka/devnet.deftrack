@@ -7,6 +7,8 @@ import {
   applyProfileOverrides,
   chainlockProfileNameAtHeight,
   dkgBadVotesThresholdAtHeight,
+  formsOnV23Mainnet,
+  mainnetNoteFor,
   maxPossibleBan,
   trackedProfiles,
   type LlmqProfile,
@@ -182,5 +184,27 @@ describe('declaring the profile this deployment runs', () => {
       .toThrow(/mining window/);
     expect(() => applyProfileOverrides(base(), '{"llmq_test":{"dkgMiningWindowStart":4}}'))
       .toThrow(/before the five/);
+  });
+
+  it('says which tracked profiles the v23 mainnet forms, with a reason on every profile', () => {
+    // IsQuorumTypeEnabledInternal (llmq/options.cpp:188-191) admits llmq_50_60
+    // and llmq_60_75 on testnet and devnet only; the other three tracked
+    // profiles are in the mainnet list, llmq_defcon by the v23 bundle. The
+    // aggregate built on this predicate is what lets a devnet penalty count be
+    // quoted as mainnet would count it, so a drift here misquotes every run.
+    const byName = Object.fromEntries(trackedProfiles().map((p) => [p.llmqName, p.formsOnV23Mainnet]));
+    expect(byName).toEqual({
+      llmq_50_60: false,
+      llmq_60_75: false,
+      llmq_400_60: true,
+      llmq_400_85: true,
+      llmq_defcon: true,
+    });
+    expect(formsOnV23Mainnet('llmq_50_60')).toBe(false);
+    expect(formsOnV23Mainnet('llmq_defcon')).toBe(true);
+    // An unknown name never widens the mainnet view.
+    expect(formsOnV23Mainnet('llmq_typo')).toBe(false);
+    expect(mainnetNoteFor('llmq_typo')).toBeNull();
+    for (const p of Object.values(LLMQ_PROFILES)) expect(p.mainnetNote.length).toBeGreaterThan(20);
   });
 });

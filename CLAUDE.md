@@ -538,6 +538,26 @@ Two corrections to what this entry said before, both verified at
 
 ## Measurement caveats that are easy to get wrong
 
+- **The devnet punishes on four profiles; the v23 mainnet will punish on
+  two.** `IsQuorumTypeEnabledInternal` (`llmq/options.cpp:188-191`) admits
+  `llmq_50_60`, `llmq_60_75` and `llmq_25_67` on TESTNET or DEVNET only: they
+  are registered on mainnet, never form there, and v23 leaves that as it is
+  (dropping them from the list is deferred). Here they form every 24 and 48
+  blocks and every exclusion they hand out is a real PoSe penalty, so a devnet
+  figure quoted for mainnet is **pessimistic by whatever those two
+  contributed** -- on 2026-09-10 by all of it: the #222 roll's three penalties
+  all sat in one `llmq_50_60` round, and as mainnet would count it that roll
+  punished nobody. The failed Q60 round from the same roll, by contrast, is
+  mainnet-relevant one for one. Since 2026-09-10 the explorer tags those
+  types `devnet-only` wherever a profile is named, and every experiment
+  outcome carries `mainnetRelevant` -- the same window with the profiles
+  mainnet never forms held out (`domain/mainnetRelevant.ts`, registry flag
+  `formsOnV23Mainnet` in `config/llmq.ts`). Quote a roll's penalties both
+  ways, and say which. Do not "fix" it by switching the two profiles off on
+  the devnet: that costs a consensus change and a roll, removes the densest
+  DKG sample on this mesh, and buys no mainnet fidelity while mainnet's own
+  threshold-3 `llmq_400_60` is itself a deferred item.
+
 - **ChainLock coverage starts at the first lock ever seen,** not at the start
   of the chain. Before masternodes existed a lock is impossible, not missing;
   counting that era reported 88% where the truth was 99%.

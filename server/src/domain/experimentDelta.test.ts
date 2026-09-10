@@ -48,6 +48,31 @@ describe('comparing a run against its baseline', () => {
     expect(old.stakerGini).toBeNull();
   });
 
+  it('compares the mainnet view where both sides carry it, and refuses where one does not', () => {
+    const mainnet = (formationRate: number | null, membersPunished: number) => ({
+      profiles: ['llmq_400_60', 'llmq_defcon'],
+      rounds: { formed: 0, failed: 0, pending: 0, impossible: 0 },
+      formationRate,
+      medianHealthRatio: null,
+      worstHealthRatio: null,
+      longestFailureStreak: 0,
+      membersPunished,
+    });
+    // The 2026-09-10 roll: the devnet counted three punished, every one in a
+    // llmq_50_60 round; as mainnet counts it, nothing moved.
+    const delta = compareOutcomes(
+      outcome({ masternodesPunished: 3, mainnetRelevant: mainnet(1, 0) }),
+      outcome({ masternodesPunished: 1, mainnetRelevant: mainnet(0.875, 0) })
+    );
+    expect(delta.masternodesPunished).toBe(2);
+    expect(delta.mainnetMembersPunished).toBe(0);
+    expect(delta.mainnetFormationRate).toBeCloseTo(0.125, 6);
+
+    const old = compareOutcomes(outcome({ mainnetRelevant: mainnet(1, 0) }), outcome({}));
+    expect(old.mainnetFormationRate).toBeNull();
+    expect(old.mainnetMembersPunished).toBeNull();
+  });
+
   it('refuses to compare where either side has no value', () => {
     // A baseline with no formed round has no health ratio, and subtracting from
     // nothing would state a change that was never measured.
