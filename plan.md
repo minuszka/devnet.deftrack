@@ -14,7 +14,7 @@ Last updated 2026-09-08.
 | **E1b** enforcement outage | The DSL punishing branch, first time on any chain: 5 nodes down, `nMissedEpochs` 1→4 → `fRewardSuspended`, 5 → `nDSLBanHeight`; one online epoch clears all three (#189, #190) | **CLOSED 2026-09-06 at 8592** (`dsl-enforcement-outage-2026-09-05`, 8353–8592). Proved on the schedule the rules promise: stop 8376; epochs 350–355 missedCount exactly 5, commits mined at the boundary blocks; `service_suspended` at 8496 (count 4), `service_banned` with `dslBanHeight` 8520 (count 5); restart 8544; epoch 356 (8568) cleared all three fields on all five **without a ProUpServTx** while every one of them also carried a DKG-PoSe ban (8387–8468) — that is #189 on-chain. Nobody else marked. 27/27 rounds formed, worst health 0.93, ChainLock 1.00. Caveat: payee exclusion by DSL alone is not separable, the PoSe bans from 8387 already skip payment. PoSe bans revived by ProUpServTx after the close (the plan's `feeAddress` entries hold no coins; fee paid from a funded wallet address) |
 | **E2** mass-outage guard | The edge pair: 23/152 = 15.13 % (guard on, nobody punished, counter neither advances nor resets) against 22/152 = 14.47 % (guard off) | **CLOSED 2026-09-06 at 8856** (`dsl-mass-outage-guard-2026-09-06`, 8613–8856). The guard opened exactly at the declared share: commits 8712/8736/8760 read 21/21/22 missed with counters 1/2/3, 8784 and 8808 read 23 and froze every counter at 3 (no suspension where 4 would have suspended all), 8832 and 8856 read 0 with `service_recovered` on 22 and every counter cleared; nobody outside the 23 touched, 28/28 rounds formed, ChainLock 1.00. Finding: fullnode-4 mn2 was read as present for two epochs after a clean stop (a false negative in detection, mechanism open), so the unguarded 8784 would have suspended 21, not 22. The 23 were DKG-PoSe-banned by the lottery (8699–8795, enabled 129 at close) and revived by ProUpServTx at 8870 from a funded fee address: enabled 152, nothing owed |
 | **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network. Three of the four tool findings are closed in the merged package and proven on the pilot host (§4, 2026-09-07); the filter still reaches only the target's inbound connections (§3a, where the measurement owed before a re-run is stated). **Held back while `absent-epoch-rate-post-208-2026-09-07` runs** — its own exclusion clause removes any intervened epoch from the sample — so not before that run closes at 10608 |
-| **InstantSend latency + double-spend refusal** | How fast the Q60 quorum locks a payment, and whether a locked coin's second spend is refused | **CLOSED 2026-09-10 at 11106**, three runs, 60 transactions: `instantsend-q60-lock-latency-2026-09-10` (11042–11052), `-lock-relay-` (11056–11062), `-verify-reproduction-` (11104–11106). Lock latency over 54 locked: median ~2 s, p90 ~4 s, max 7 s. The double spend of a locked coin refused with `tx-txlock-conflict` in all three, confirmed in the seed's log. **Finding, predicted lock by lock and handed to the Core audit (a fork-integration defect, not a Dash one):** a non-masternode re-derives an islock's signing quorum from `cycleHash` with **rotation** logic (`instantsend.cpp:862-875, 912-935`: select at `B+23`, retry at `B-1`) while the signer of the non-rotated Q60 type chose by min-hash over the four quorums active at `tip-8` (`quorums.cpp:1330-1384`); a lock signed by a quorum older than one cycle is checked against {B and older} instead of {B and newer} and rejected as `invalid sig in islock` whenever an older quorum outscores B — but only when the ISLOCK outruns its recovered signature (`HasRecoveredSig` shortcut). `ops/islock-selection-reproduce.py` reproduces the signer 55/55, predicts every logged verdict on the reconstruction path (17/17 + 17/17) and every one of the five rejections across the runs **from the transaction's input alone**, out of sample; the raw-prefix serialisation (negative control) reproduces 6/18. Run 1's "relay gap" and run 2's "cycle boundary" readings are both withdrawn in their records. Consequence: the eight fleet stakers are non-masternodes and reject the same way, so such a payment is mined after the 120 s unlocked wait (run 3 tx 10: 250 s). No safety failure in any run. Fix for Core: for a non-rotated type take the quorum at `cycleHash` directly, bounded to the last `poolSize+1` active, and verify against its key. `instantsend` logging left ON at seed and devnet2 (runtime only). Still unexplained: two locks that never reached either node (run 2 tx 17) or arrived minutes late (tx 16) — relay, not verification |
+| **InstantSend latency + double-spend refusal** | How fast the Q60 quorum locks a payment, and whether a locked coin's second spend is refused | **CLOSED 2026-09-10 at 11106**, three runs, 60 transactions: `instantsend-q60-lock-latency-2026-09-10` (11042–11052), `-lock-relay-` (11056–11062), `-verify-reproduction-` (11104–11106). Lock latency over 54 locked: median ~2 s, p90 ~4 s, max 7 s. The double spend of a locked coin refused with `tx-txlock-conflict` in all three, confirmed in the seed's log. **Finding, predicted lock by lock and handed to the Core audit (a fork-integration defect, not a Dash one):** a non-masternode re-derives an islock's signing quorum from `cycleHash` with **rotation** logic (`instantsend.cpp:862-875, 912-935`: select at `B+23`, retry at `B-1`) while the signer of the non-rotated Q60 type chose by min-hash over the four quorums active at `tip-8` (`quorums.cpp:1330-1384`); a lock signed by a quorum older than one cycle is checked against {B and older} instead of {B and newer} and rejected as `invalid sig in islock` whenever an older quorum outscores B — but only when the ISLOCK outruns its recovered signature (`HasRecoveredSig` shortcut). `ops/islock-selection-reproduce.py` reproduces the signer 55/55, predicts every logged verdict on the reconstruction path (17/17 + 17/17) and every one of the five rejections across the runs **from the transaction's input alone**, out of sample; the raw-prefix serialisation (negative control) reproduces 6/18. Run 1's "relay gap" and run 2's "cycle boundary" readings are both withdrawn in their records. Consequence: the eight fleet stakers are non-masternodes and reject the same way, so such a payment is mined after the 120 s unlocked wait (run 3 tx 10: 250 s). No safety failure in any run. Fix for Core: for a non-rotated type take the quorum at `cycleHash` directly, bounded to the last `poolSize+1` active, and verify against its key. `instantsend` logging left ON at seed and devnet2 (runtime only). **The two cases left unexplained are explained, and by the node's own log (2026-09-10, §3):** both sit in the window in which block 11059's *body* was late — header 13:36:42Z, connected at the seed 13:39:34Z after `Timeout downloading block … from peer=577, disconnecting`. tx 16's lock arrived 12 s after that disconnect, 342 s after broadcast, accepted at both observers; tx 17 has no islock line of any kind at either node and `instantlock_internal` false at 60 confirmations, so no lock ever reached them. Not the verification defect (no `invalid sig` line for either), and not the machine (devnet2, same host, had that block 72 s earlier with no timeout). What is still open is only whether tx 17's lock was never signed or never relayed, which needs `instantsend` logging on a masternode |
 | **InstantSend security (partition)** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only — still owed |
 
 **CLOSED 2026-09-10 at 10608: `absent-epoch-rate-post-208-2026-09-07`, 60 of 60
@@ -972,6 +972,52 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   call takes ~90 ms). The fix rode into run 2 and its 12 → 14 unit tests. The
   broader lesson is the recurring one (`verify-the-verifier`): the tool's own
   clean number, `mined-with-lock`, asserted more than the node had said.
+- **A missing lock can be a missing block, and nothing measured that until
+  now.** Chasing the two InstantSend cases the runs left open (§1) ended
+  somewhere else entirely: block 11059's body was late — header time
+  13:36:42Z, connected at the seed 13:39:34Z, with the seed's own log naming
+  the cause, `Timeout downloading block ac62712c… from peer=577,
+  disconnecting`, at 13:39:18Z. tx 16's lock arrived 12 s after that
+  disconnect and was accepted; tx 17 has no islock line at either observer in
+  either direction. The window, not the quorum, is what those two have in
+  common.
+
+  **It is not rare, and it is not one node's fault.** `ops/block-arrival-lag.py`
+  (new, read-only: parse `UpdateTip` and `Timeout downloading block` out of a
+  debug.log, ask the node for each block's header time, report the
+  distribution and name the peers) was run over the identical window
+  10540–11125, the rollout excluded, on five daemons:
+
+  | node | blocks > 120 s late | p99 | max | timeout lines |
+  |---|---|---|---|---|
+  | seed (the explorer's RPC, ~169 peers) | 20 (3.6 %) | 297 s | 448 s | 16 |
+  | devnet2 (same host, 28 peers) | 6 (1.1 %) | 125 s | 176 s | 2 |
+  | fleet host 1, mn1 | 8 (1.4 %) | 167 s | 302 s | 16 |
+  | fleet host 2, mn1 | 13 (2.3 %) | 294 s | 374 s | 54 |
+  | fleet host 4, mn1 | 4 (0.7 %) | 82 s | 358 s | 28 |
+
+  Median 2 s and p90 6–9 s everywhere, so the ordinary case is healthy and the
+  tail is the whole story. The seed is the worst of the five but not a
+  different animal, and the two daemons on one machine differ by a factor of
+  three — so this follows the peer set, not the host. Block 11059 read 16 s,
+  17 s, 96 s, 126 s and 278 s across five fleet hosts while 11060 reached every
+  one of them within 5 s; 10986 and 11010 were 0–5 s at four fleet hosts and
+  447/448 s at the seed. Eleven of the seed's twenty late blocks name a peer
+  that was asked for the body and did not send it, twice two peers in a row.
+
+  **What it costs this project.** Every wall-clock latency measured at the seed
+  — InstantSend locks, ChainLock first sight, the ZMQ block notification the
+  explorer stores as evidence — inherits this tail, and the node reports
+  nothing amiss while it lasts. Before attributing a delay to a quorum, run the
+  tool over the window. Unit-tested against a fixture read from the chain with
+  two negative controls: an unknown log format must report *nothing parsed*
+  rather than nothing late, and header times shifted so nothing is late must
+  keep the same block count. Proven able to fail (last-tip-wins mutation: 4
+  failures, byte-identical restore).
+
+  Open, and worth a decision rather than a guess: whether the seed's share is
+  its peer count, its RPC load, or the announcing peers it happens to pick. The
+  tool makes any of those measurable on a second window.
 - **`medianBlockIntervalSec` must not be compared against the target spacing.**
   Block intervals are a Poisson process, so they are exponentially distributed
   and the median is `mean x ln2` = 0.693 of the mean, never the mean itself.

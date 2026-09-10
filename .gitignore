@@ -48,3 +48,9 @@ lab-masternode-keys.json
 # py_compile output: the observer is checked in CI, which leaves this behind.
 __pycache__/
 *.pyc
+
+# Core-audit runner scripts and their outputs. They drive WSL worktrees of the
+# node repository, not this one, and only ever sat here because that is where
+# the session's shell started. Kept out of git status so a real change stays
+# visible; nothing in the tree references them.
+audit-scratch/

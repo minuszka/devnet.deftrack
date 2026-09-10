@@ -167,7 +167,17 @@ jobs:
 
       - name: Parse and test the python ops scripts
         run: |
-          python3 -m py_compile ops/devnet-observer.py ops/instantsend-probe.py
+          set -euo pipefail
+          # Every ops/*.py, not a hand-kept list: two scripts had been added
+          # since the list was written and neither was being parsed. The count
+          # is printed so an empty glob cannot pass as a clean run.
+          count=0
+          for f in ops/*.py; do
+            python3 -m py_compile "$f"
+            count=$((count + 1))
+          done
+          test "$count" -ge 3
+          echo "parsed $count python scripts"
           python3 -m unittest discover -s ops/tests -p 'test_*.py' -v
 
       # The unit is verified against the real command, installed where the unit
