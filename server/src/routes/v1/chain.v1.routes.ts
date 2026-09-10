@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { ChainLockReport } from '@devnet-deftrack/shared';
+import type { BlockArrivalReport, ChainLockReport } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { Block } from '../../models/Block.js';
 import { Transaction } from '../../models/Transaction.js';
@@ -12,6 +12,7 @@ import {
 } from '../../config/llmq.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
+import { summariseArrival } from '../../domain/blockArrival.js';
 import { redactService } from '../../domain/hostRedaction.js';
 import { hostRedactionPolicy } from '../../services/hostLabel.service.js';
 
@@ -387,6 +388,50 @@ router.get(
           signer: b.chainLockLlmqName ?? null,
         }))
         .reverse(),
+    };
+    sendData(res, body);
+  })
+);
+
+/**
+ * GET /api/v1/block-arrival
+ *
+ * How late this node's own view of a block is: the block's header timestamp
+ * against the moment ZMQ handed it to us.
+ *
+ * This is the calibration of the instrument every other timing on this site is
+ * taken with. On 2026-09-10 two of sixty measured InstantSend transactions
+ * read as a quorum failure and were a block that had not reached the seed yet
+ * -- 172 s late, with the node's own log naming the peer it waited on. The
+ * same measurement run over five daemons put 0.7-3.6 % of blocks more than
+ * 120 s late while the median everywhere was 2 s, so the tail is the whole
+ * story and the median alone would hide it.
+ *
+ * Blocks the watcher never saw arrive are `unmeasured`, never zero, and every
+ * share is over `measured`. See domain/blockArrival.ts for why both matter.
+ */
+router.get(
+  '/block-arrival',
+  withCachePolicy('short'),
+  validateQuery(z.object({ blocks: z.coerce.number().int().min(10).max(5000).default(500) })),
+  asyncRoute(async (_req, res) => {
+    const q = parsedQuery<{ blocks: number }>(res);
+
+    const recent = await Block.find()
+      .sort({ height: -1 })
+      .limit(q.blocks)
+      .select('height time firstSeenAt')
+      .lean();
+
+    const summary = summariseArrival(
+      recent.map((b) => ({ height: b.height, time: b.time, firstSeenAt: b.firstSeenAt ?? null }))
+    );
+
+    const body: BlockArrivalReport = {
+      ...summary,
+      // Without the live feed there are no sightings at all, and "0 measured"
+      // would otherwise read as a fault rather than as a configuration.
+      zmqEnabled: config.zmq.endpoint !== '',
     };
     sendData(res, body);
   })

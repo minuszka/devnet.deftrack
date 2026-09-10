@@ -1015,6 +1015,19 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   keep the same block count. Proven able to fail (last-tip-wins mutation: 4
   failures, byte-identical restore).
 
+  **The explorer publishes it since 2026-09-10, so the caveat is no longer
+  only in this file.** `GET /api/v1/block-arrival` reports the distribution
+  over a window from `Block.firstSeenAt` — the ZMQ sighting the collector has
+  stored all along and nothing ever read for this — and the ChainLocks page
+  carries it under the lock latencies it qualifies. Two rules are in the domain
+  module and in its tests rather than in a comment: a block the watcher never
+  saw arrive is `unmeasured`, never a zero, and every share is over `measured`;
+  a negative lag is kept, because it says the two clocks disagree rather than
+  that a block arrived early. The integration test proves the wiring a unit
+  test cannot — dropping `firstSeenAt` from the route's projection makes every
+  block look unmeasured while the report stays well-formed, and that mutation
+  fails two cases.
+
   Open, and worth a decision rather than a guess: whether the seed's share is
   its peer count, its RPC load, or the announcing peers it happens to pick. The
   tool makes any of those measurable on a second window.
