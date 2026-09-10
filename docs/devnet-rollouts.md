@@ -12,6 +12,154 @@ ChainLock behaviour, so a rollout is an intervention to be recorded, not just
 an upgrade. And a version string does not identify a build — different binaries
 report the same version — so entries record md5sums.
 
+## Interrupted-reindex recovery and the second audit wave — the whole network, no gate
+
+*Rolled out 2026-09-10, completed at height 10929 on the fleet and 10930 on the
+seed and devnet2. Explorer record:
+[`fleet-rollout-222-2026-09-10`](https://devnet.deftrack.xyz/experiments/fleet-rollout-222-2026-09-10),
+opened at 10915 before the first restart.*
+
+Every daemon on the devnet runs a binary built from defcon-project/defcon
+commit `25c3966adcc3aeb5e92937afe31a7c17261010a5` (v22.1.5): 16 fleet hosts
+carrying 160 instances (152 masternodes and 8 stakers), plus the seed and
+devnet2 — **162 daemons, no exceptions**. `fleet-chain-check2.sh` after the
+roll: 160 instances, 160 on one chain, 0 forked, 0 unreachable, every one at
+10929; the seed and devnet2 at 10930 with one hash; `NRestarts=0` on both VPS
+units.
+
+| artefact | md5 |
+|---|---|
+| fleet / devnet2 non-BDB (`--without-bdb`) | `c07037160d46fc152dfb4417f4e78a90` |
+| seed BDB | `69afd7fb340b5845b8a3c3015207712e` |
+| `defcon-cli` | `2e29c5ab5eea95a3205c4bfb0a898dc4` seed, replacing `815f2091fec9f66e0e126fad51a8c967` — a 2026-09-05 build the previous roll had left in place; `3e85cac8d906f3cb49b35e2812d5121b` fleet, shipped by the deploy script beside the daemon (the script verifies only the daemon's md5 per host) |
+
+It replaces `406828f76173a5a23f3dd6db740afc76` on the fleet and devnet2 and
+`a1ad976f18016c5a67672adacdb8f4f5` on the seed, both built from `c739d9f504`
+and installed 2026-09-07. Both outgoing binaries are kept: the fleet one in
+`fleet-bin-prev` on the jump host, the seed one as a dated `.bak` beside its
+replacement.
+
+**No consensus gate is introduced or moved by any of the fifteen commits**,
+and the consensus-string fingerprint is bit-identical across old and new on
+both artefacts — 178 strings, md5 `559683c468564314759dfe943705e359`, the
+same value as the previous roll, with the `^bad-` negative control giving 165
+strings and a different md5. **This time the fingerprint proves less than
+usual, and the entry says so:** #222 deliberately changes what a node does at
+startup, and an error-string fingerprint cannot see that. Consensus-neutral,
+yes; behaviour-neutral, no.
+
+### What the binary carries beyond the 2026-09-07 roll
+
+Fifteen commits, `c739d9f504..25c3966adc`:
+
+- [#222](https://github.com/defcon-project/defcon/pull/222) — **evo**: an
+  evodb that an interrupted reindex left behind the coins tip is rebuilt at
+  startup instead of the node refusing to start with "Error upgrading Evo
+  database"; and during a long import the evodb is now flushed on a block-count
+  bound, so hours of progress are no longer one interruption away from being
+  lost. The evodb reached disk on one path only, and none of the existing flush
+  triggers could fire during an import. Startup behaviour, live from the first
+  run; no activation height. This has bitten a real production masternode.
+- [#223](https://github.com/defcon-project/defcon/pull/223) — tests for #222
+  on both sides of DIP0003, holding the rebuilt state to byte equality with
+  the state it replaces.
+- [#221](https://github.com/defcon-project/defcon/pull/221) — RPC:
+  `getaddressbalance` counts a coinstake as immature, as consensus does.
+- [#220](https://github.com/defcon-project/defcon/pull/220) — p2p: a plain
+  `headers` message is read the way every writer writes it.
+- [#219](https://github.com/defcon-project/defcon/pull/219) — CI: exclude the
+  one failing `miner_tests` case rather than the whole suite.
+- [#218](https://github.com/defcon-project/defcon/pull/218) — validation:
+  coinstake maturity is re-checked after a rollback, as coinbase maturity
+  already was.
+- [#217](https://github.com/defcon-project/defcon/pull/217) — validation: a
+  block index is marked dirty only when the block is actually being connected.
+- [#216](https://github.com/defcon-project/defcon/pull/216) — streams:
+  `fread`/`fwrite` are never handed the null pointer of an empty `Span`.
+- [#215](https://github.com/defcon-project/defcon/pull/215),
+  [#214](https://github.com/defcon-project/defcon/pull/214),
+  [#213](https://github.com/defcon-project/defcon/pull/213) — tests: two
+  proof-of-stake regressions from the audit, staked blocks addressed by height,
+  and the first functional test that stakes real blocks past `lastPowBlock`.
+- [#212](https://github.com/defcon-project/defcon/pull/212) — tests: the
+  deterministic-MN fixture completed for this fork; its one `chainparams.cpp`
+  change is inside `CRegTestParams`, behind a `-minstaticcollateral` argument
+  no deployment sets.
+- [#211](https://github.com/defcon-project/defcon/pull/211) — tests: actually
+  submit the ProTx requests DIP3 must refuse before activation.
+- [#210](https://github.com/defcon-project/defcon/pull/210) — qt: a
+  pixel-derived font size stays fractional. Neither deployed build compiles the
+  GUI.
+- [#209](https://github.com/defcon-project/defcon/pull/209) — pos: staking
+  delays are inline `constexpr`.
+
+### How it was proven before anything was installed
+
+The build was proven, not assumed. #222 touches `validation.h`, which is
+exactly the shape of change behind this project's mixed-ABI incident, so the
+question "did every dependent object rebuild?" was answered from the compiler's
+own dependency files rather than from the `CXX` line count: **81 objects depend
+on `src/validation.h`, and all 81 were rebuilt, 0 stale**, on both trees, with
+each binary newer than every object. The probe was itself checked against a
+header this build did not touch, and correctly reported dozens of stale objects
+there — a dependency probe that cannot report staleness is not evidence of its
+absence. Both trees were clean at the commit (`git diff` hashing to the
+empty-string sha256).
+
+#223's two tests were run against the shipped fleet binary, where they pass,
+and against a clean build of the commit immediately before #222, where **both
+fail with exactly the symptom #222 removes**. That control is what turns "the
+tests pass" into "the tests measure the fix". The `NEEDED` library set is
+identical old-to-new on both artefacts, and `ldd` ran on six distinct target
+hosts — one Debian image and all five Ubuntu machines — before any install.
+
+### What happened
+
+The seed and devnet2 went first, deliberately: 249 lines of new startup code
+reaching 162 machines at once is the risk that ordering bounds. Both came up
+clean — the shutdown flushed the evodb, startup logged every migration step as
+already done, no reconciliation ran, no error — and only then did the fleet
+roll, through the 16-host inventory that includes the five hosts logging in as
+their own users. One observation against the declared expectation:
+`ReconcileEvoDBToTip` **logs nothing when it has nothing to do**. The run's
+`expected` said it would say so; it is silent, and a healthy start looks the
+same in the journal as a start on a binary that never had the reconciler. The
+proof it is there is `nm`.
+
+**Noise: the declared kind, and less of it than on 2026-09-07.** The first
+DKG round after the restarts, `llmq_50_60` at 10920, formed at 47/50 and
+excluded three members — masternodes drawn into a round while their host was
+restarting, each left with a PoSe penalty of 98 that decays by one per block.
+No ban, 152/152 enabled, ZMQ 0 missed, and the Sentinel epoch at that same
+boundary committed with 0 missed bits, where the previous roll lost an epoch
+outright and produced eight penalty increases and a ban. A second exclusion of
+any of the three within 48 blocks would ban it, and the next round of that
+profile falls inside that window; if that happens it is the "possibly one
+PoSe ban" the run declared, not a finding. The two-hour quiet window after a
+restart of this size stands regardless, and the run is closed after it.
+
+### Also shipped, without a restart: the staking hook — and what its install note got wrong
+
+The corrected `ops/defcon-enable-staking` (`e53ea9660ac7d2a7cc1f5a3b5f411e65`,
+15/15 in its suite with a negative control) replaced the two older copies on
+the 8 stakers and on devnet2. Its install note said a leading dash on
+`ExecStartPost=` would keep the node running through a hook failure. Measured
+on the seed before installing, that is false in the script's own worst case: the
+dash makes systemd ignore the hook's exit status, not stop *waiting* for it, and
+the default retry budget (60 × 5 s = 300 s) is three times the units' 90 s
+`TimeoutStartSec`. On a node with `staking=0` the wait is not a risk but a
+certainty — the node's own RPC cannot tell "staking is off" from "wallet list
+not built yet", so the hook can only spend the whole budget — and systemd would
+have killed the seed at 90 s and restart-looped it.
+
+So the seed's unit carries no hook at all now (it does not stake), and the
+stakers and devnet2 carry `ExecStartPost=-…` **with**
+`DEFCON_ENABLE_STAKING_TRIES=12` — a 60 s worst case, under the limit. The
+finding, with the node-side gap that makes a correct hook impossible to write
+against the current RPC surface, went to the audit as its own item. Three
+different versions of that script were live in the estate before this roll;
+`md5sum`, not the path, says what a host runs.
+
 ## Sentinel relay fixes and the Dash audit wave — the whole network, no gate
 
 *Rolled out 2026-09-07, completed at height 9147. Explorer record:
