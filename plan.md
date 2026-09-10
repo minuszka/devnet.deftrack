@@ -913,6 +913,13 @@ the filter reaches exactly those. If that is a minority, the re-run would
 measure the tool a second time. And it waits for the running observation
 regardless (§1).
 
+**Measured 2026-09-10** on three masternodes of one fleet host, read-only:
+134, 134 and 137 quorum links (`masternode`-flagged peers), of which 73, 79 and
+80 are inbound -- **54-59 %**. A majority, so an inbound-only fault reaches most
+of a target's links but not all: a re-run either writes its hypothesis for a
+~57 % impairment of the member, or the wrapper gains an egress half first. The
+observation run that held E4b back closed at 10608; nothing else blocks it.
+
 **Closed 2026-09-05 at height 8088**, not at the tip. Left open it had absorbed
 147 blocks — the whole of `stake-redistribution`'s recovery window, and it would
 have taken the fleet roll's restart of 162 daemons as well. 8088 bounds it at
