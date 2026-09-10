@@ -616,6 +616,29 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   in loops") is right only when stdin is not the payload. Nothing changed on
   that pass; the guard confirmed the original shape on the second.
 
+- **Every failed DKG round since the first masternode existed sits inside a
+  declared intervention (2026-09-10, read the moment the rounds-to-runs join
+  went live, #146).** 31 failed rounds are on record. Eleven are `llmq_400_60`
+  at heights 648-1368 on 2026-08-24, before the first masternode registered
+  (1419) and before the first run was declared (`baseline-80mn-stock`, 1458):
+  with zero masternodes against `minSize` 4 they could never have formed, and
+  they are recorded as `failed` only because the `impossible` status did not
+  exist yet when they were written. **The other twenty — six `llmq_defcon`,
+  five `llmq_50_60`, two `llmq_60_75`, seven `llmq_400_60` — are all covered:**
+  the Q60 activation (4), the v22.1.5 final rollout (4), the DSL shadow
+  activation (3), the kernel-v2 and consensus-audit rollouts (3 + 2), and one
+  each for six more rolls including today's. Not one failed round outside a
+  rollout window, in any profile, in the network's whole life with
+  masternodes. That is the strongest single statement this explorer has
+  produced about the devnet, and it was invisible until the two records were
+  joined — the overview was reading each of those twenty as "inspect quorum
+  connectivity".
+
+  **Owed, small:** re-mark the eleven bootstrap-era rows `impossible` with a
+  one-off backfill (precedent: `ops/backfill-commitment-names.cjs`), so the
+  all-time failure count stops carrying rounds that had no members to fail.
+  Until then, every failure statistic over the whole chain is eleven too high.
+
 - **v23 mainnet preparation started (2026-09-10).** The plan is a page —
   "v23 mainnet átállás" in the artifact gallery — with phases, gates and a
   block-height axis; the sentence it exists for: H is the deadline, H−120 the
