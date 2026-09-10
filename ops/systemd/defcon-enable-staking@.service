@@ -1,0 +1,43 @@
+# defcon-enable-staking@.service -- re-arm staking after the devnet daemon
+# instance %i has started, WITHOUT making that daemon's start depend on it.
+#
+# Why a separate unit. As an ExecStartPost= line, the hook runs inside the
+# daemon's TimeoutStartSec (90 s by default). A leading dash on that line makes
+# systemd ignore the hook's exit status; it does not make systemd stop waiting
+# for it, so a hook that outlives the timeout fails the daemon's start and
+# Restart=on-failure loops the daemon. As its own oneshot unit ordered After=
+# the daemon, the hook has its own timeout and its own status, and the daemon
+# is never gated on it. ops/defcon-enable-staking, INSTALL NOTE point 4.
+#
+# NOT YET DEPLOYED (2026-09-10): the fleet stakers and devnet2 still use
+# ExecStartPost=- with Environment=DEFCON_ENABLE_STAKING_TRIES=12. Migrating a
+# host means: install this file, `systemctl enable defcon-enable-staking@11`,
+# remove the ExecStartPost= line from defcon-devnet-mn@11.service.d/staking.conf,
+# `daemon-reload`. It takes effect at the daemon's next start; nothing needs a
+# restart for the migration itself.
+#
+# This is the fleet form (datadir /opt/defcon-devnet/mn%i, hook beside
+# defcon-cli in /opt/defcon-devnet/bin). devnet2 on the VPS keeps its datadir
+# under /home/defcon and its binaries in /usr/local/bin; write that one as a
+# plain unit with those two paths, everything else identical.
+#
+# Do not enable this on a node that runs staking=0: the node's RPC cannot tell
+# "staking off" from "wallet list not built yet", so the hook would spend its
+# whole budget on every start and report an error each time.
+
+[Unit]
+Description=Re-arm staking on DeFCoN devnet instance %i
+After=defcon-devnet-mn@%i.service
+BindsTo=defcon-devnet-mn@%i.service
+
+[Service]
+Type=oneshot
+# 60 tries x 5 s = 300 s, the budget the hook was written for; this unit's own
+# timeout gives it that much and a margin, and nothing else waits on it.
+Environment=DEFCON_ENABLE_STAKING_TRIES=60
+Environment=DEFCON_ENABLE_STAKING_SLEEP=5
+TimeoutStartSec=330
+ExecStart=/opt/defcon-devnet/bin/defcon-enable-staking /opt/defcon-devnet/mn%i
+
+[Install]
+WantedBy=defcon-devnet-mn@%i.service

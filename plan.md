@@ -926,6 +926,32 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   `e53ea9660ac7d2a7cc1f5a3b5f411e65` is the tested repo copy. `md5sum`, not the
   path, says what a host is actually running.
 
+  **The repo side is fixed (2026-09-10, `fix/enable-staking-budget`); the
+  wiring migration is the part still owed.** `ops/defcon-enable-staking` now
+  ships `TRIES` 12 (12 x 5 s = 60 s, inside the 90 s default
+  `TimeoutStartSec` with 30 s of headroom), announces its budget in the journal
+  before the first attempt, and at exhaustion names the two causes the operator
+  can actually act on -- `staking=0` in the conf, which the node cannot report
+  and on which the hook must not be installed, or RPC still in warmup. Its
+  INSTALL NOTE says the dash is necessary and not sufficient, with the
+  arithmetic, and points at the wiring that removes the coupling. The suite is
+  18 cases: the three new ones check the exhaustion message, the announced
+  budget, and that the defaults read **from the script text** multiply to at
+  most 60 -- with a self-check that the assertion rejects the old 60 x 5.
+
+  `ops/systemd/defcon-enable-staking@.service` is the structural fix -- a
+  `Type=oneshot` unit ordered `After=` the daemon with its own 330 s timeout
+  and the full 300 s budget, so the daemon's start can never fail because of
+  the hook -- and it is **shipped but not deployed**. The 8 stakers and devnet2
+  run the interim `ExecStartPost=-` + `DEFCON_ENABLE_STAKING_TRIES=12` form,
+  which is safe. Migrating is one host touch per staker (install, `enable
+  defcon-enable-staking@11`, drop the `ExecStartPost=` line, `daemon-reload`),
+  takes effect at the next start, and is owed at the next planned restart
+  rather than as its own. The node-side gap -- no RPC distinguishes "staking
+  off" from "wallet list not built" -- went to the Core audit as its own item;
+  once a status RPC exists the hook gains a proven early exit instead of a
+  guess.
+
 
 ## 4. Current state of the network
 
