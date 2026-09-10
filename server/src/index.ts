@@ -21,6 +21,7 @@ import { chainLockService } from './services/chainLock.service.js';
 import { zmqService } from './services/zmq.service.js';
 import { mnListDiffService } from './services/mnListDiff.service.js';
 import { seedStatusService } from './services/seedStatus.service.js';
+import { nodeVersionService } from './services/nodeVersion.service.js';
 import { QuorumRound } from './models/QuorumRound.js';
 import { SyncState } from './models/SyncState.js';
 import { Block } from './models/Block.js';
@@ -194,6 +195,7 @@ async function main(): Promise<void> {
   chainLockService.start();
   zmqService.start();
   seedStatusService.start();
+  nodeVersionService.start();
 
   const simulationReconcileRepository = new MongoSimulationPersistenceRepository();
   const simulationReconcileService = new SimulationReconcileService(
@@ -242,6 +244,7 @@ async function main(): Promise<void> {
     chainLockService.stop();
     await zmqService.stop();
     seedStatusService.stop();
+    nodeVersionService.stop();
     simulationReconcileService.stop();
     metricsService.stop();
     server.close();

@@ -7,6 +7,7 @@ import type {
   QuorumRoundListItem,
   MasternodeRow,
   MasternodeTimelinePoint,
+  MasternodeVersions,
   MasternodeEventRow,
   BanWaveReport,
   BlockRow,
@@ -154,6 +155,8 @@ function makeApi(signal?: AbortSignal) {
       get<Page<MasternodeEventRow>>('/masternodes/events', params),
 
     banWaves: (hours: number) => get<BanWaveReport>('/masternodes/ban-waves', { hours }),
+
+    masternodeVersions: () => get<MasternodeVersions>('/masternodes/versions'),
 
     chainlocks: (blocks: number) => get<ChainLockReport>('/chainlocks', { blocks }),
 

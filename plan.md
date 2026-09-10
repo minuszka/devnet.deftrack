@@ -616,6 +616,36 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   in loops") is right only when stdin is not the payload. Nothing changed on
   that pass; the guard confirmed the original shape on the second.
 
+- **v23 mainnet preparation started (2026-09-10).** The plan is a page —
+  "v23 mainnet átállás" in the artifact gallery — with phases, gates and a
+  block-height axis; the sentence it exists for: H is the deadline, H−120 the
+  real one, and there is no brake after it, so every proof is owed *before* H
+  is pinned. What today established, from source at `25c3966adc`:
+  - **two** activation heights, `nChainLocksV2ActivationHeight` and
+    `nInstantSendV2ActivationHeight`, each paired with its type and IS ≥ CL
+    enforced (`chainparams.cpp:1667-1681`); mainnet has neither, nor
+    `LLMQ_DEFCON` in its `AddLLMQ` list;
+  - `WAIT_FOR_ISLOCK_TIMEOUT` is an ungated `static constexpr 2*60`
+    (`chainlocks.h:51`) that ChainLock signers also read
+    (`chainlocks.cpp:357`): a mixed v22/v23 window can delay ChainLocks before
+    H, with mainnet `llmq_400_60` at threshold 3;
+  - no test exercises the resolver flip, and regtest cannot host one:
+    `-testactivationheight` has `chainlocksv2` and no `instantsendv2`
+    (`chainparams.cpp:1213-1214`). Both sent to the Core audit with the DSL
+    logging gap and the silent `ReconcileEvoDBToTip`;
+  - baseline on the deployed tree: `feature_llmq_q60_regtest.py` passes (the
+    120-block formation lead pinned); `feature_llmq_q60_dkg.py`, which is not in
+    the runner's list, passes run directly — a real 60-member DKG from 65
+    daemons, 60/60 valid, health 1.00, 3.5 min;
+  - mainnet from its public explorer: **217 masternodes**, tip 133285, and
+    every measured peer on `/DeFCoN:22.1.4/` (54 of 55) — adoption starts at
+    zero, and the explorer's own node is under the H−120 deadline too.
+  - **Phase 2 delivered here:** the software census (`/masternodes/versions`,
+    off the seed's peer table, 151/152 coverage) — the instrument the phase-3
+    go/no-go reads. Owed: the same on the production explorer, the countdown
+    page, and the phase-1 rehearsals once an RC exists (migration on the
+    mainnet datadir copy, the proto-floor exclusion, the lab switchover).
+
 - The 2026-09-07 rollout (`c739d9f504`, 12 commits) reached all 162 daemons;
   see `docs/devnet-rollouts.md`.
 
