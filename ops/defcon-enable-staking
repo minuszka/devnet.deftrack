@@ -5,9 +5,10 @@
 # `staking=1` in defcon.conf only enables the subsystem; the per-wallet switch
 # shown by `liststakingwallets` defaults to disabled on every start and has to
 # be turned on with `setstaking`. On a chain whose only block producers are
-# these nodes, forgetting it stops the chain, so systemd runs this from
-# ExecStartPost on the devnet VPS (both daemons) and on every fleet staker
-# (instance 11 of the masternode template).
+# these nodes, forgetting it stops the chain, so systemd runs this after the
+# daemon starts on devnet2 and on every fleet staker (instance 11 of the
+# masternode template). The seed runs staking=0 and carries no hook -- see
+# INSTALL NOTE point 3 for why it must not.
 #
 # `setstaking <id>` is a TOGGLE, not a setter: called on a wallet whose switch
 # is already on, it turns staking OFF. The previous version of this script
@@ -34,15 +35,39 @@
 #               1  a check failed, an RPC failed, or the node never answered
 #               2  usage (missing datadir, missing defcon-cli, missing jq)
 #
-# INSTALL NOTE -- the exit status now means something, and systemd acts on it.
-# `ExecStartPost=` without a leading `-` treats a non-zero exit as a failed
-# start and STOPS THE DAEMON. That is the wrong outcome for "staking could not
-# be verified" (for instance a reindex that keeps RPC in warmup past the
-# deadline). Install this script only with the unit line written as
+# INSTALL NOTE -- the exit status means something, and systemd acts on it; but
+# the exit status is only half of what systemd acts on.
 #
-#     ExecStartPost=-/path/to/defcon-enable-staking <datadir>
+#   1. Write the unit line with a leading dash,
 #
-# so that the failure is logged and the node keeps running.
+#        ExecStartPost=-/path/to/defcon-enable-staking <datadir>
+#
+#      so that a non-zero exit ("staking could not be verified") is logged and
+#      does not stop the daemon. Without the dash it does.
+#
+#   2. The dash does NOT stop systemd from WAITING. ExecStartPost runs inside
+#      the unit's TimeoutStartSec -- 90 s by systemd's default, and on every
+#      devnet unit -- and a hook still running when that expires fails the
+#      start: the daemon is killed, and Restart=on-failure loops it. So
+#      TRIES x SLEEP must stay inside that window. The default is 12 x 5 s =
+#      60 s for exactly that reason; the previous default of 60 x 5 s = 300 s
+#      was measured doing the above on 2026-09-10, before it was installed.
+#
+#   3. Do not install this hook on a node that runs staking=0. The node's RPC
+#      answers {} from liststakingwallets both when staking is off and while
+#      the wallet vector has not been built yet (PoSMiner returns before
+#      MultiwalletInitialize when -staking is false, src/pos/minter.cpp:189),
+#      so this script cannot tell the two apart and necessarily spends its
+#      whole budget there -- which, with the old default, was the restart loop
+#      of point 2 on every single start.
+#
+#   4. The wiring that removes the coupling altogether: run this as its own
+#      Type=oneshot unit ordered After= the daemon, with its own
+#      TimeoutStartSec. Then the daemon's start cannot fail because of the
+#      hook, and the budget may be as long as it likes. A template is in
+#      ops/systemd/defcon-enable-staking@.service. As of 2026-09-10 the fleet
+#      stakers and devnet2 still use the ExecStartPost=- form, with
+#      Environment=DEFCON_ENABLE_STAKING_TRIES=12 written into the unit.
 #
 # Usage:  defcon-enable-staking <datadir>
 #
@@ -50,8 +75,11 @@
 #   DEFCON_CLI                   path to defcon-cli; default: the defcon-cli
 #                                that sits beside this script (that is where
 #                                both the VPS and the fleet keep it)
-#   DEFCON_ENABLE_STAKING_TRIES  attempts to wait for RPC and wallets (60)
+#   DEFCON_ENABLE_STAKING_TRIES  attempts to wait for RPC and wallets (12)
 #   DEFCON_ENABLE_STAKING_SLEEP  seconds between attempts (5)
+#                                12 x 5 s = 60 s, inside the 90 s default
+#                                TimeoutStartSec -- INSTALL NOTE point 2. Raise
+#                                TRIES only under a unit whose timeout allows it.
 set -u
 set -o pipefail
 
@@ -77,7 +105,7 @@ DEFCON_CLI=${DEFCON_CLI:-$SELF_DIR/defcon-cli}
 [ -x "$DEFCON_CLI" ] || die 2 "defcon-cli is not executable: $DEFCON_CLI"
 command -v jq >/dev/null 2>&1 || die 2 'jq is required and was not found in PATH'
 
-TRIES=${DEFCON_ENABLE_STAKING_TRIES:-60}
+TRIES=${DEFCON_ENABLE_STAKING_TRIES:-12}
 SLEEP=${DEFCON_ENABLE_STAKING_SLEEP:-5}
 
 cli() { "$DEFCON_CLI" -datadir="$DATADIR" -conf="$DATADIR/defcon.conf" "$@"; }
@@ -111,9 +139,15 @@ read_staking() {
 
 # Wait until RPC answers and at least one staking wallet is listed. The wallet
 # vector is rebuilt by the minter's maintenance thread, so an empty object
-# right after start is "not yet", not "none".
+# right after start is "not yet", not "none" -- and the node offers nothing
+# better. With staking=0 the vector is never built at all, and
+# liststakingwallets answers the same {} in both cases, so this loop cannot
+# tell "off" from "not yet": on a staking=0 node it spends the whole budget,
+# which is why such a node must not carry this hook (INSTALL NOTE point 3).
+# The budget is announced first, so the journal shows what was waited for.
 wallet_ids=()
 attempt=0
+log "waiting up to $TRIES attempts $SLEEP s apart for RPC and a staking wallet"
 while :; do
   attempt=$((attempt + 1))
   if cli getblockcount >/dev/null 2>&1; then
@@ -129,7 +163,7 @@ while :; do
     fi
   fi
   if [ "$attempt" -ge "$TRIES" ]; then
-    die 1 "no staking wallet listed after $attempt attempts (datadir $DATADIR) -- staking=1 and a loaded wallet are required"
+    die 1 "no staking wallet listed after $attempt attempts (datadir $DATADIR) -- either staking=0 in the conf, which the node cannot report and on which this hook must not be installed, or RPC still in warmup past the budget; staking=1 and a loaded wallet are required"
   fi
   sleep "$SLEEP"
 done

@@ -16,30 +16,65 @@ Last updated 2026-09-08.
 | **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network. Three of the four tool findings are closed in the merged package and proven on the pilot host (§4, 2026-09-07); the filter still reaches only the target's inbound connections (§3a, where the measurement owed before a re-run is stated). **Held back while `absent-epoch-rate-post-208-2026-09-07` runs** — its own exclusion clause removes any intervened epoch from the sample — so not before that run closes at 10608 |
 | **InstantSend security** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only |
 
-**Running (2026-09-07): `absent-epoch-rate-post-208-2026-09-07`**, observation
-only, from boundary 9192 to 10608 — 60 Sentinel epochs, about 57 hours, closing
-around the evening of 2026-09-09 at the measured 152 s block interval. It asks
-whether the one block of report-pool margin that #207 and #208 bought is enough
-to stop the network losing one hour in twenty (7 absent epochs in 145 before the
-roll). Intermediate readings at 9648, 9888 and 10128, none of them conclusive by
-the run's own arithmetic.
+**CLOSED 2026-09-10 at 10608: `absent-epoch-rate-post-208-2026-09-07`, 60 of 60
+epochs committed, zero absent, zero missed bits.** Observation only, boundary
+9192 to 10608, asking whether the one block of report-pool margin #207 and #208
+bought is enough to stop the network losing one hour in twenty (7 absent in 145
+before the roll).
 
-**What the run actually forbids, and what this file added on top.** The frozen
-`expected` excludes "any epoch containing a deliberate intervention" and names
-E4b, because that one applies a real network fault to a quorum member: no roll,
-no restart, no revive, no fault. This file also said "no InstantSend probe",
-which the record does not — a correction made 2026-09-08 rather than left to be
-read as the run's rule. **The probe is still held back, for a mechanism reason
-worth stating:** it sends twenty transactions that each open an InstantSend
-signing session on the same masternodes whose *signing convergence* this run
-measures, and the effect being looked for is about five per cent. Adding
-signing traffic to the window that measures signing is how a true number
-becomes unreadable. It costs 36 hours to wait, and nothing needs the probe
-sooner.
+**The verdict is the declared one, and it lands exactly on the line.** Under the
+unchanged 4.83% rate, sixty clean epochs in a row occur by luck with probability
+**0.0514** — just *over* the one-in-twenty threshold the run set for itself, not
+under it. The frozen `expected` reads 0 absent as "the pre-rollout rate is
+rejected at about the 5% level", and that is precisely what happened: about,
+not past. Twelve further epochs (442–453) have since committed clean, which
+would put seventy-two at 0.0284 — supporting evidence, and deliberately not part
+of the frozen sample. Anyone quoting this run must quote 0.0514, because the
+tempting sentence ("significant at p < 0.05") is false by 0.0014.
 
-The collector is a transient systemd unit on the VPS (`epoch-watch`) and does
-not survive a reboot; the epoch table itself comes from the chain and can be
-re-read.
+**Every declared NOT-EXPECTED control held**, measured over the run's block
+window 9282–10608: 159 DKG rounds, all four scheduled profiles, **every one
+formed**, median *and* worst health 1.00, not one member punished; 0 bans, 0
+revivals, 0 penalty increases; ChainLock coverage 1327/1327; mean block interval
+152.85 s against the 150 s target. `llmq_400_85` contributed 2 `impossible`
+rounds and no decided one, as its 576-block interval requires.
+
+**What it does not show, restated because the number is tempting:** a quiet
+network is the easy case. A missed bit needs five of a target's seven sentinels
+to agree, so an hour with nobody down cannot split the signers however late the
+reports are. The absent epochs that were ever explained sat in an outage window.
+This run says nothing about the layer under one, and E4b is still owed.
+
+**Tooling debt the close exposed: `computeOutcome` measures no DSL epochs at
+all.** It computes rounds, events, block samples and ChainLock counts — so the
+frozen `outcome` of a run whose entire purpose was an epoch count does not
+contain that count. It lives in `notes` as prose, and nowhere else in the
+record. The epoch table is still on the chain and re-readable, so nothing is
+lost; what is missing is the run record's ability to answer its own question
+without a human reading a paragraph. Worth adding before the next DSL run.
+
+**A second constraint met at the same moment:** `notes` is capped at 2000
+characters and the pre-run declaration context already filled 1947 of them, so
+recording the result *overwrote* it. Preserved here rather than lost:
+
+- **Why 9192 is the floor.** Epoch 381 at boundary 9168 is absent, but it
+  contains the rollout's own restarts — an artefact of the intervention, not a
+  measurement. Epoch 382 at 9192 is the first clean one.
+- **What made the question worth asking.** The same position 17–23 sampler ran
+  on 11 hosts before and after #207/#208. Before: report pools held 189–988 of
+  1064 at position 18 and agreed only at 21, the moment signing starts, with two
+  nodes still short at 20. After: 286–632 at 18 with 11 distinct pool hashes,
+  two values at 19, identical by 20 and unchanged through 23. Convergence now
+  completes a full block *before* signing rather than at it. `missedreports` was
+  0 on every node at every position.
+- **Four collector errors, all found and fixed before the run opened, none of
+  them in the network.** The watcher was first given 24 hours, reaching only
+  ~9833 and 27 epochs; the API was queried with `limit=60`, which would have
+  dropped the earliest epochs exactly as the sample reached 60; a `pgrep` check
+  matched the checking command's own text and reported a watcher alive that had
+  already stopped; and under systemd `HOME` is unset, so the log went to the
+  filesystem root for one restart. Verification is now by effect — unit state
+  and the log advancing — never by process count. ([[verify-the-verifier]])
 
 **Explorer tartozás (2026-09-06), fele lezárva 2026-09-07-én (#123):** a lab
 explorer beragadt egy node-reindex utáni láncmozgás után – „block N follows X
@@ -291,6 +326,219 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   against the build host's `libminiupnpc` was installed and would not start);
   the `defcon-cli` comparison against the deployed copies; and the install
   itself. `ops/fleet-deploy.sh` does the first; the roll waits on 10608.
+
+- **The roll must be given the inventory explicitly, and that is now verified
+  (2026-09-08).** `ops/fleet-deploy.sh` defaults to `/root/fleet-nodes.txt`,
+  which is **11 hosts**; the five that log in as their own unprivileged users
+  carry 45 of the 152 masternodes and are only in `/root/fleet-nodes-all.txt`.
+  Re-checked on the jump host today: that file holds **16 entries** — eleven
+  bare addresses (root) and five `user@address` — and `/root/mn-hosts.txt`
+  agrees at 16. So the roll runs as
+  `FLEET_INVENTORY=/root/fleet-nodes-all.txt ops/fleet-deploy.sh …`, and a run
+  without it would leave 45 masternodes on the old binary while reporting
+  success over the eleven it did reach ([[devnet-fleet-access]]).
+
+- **Rebuilt at `25c3966adc` on 2026-09-10, because #222 and #223 landed after
+  the staged artefacts.** The 2026-09-08 build at `55174597ed` is superseded and
+  its binaries are gone, overwritten in place, so nothing stale can ship by
+  reaching for the wrong file. Both worktrees were clean at build time: HEAD
+  `25c3966adcc3aeb5e92937afe31a7c17261010a5`, `git diff` sha256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` — the hash
+  of the empty string, which is what "clean" looks like when it is stated as a
+  number ([[claims-carry-diff-and-binary-hash]]).
+
+  | artefact | bytes | md5 |
+  |---|---|---|
+  | `DEFCON-seed/src/defcond` | 397,418,576 | `69afd7fb340b5845b8a3c3015207712e` |
+  | `DEFCON-fleet/src/defcond` | 393,998,352 | `c07037160d46fc152dfb4417f4e78a90` |
+
+  Both: `make` exit 0, **86 `CXX`, 4 `CXXLD`**, 4 m 16 s for the pair at `-j16`.
+
+  **The incremental build was proven exact, not plausible.** #222 changes
+  `validation.h`, and CLAUDE.md's mixed-ABI alarm is "surprisingly few `CXX`
+  lines after a header change" — but "86 feels about right" is not a
+  measurement. The `.deps/*.Po` files record each object's real dependency set,
+  so the question has an exact answer: **81 objects depend on `src/validation.h`,
+  and all 81 were rebuilt, 0 stale**, on both trees. 82 objects in total are
+  newer than the build-start marker — the 81 plus `clientversion.o`, which any
+  commit change rebuilds — and each binary is newer than every object.
+
+  Two traps met on the way, both of which would have produced a clean wrong
+  answer. The first probe grepped the `.Po` files for `src/validation.h` and
+  matched **nothing**, reporting "0 objects, 0 stale" as though that were a pass:
+  dependency paths there are relative to the *object's* directory, so the file
+  appears as `validation.h` or `../validation.h` — and must not be confused with
+  the different file `src/consensus/validation.h`. The **negative control is what
+  caught it**: the same check run against `streams.h`, a header this build did
+  not touch, must report stale objects, and it does — 153 dependents on the fleet
+  tree of which **72 are stale**, 155 and 74 on the seed. A dependency probe that
+  cannot report staleness is not evidence of its absence
+  ([[verify-the-verifier]]).
+
+- **#223's two tests were run against the new fleet binary, and against the
+  commit before #222 as a control (2026-09-10).** On
+  `c07037160d46fc152dfb4417f4e78a90` both pass: `feature_evodb_reconcile.py` in
+  20 s, `feature_evodb_reconcile_below_dip3.py` in 12 s, runner exit 0.
+
+  **The control is what makes that mean something.** Re-run with
+  `BITCOIND=` pointing at a clean build of `55174597ed` — the commit immediately
+  before #222, `ba6c6b70b22af8c36d134f3be08c4c98`, whose `nm -C` contains
+  `ReconcileEvoDBToTip` **zero** times against **two** in the new binary — both
+  tests **fail**, and they fail with precisely the symptom #222 exists to
+  remove: `dashd exited with status 1 during initialization. : Error upgrading
+  Evo database.` Runner exit 1. So the tests measure the fix rather than merely
+  passing, and the fix removes the documented failure rather than merely
+  compiling.
+
+  One process trap on the way, and it is the everyday one: the first attempt ran
+  `test/functional/test_runner.py` directly, which is not executable in this
+  tree. The shell reported `Permission denied`, the wrapper's last command
+  succeeded, and the job **exited 0 with no test having run**. Invoke it as
+  `python3 test/functional/test_runner.py`, and read the runner's own
+  pass/fail table rather than the wrapper's exit code.
+
+- **Consensus fingerprint: unchanged, and this time that proves less than
+  usual.** `strings … | grep -E '^(bad-|pos-|pow-|dsl|posechallenge|poseresponse|
+  posereport)' | sort -u | md5sum` gives **178 strings,
+  `559683c468564314759dfe943705e359`** on the new seed, the new fleet, and — read
+  on the jump host with its own `strings` — the binary that is actually deployed
+  (`/root/fleet-bin-prev/defcond`, `406828f76173a5a23f3dd6db740afc76`). Negative
+  control `^bad-`: 165 strings, `e2cb189210bb49c76e035a7ea3f2c2f0`, on all of
+  them.
+
+  **Say what it means, and stop there.** #222's `validation.cpp` half only adds a
+  new trigger to `fDoFullFlush` (`fManyBlocksSinceFlush`), which changes *when
+  data reaches disk*, not what is valid; its `node/chainstate.cpp` half is 249
+  lines of new **startup** code. The fingerprint reads consensus error strings, so
+  an unchanged value here is evidence that no validity rule moved and is **not**
+  evidence that runtime behaviour is unchanged — the startup path deliberately
+  changed. Quoting this fingerprint as "the roll changes nothing" would be false
+  for exactly the commit the roll exists to ship.
+
+- **No new library dependency**, checked host-independently with
+  `objdump -p | grep NEEDED` rather than `ldd` (which answers about the host it
+  runs on): the new fleet binary, the new seed binary, the deployed fleet binary
+  on the jump host and the deployed seed binary on the VPS all list the **same
+  ten** entries. This is a pre-check, not a replacement for `ldd` on a real fleet
+  host at roll time — that check exists because a build host reports 0 missing
+  libraries for a binary the targets cannot run.
+
+- **Baselines preserved before staging, without destroying the older one.**
+  `/root/fleet-bin-prev` on the jump host now holds the binary being replaced
+  (`406828f76173a5a23f3dd6db740afc76`), and the 2026-09-05 copy it previously
+  held (`c0db9a2fe14f2e5b8ec90878306e613c`) was moved to
+  `/root/fleet-bin-archive-20260905` rather than overwritten.
+
+- **`jq` is present on all 16 fleet hosts and on the VPS**, checked before
+  installing `ops/defcon-enable-staking` — the fixed hook parses
+  `getstakinginfo` with `jq` and fails closed without it, and a fail-closed
+  `ExecStartPost` **without** the leading dash would stop the daemon. Its suite
+  passes 15/15 on the VPS, negative control included (the original script toggles
+  a wallet that is already staking). The repo copy and the VPS copy are
+  byte-identical, `e53ea9660ac7d2a7cc1f5a3b5f411e65`; what runs on the seed today
+  is the 2026-08-21 `45d2df089c879c7dd3a64a818563f8c8`, so the install is a real
+  change and not a no-op.
+
+- **(Superseded 2026-09-10 by the rebuild recorded above.) The branch tip did not move, and the artefacts still match it
+  (2026-09-08, evening).** `git fetch upstream v22.1.x` is a no-op: the tip is
+  still `55174597ed` (#221), and both build worktrees sit on it, so **no
+  rebuild is owed**. The staged binaries are byte-for-byte the ones this
+  section records — seed `b0e4033e3c39fb0a5f5cd19099f6841b`, fleet
+  `6696eff7b96bc040affd1e212a573eea`, both timestamped after the tip commit.
+
+  The consensus fingerprint was re-measured **on the jump host, against the
+  binary that is actually deployed** (`/root/fleet-bin-new/defcond`,
+  `406828f76173a5a23f3dd6db740afc76`) rather than quoted from this file: 178
+  strings, `559683c468564314759dfe943705e359`, with the `^bad-` negative
+  control at 165 / `e2cb189210bb49c76e035a7ea3f2c2f0`. Identical to what the
+  new artefacts give on the build host. Two hosts, two tools' worth of
+  independence, same answer.
+
+  One trap worth recording, because it cost a wrong answer first: the
+  `grep -a` form used on hosts without `strings` **cannot carry the `^`
+  anchor**. Anchored to the binary's accidental newlines rather than to string
+  starts, it matched nothing and returned the md5 of the empty set —
+  `d41d8cd98f00b204e9800998ecf8427e` — for every artefact, which reads as a
+  clean four-way match. The jump host has `strings`; use it there, and on a
+  host that lacks it the pattern must lose the anchor and be re-validated
+  against a host that has one ([[verify-the-verifier]]).
+
+- **The 13 commits classified for the Experiments entry (2026-09-08).** Only
+  **six** change the deployed binaries' behaviour: #209 (`pos/stake.h`, inline
+  constexpr staking delays), #216 (`streams.h`, no null `Span` to
+  `fread`/`fwrite`), #217 and #218 (`validation.cpp` — dirty index only on
+  connect; coinstake maturity re-checked after a rollback), #220
+  (`net_processing.cpp`, plain `headers` message) and #221 (`rpc/misc.cpp`,
+  `getaddressbalance` coinstake maturity). #210 is Qt, which neither deployed
+  build compiles. #211, #213, #214, #215 are tests only. #219 is CI only.
+  #212 touches `chainparams.cpp` but **inside `CRegTestParams` alone**, behind
+  a `-minstaticcollateral` argument that is unset everywhere — regtest is
+  byte-identical without it. **No commit in the range adds or moves an
+  activation height**, which is why the fingerprint is unchanged and why the
+  Experiments record has no gate to name.
+
+- **Observation status at the time of writing: 35 of 60 epochs, all clean.**
+  Epochs 382–416 are every one `committed`, `missedCount` 0, no absent record.
+  Tip 10021, so 10608 is ~587 blocks — the evening of 2026-09-09 at the
+  measured mean interval.
+
+- **Rolled 2026-09-10 at `25c3966adc`: 162 of 162 daemons, one chain, zero
+  noise at T+1h.** Order as declared in `fleet-rollout-222-2026-09-10` (opened
+  at 10915, before any restart): devnet2 09:47 CEST, seed 09:48, then the 16
+  fleet hosts 09:5x–10:25 through `FLEET_INVENTORY=/root/fleet-nodes-all.txt
+  ops/fleet-deploy.sh` — 160 instances, "hosts with a problem: 0".
+  `fleet-chain-check2.sh` afterwards: **hosts=16 instances=160 same-chain=160
+  forked=0 unreachable=0**, every instance at 10929 with md5 `c0703716`; seed
+  and devnet2 at 10930 with one hash; `NRestarts=0` on both VPS units.
+
+  **#222's startup path ran on every daemon and did nothing, correctly.** On the
+  seed and devnet2 the shutdown flushed the evodb ("write evodb cache to disk
+  completed"), and startup logged all four `MigrateDBIfNeeded` steps as
+  "migration already done. skipping." — no reconciliation, no "Error upgrading
+  Evo database". One deviation from the frozen `expected`, worth a line:
+  `ReconcileEvoDBToTip` **logs nothing when it has nothing to do**. The
+  expectation said it would "say so"; it is silent. Not a fault, but a healthy
+  start and a start on which the reconciler was never compiled in look the same
+  in the journal, and the only proof it is there is `nm` (2 symbols).
+
+  **Noise: the declared kind, and less of it than on 2026-09-07.** The first
+  DKG round after the restarts, `llmq_50_60` at 10920, formed at 47/50 and
+  excluded three members, each now carrying a PoSe penalty of 98 —
+  `CalcPenalty(66)` is 100 at 152 registered, minus two blocks of decay —
+  which is what `expected` declared: masternodes drawn into a round while their
+  host was restarting. 0 bans, 152/152 enabled, ZMQ 0 missed, and Sentinel
+  epoch 454 at that same boundary **committed with 0 missed bits**: no absent
+  epoch this time, where 2026-09-07 lost one (381) and had eight `penalty_up`
+  and a ban. The `llmq_defcon` round at 10920 -- the ChainLock profile -- **failed**:
+  no commitment, nobody punished, which is what a failed DKG is. It left no
+  ChainLock gap (500/500 locked, every block 10917-10941 locked; the other
+  active Q60 quorums carried it). This is the one respect in which this roll
+  was noisier than 2026-09-07, whose run had 0 failed rounds in its window:
+  the restarts fell inside the 10920 cycle's DKG phases. Whether it recurs at
+  10944 is the decisive reading, and it decides just before the window
+  closes. One exclusion
+  cannot ban (100 < 152), but a second within 48 blocks would (200 - g >= 152),
+  and the next `llmq_50_60` round is at 10944, 24 blocks later — inside that
+  window for those three. Nothing is done about it: the mesh re-forms on its
+  own, and a ban there would be the declared "possibly one PoSe ban", an
+  artefact of the intervention. The last fleet restart was at 10:08:10 CEST, so the
+  quiet window runs to about 12:08; **closing the run is owed after it**, and `computeOutcome` will
+  then carry whatever the window produced. (An earlier version of this
+  paragraph, written about fifteen minutes after the last restart, said "none so
+  far" and mis-dated the reading as T+1h; corrected once the 10920 round
+  decided.)
+
+  **Hook wiring applied without a restart**, as approved: on the 8 stakers
+  `/opt/defcon-devnet/bin/defcon-enable-staking` is now
+  `e53ea9660ac7d2a7cc1f5a3b5f411e65` (old copy kept as `.bak-…`), and
+  `defcon-devnet-mn@11.service.d/staking.conf` carries
+  `Environment=DEFCON_ENABLE_STAKING_TRIES=12` plus `ExecStartPost=-…`,
+  `daemon-reload` done; the 8 masternode-only hosts have no staking drop-in and
+  were skipped by the guard. First attempt applied to **nobody**: the loop used
+  `ssh -n … bash -s < script`, and `-n` points stdin at `/dev/null`, so `bash
+  -s` ran an empty script and printed nothing — the earlier lesson ("use `-n`
+  in loops") is right only when stdin is not the payload. Nothing changed on
+  that pass; the guard confirmed the original shape on the second.
 
 - The 2026-09-07 rollout (`c739d9f504`, 12 commits) reached all 162 daemons;
   see `docs/devnet-rollouts.md`.
@@ -645,6 +893,72 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   dash) at install time, or a staking check that cannot be verified — a
   reindex still in warmup, say — would make systemd stop the daemon. No
   restart is needed to install: the hook only runs at the next start.
+
+  **The leading dash is necessary and NOT sufficient, measured 2026-09-10 —
+  this entry previously said the dash was the whole install requirement, and
+  that would have restart-looped the seed.** The hook waits for RPC and for a
+  staking wallet with a retry budget of `DEFCON_ENABLE_STAKING_TRIES` x
+  `DEFCON_ENABLE_STAKING_SLEEP` = **60 x 5 s = 300 s**, and every unit that
+  carries it has `TimeoutStartUSec=1min 30s` — the seed, devnet2 and
+  `defcon-devnet-mn@11` alike. A dash makes systemd ignore the hook's **exit
+  status**; it does not make systemd stop **waiting** for it. So a hook that
+  runs past 90 s fails the start, and `Restart=on-failure` loops the daemon.
+
+  The seed reaches that state every time, not occasionally: its conf carries
+  `staking=0`, so `getstakinginfo` answers `{}`, no staking wallet is ever
+  listed, and the hook necessarily spends the whole budget before failing.
+  Measured directly — the repo copy run against `/home/defcon/.defcon` was still
+  running at 120 s (`timeout` returned 124) — while the same copy against
+  `/home/defcon/.defcon2` answered in seconds with `wallet 0: staking already
+  on, nothing to do`, exit 0. One more property worth knowing: the script takes
+  `defcon-cli` **from its own directory**, so running it out of the repo fails
+  with `defcon-cli is not executable` (exit 2) and proves nothing about the
+  installed case.
+
+  **What was installed instead (2026-09-10, seed host):** the hook binary
+  `e53ea9660ac7d2a7cc1f5a3b5f411e65` at `/usr/local/bin/defcon-enable-staking`;
+  `defcond-devnet.service` has its `ExecStartPost` **removed entirely**, with a
+  comment saying why, because a node that does not stake has no use for a hook
+  whose only possible outcomes there are "wait" and "fail"; and
+  `defcond-devnet2.service` carries
+  `Environment=DEFCON_ENABLE_STAKING_TRIES=12` (60 s worst case, under the 90 s
+  limit) together with `ExecStartPost=-…`. Unit files backed up as
+  `.bak-YYYYMMDD-HHMM` first. No restart was needed: the hook runs at the next
+  start, which the rollout provides.
+
+  **Three different versions of this script are live in the estate**, which is
+  its own finding: `45d2df089c879c7dd3a64a818563f8c8` was on the seed
+  (2026-08-21, the toggle bug), `0f3aad3a5af7958fe9b42893c9b27d3d` is on the
+  fleet at `/opt/defcon-devnet/bin/defcon-enable-staking`, and
+  `e53ea9660ac7d2a7cc1f5a3b5f411e65` is the tested repo copy. `md5sum`, not the
+  path, says what a host is actually running.
+
+  **The repo side is fixed (2026-09-10, `fix/enable-staking-budget`); the
+  wiring migration is the part still owed.** `ops/defcon-enable-staking` now
+  ships `TRIES` 12 (12 x 5 s = 60 s, inside the 90 s default
+  `TimeoutStartSec` with 30 s of headroom), announces its budget in the journal
+  before the first attempt, and at exhaustion names the two causes the operator
+  can actually act on -- `staking=0` in the conf, which the node cannot report
+  and on which the hook must not be installed, or RPC still in warmup. Its
+  INSTALL NOTE says the dash is necessary and not sufficient, with the
+  arithmetic, and points at the wiring that removes the coupling. The suite is
+  18 cases: the three new ones check the exhaustion message, the announced
+  budget, and that the defaults read **from the script text** multiply to at
+  most 60 -- with a self-check that the assertion rejects the old 60 x 5.
+
+  `ops/systemd/defcon-enable-staking@.service` is the structural fix -- a
+  `Type=oneshot` unit ordered `After=` the daemon with its own 330 s timeout
+  and the full 300 s budget, so the daemon's start can never fail because of
+  the hook -- and it is **shipped but not deployed**. The 8 stakers and devnet2
+  run the interim `ExecStartPost=-` + `DEFCON_ENABLE_STAKING_TRIES=12` form,
+  which is safe. Migrating is one host touch per staker (install, `enable
+  defcon-enable-staking@11`, drop the `ExecStartPost=` line, `daemon-reload`),
+  takes effect at the next start, and is owed at the next planned restart
+  rather than as its own. The node-side gap -- no RPC distinguishes "staking
+  off" from "wallet list not built" -- went to the Core audit as its own item;
+  once a status RPC exists the hook gains a proven early exit instead of a
+  guess.
+
 
 ## 4. Current state of the network
 

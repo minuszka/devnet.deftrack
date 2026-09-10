@@ -256,6 +256,40 @@ RC=0; ERR=$(DEFCON_CLI="$TMP/bin/defcon-cli" "$SCRIPT" 2>&1 >/dev/null) || RC=$?
 expect_rc 2
 pass
 
+CASE='exhausted budget names staking=0 and RPC warmup as the likely causes'
+# On a staking=0 node liststakingwallets answers {} forever, indistinguishable
+# from "not built yet", so the message at exhaustion is the only diagnostic the
+# operator gets. It has to name the cause that is a configuration, not a wait.
+reset_mock; fixture wallets.json '{}'
+run_script
+expect_rc 1
+expect_calls setstaking 0
+expect_err 'staking=0'
+expect_err 'warmup'
+pass
+
+CASE='the wait budget is announced before the first attempt'
+reset_mock; fixture info.json "$(info_with true)"
+run_script
+expect_rc 0
+expect_err 'waiting up to 2 attempts 0 s apart'
+pass
+
+CASE='the shipped defaults fit inside the 90 s systemd default start timeout'
+# ExecStartPost runs under TimeoutStartSec, and a leading dash only discounts
+# the exit status -- systemd still waits. The defaults are read from the script
+# text itself, so a change to either number without a change here fails the
+# suite. 60 s is the documented ceiling (30 s of headroom under the 90 s
+# default); the old 60 x 5 s = 300 s was measured restart-looping a node.
+budget_ok() { [ "$(( $1 * $2 ))" -le 60 ]; }
+tries=$(grep -oE 'TRIES=\$\{DEFCON_ENABLE_STAKING_TRIES:-[0-9]+\}' "$SCRIPT" | grep -oE '[0-9]+')
+sleep_s=$(grep -oE 'SLEEP=\$\{DEFCON_ENABLE_STAKING_SLEEP:-[0-9]+\}' "$SCRIPT" | grep -oE '[0-9]+')
+if [ -z "$tries" ] || [ -z "$sleep_s" ]; then fail "could not read the defaults from $SCRIPT"; fi
+budget_ok "$tries" "$sleep_s" || fail "default budget ${tries} x ${sleep_s} s exceeds the 60 s ceiling"
+# The check has to be able to fail, or it vouches for nothing.
+if budget_ok 60 5; then fail 'budget_ok accepted the old 300 s default'; fi
+pass
+
 CASE='negative control: the original script toggles a wallet that is already staking'
 reset_mock; fixture info.json "$(info_with true)"
 run_script "$TMP/bin/defcon-enable-staking.orig"
