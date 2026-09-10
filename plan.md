@@ -14,7 +14,8 @@ Last updated 2026-09-08.
 | **E1b** enforcement outage | The DSL punishing branch, first time on any chain: 5 nodes down, `nMissedEpochs` 1→4 → `fRewardSuspended`, 5 → `nDSLBanHeight`; one online epoch clears all three (#189, #190) | **CLOSED 2026-09-06 at 8592** (`dsl-enforcement-outage-2026-09-05`, 8353–8592). Proved on the schedule the rules promise: stop 8376; epochs 350–355 missedCount exactly 5, commits mined at the boundary blocks; `service_suspended` at 8496 (count 4), `service_banned` with `dslBanHeight` 8520 (count 5); restart 8544; epoch 356 (8568) cleared all three fields on all five **without a ProUpServTx** while every one of them also carried a DKG-PoSe ban (8387–8468) — that is #189 on-chain. Nobody else marked. 27/27 rounds formed, worst health 0.93, ChainLock 1.00. Caveat: payee exclusion by DSL alone is not separable, the PoSe bans from 8387 already skip payment. PoSe bans revived by ProUpServTx after the close (the plan's `feeAddress` entries hold no coins; fee paid from a funded wallet address) |
 | **E2** mass-outage guard | The edge pair: 23/152 = 15.13 % (guard on, nobody punished, counter neither advances nor resets) against 22/152 = 14.47 % (guard off) | **CLOSED 2026-09-06 at 8856** (`dsl-mass-outage-guard-2026-09-06`, 8613–8856). The guard opened exactly at the declared share: commits 8712/8736/8760 read 21/21/22 missed with counters 1/2/3, 8784 and 8808 read 23 and froze every counter at 3 (no suspension where 4 would have suspended all), 8832 and 8856 read 0 with `service_recovered` on 22 and every counter cleared; nobody outside the 23 touched, 28/28 rounds formed, ChainLock 1.00. Finding: fullnode-4 mn2 was read as present for two epochs after a clean stop (a false negative in detection, mechanism open), so the unguarded 8784 would have suspended 21, not 22. The 23 were DKG-PoSe-banned by the lottery (8699–8795, enabled 129 at close) and revived by ProUpServTx at 8870 from a funded fee address: enabled 152, nothing owed |
 | **E4b** chaos netem, real fault | A fault large enough for the quorum to notice, on one masternode | **ran 2026-09-05, see §3a** — it measured the tool, not the network. Three of the four tool findings are closed in the merged package and proven on the pilot host (§4, 2026-09-07); the filter still reaches only the target's inbound connections (§3a, where the measurement owed before a re-run is stated). **Held back while `absent-epoch-rate-post-208-2026-09-07` runs** — its own exclusion clause removes any intervened epoch from the sample — so not before that run closes at 10608 |
-| **InstantSend security** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only |
+| **InstantSend latency + double-spend refusal** | How fast the Q60 quorum locks a payment, and whether a locked coin's second spend is refused | **CLOSED 2026-09-10 at 11062**, two runs, 40 transactions. `instantsend-q60-lock-latency-2026-09-10` (11042–11052) and `instantsend-q60-lock-relay-2026-09-10` (11056–11062). Lock latency over 35 locked: median ~2.7 s, p90 ~5 s, max 7 s. The double spend of a locked coin was refused with `tx-txlock-conflict` (the InstantSend branch, TX_CONFLICT_LOCK), confirmed in the seed's own log, in both runs. Finding, source-verified and handed to the Core audit: a **non-masternode's islock verification can reject a network-valid lock near a DKG cycle boundary** — it selects the signing quorum from its own tip view (`instantsend.cpp:912-935`, `SelectQuorumForSigning` at `cycleBase+dkgInterval-1`) and the BLS check fails against the wrong quorum, the source's own "changed quorums" case. Run 2's tx 3: both the seed and devnet2 received the islock and both logged `invalid sig in islock`, yet the producer mined it locked at ~109 s (under the 120 s unlocked-mining wait, `miner.cpp:409-415`) and block 11057 ChainLocked. This **disconfirms** run 1's guess that its two mined-without-lock cases were a relay gap: the lock reaches the node and is rejected at verification, not lost in transit. No safety failure in either run — no reversal, every block ChainLocked, the cheat blocked. `instantsend` logging left ON at seed and devnet2 (runtime only) to catch the next occurrence |
+| **InstantSend security (partition)** | A conflicting spend offered to a node that never saw the first one. The mempool refuses a double spend anyway, so only this shows InstantSend did the refusing | a partition fault; the wrapper does delay/loss only — still owed |
 
 **CLOSED 2026-09-10 at 10608: `absent-epoch-rate-post-208-2026-09-07`, 60 of 60
 epochs committed, zero absent, zero missed bits.** Observation only, boundary
@@ -634,10 +635,12 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
   joined — the overview was reading each of those twenty as "inspect quorum
   connectivity".
 
-  **Owed, small:** re-mark the eleven bootstrap-era rows `impossible` with a
-  one-off backfill (precedent: `ops/backfill-commitment-names.cjs`), so the
-  all-time failure count stops carrying rounds that had no members to fail.
-  Until then, every failure statistic over the whole chain is eleven too high.
+  **DONE 2026-09-10.** `ops/backfill-impossible-rounds.cjs` run on the VPS:
+  eleven rows flipped `failed` → `impossible` (all `llmq_400_60`, heights
+  648–1368, `available=0 < minSize=4`), 11 of 11 modified, dry-run afterwards
+  reports 0 remaining and 20 failed rounds on record. The first still-failed
+  round left standing is `llmq_50_60` @2616, `consecutiveFailures` 0. The
+  all-time failure count no longer carries rounds that had no members to fail.
 
 - **v23 mainnet preparation started (2026-09-10).** The plan is a page —
   "v23 mainnet átállás" in the artifact gallery — with phases, gates and a
@@ -956,6 +959,19 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   see §1 for why the wait is about signing traffic landing in a window that
   measures signing, not about the run's declared exclusions, which do not
   name the probe.
+
+  **Run against the chain 2026-09-10, and it exposed a bug in itself.** The
+  probe scored a mined transaction `mined-with-lock` on `getrawtransaction`'s
+  `instantlock`, which is islock OR chainlock -- so a transaction first seen
+  in an already-ChainLocked block was called locked on the ChainLock's word,
+  not the islock's, after 734 polls that all read unlocked (run 1, tx 17).
+  Fixed the same day: a mined transaction is scored by `instantlock_internal`
+  (the islock alone), the ChainLocked-but-no-live-lock case is its own outcome
+  `mined-lock-unknown`, and the summary carries the effective poll cadence
+  (`elapsed/observations`, ~169 ms against a nominal 100 ms, because each RPC
+  call takes ~90 ms). The fix rode into run 2 and its 12 → 14 unit tests. The
+  broader lesson is the recurring one (`verify-the-verifier`): the tool's own
+  clean number, `mined-with-lock`, asserted more than the node had said.
 - **`medianBlockIntervalSec` must not be compared against the target spacing.**
   Block intervals are a Poisson process, so they are exponentially distributed
   and the median is `mean x ln2` = 0.693 of the mean, never the mean itself.

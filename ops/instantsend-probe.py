@@ -12,11 +12,17 @@ scored naively that was a false "no lock". This one reads `getrawtransaction`'s
   locked            the lock was observed while the transaction was still
                     unconfirmed; latency = first sighting - send, at the poll's
                     resolution, which is stated beside it
-  mined-with-lock   first seen already in a block, with instantlock true: the
-                    lock happened and the poll missed the window; no latency
-                    is claimed, and this is not a failure
-  mined-unlocked    mined with instantlock false: the producer waited out
-                    WAIT_FOR_ISLOCK_TIMEOUT, or no lock was ever formed
+  mined-with-lock   first seen already in a block, with instantlock_internal
+                    true: the lock exists and the poll missed the window; no
+                    latency is claimed, and this is not a failure
+  mined-lock-unknown first seen in a block that is already ChainLocked, with
+                    no live lock: the ChainLock prunes the islock, so whether
+                    one ever existed cannot be read from this node any more
+  mined-unlocked    mined with neither a lock nor a ChainLock: the producer
+                    waited out WAIT_FOR_ISLOCK_TIMEOUT, or held a lock this
+                    node never received (2026-09-10: mined 27 s after
+                    broadcast, which the assembler allows only for a locked
+                    transaction -- the lock existed somewhere and not here)
   timeout           neither within --timeout; the last state seen is kept
   rejected          sendrawtransaction refused it; the reason is kept verbatim
 
@@ -63,7 +69,7 @@ COLLATERAL = Decimal("1000000")
 SATOSHI = Decimal("0.00000001")
 DEFAULT_ENV = "/opt/devnet-deftrack/app/.env"
 
-OUTCOMES = ("locked", "mined-with-lock", "mined-unlocked", "timeout", "rejected")
+OUTCOMES = ("locked", "mined-with-lock", "mined-lock-unknown", "mined-unlocked", "timeout", "rejected")
 
 
 class RpcError(Exception):
@@ -161,20 +167,34 @@ def classify(tx, sent_at, now, timeout):
     """
     One `getrawtransaction` observation, or None to keep polling.
 
-    `instantlock` is the field that survives the ChainLock; `blockhash` says
-    the transaction is mined. Their combination is the outcome, and the order
-    of the checks matters: a lock seen on an unconfirmed transaction is the
-    only case in which a latency may be claimed.
+    `instantlock` is islock OR chainlock -- the node's TxToJSON ORs the two --
+    and `instantlock_internal` is the islock alone, which the ChainLock prunes.
+    So the fields mean different things on either side of block inclusion.
+
+    Unconfirmed: `instantlock` can only come from an islock, since there is no
+    block to ChainLock yet, and a lock seen here is the only case in which a
+    latency may be claimed.
+
+    Mined: `instantlock_internal` true is a lock that still exists. False with
+    `chainlock` true is UNKNOWABLE from this node -- the ChainLock has already
+    pruned whatever lock there was. The 2026-09-10 run scored such a
+    transaction "mined-with-lock" on `instantlock` alone, after polling it 734
+    times unlocked: the true value came from the ChainLock, and the claim was
+    the probe's, not the node's. False with `chainlock` false is a transaction
+    mined without a lock this node knows of, and nothing has been pruned.
     """
     mined = bool(tx.get("blockhash"))
-    locked = bool(tx.get("instantlock"))
-    if locked and not mined:
-        return "locked"
-    if mined:
-        return "mined-with-lock" if locked else "mined-unlocked"
-    if now - sent_at >= timeout:
-        return "timeout"
-    return None
+    if not mined:
+        if tx.get("instantlock"):
+            return "locked"
+        if now - sent_at >= timeout:
+            return "timeout"
+        return None
+    if tx.get("instantlock_internal"):
+        return "mined-with-lock"
+    if tx.get("chainlock"):
+        return "mined-lock-unknown"
+    return "mined-unlocked"
 
 
 def fmt_amount(value):
@@ -196,11 +216,22 @@ def summarise(results, poll_ms):
         for result in results
         if result["outcome"] == "locked" and result.get("latencyMs") is not None
     )
+    # The poll interval is the sleep between calls; the call itself takes
+    # time too (about 90 ms on the seed, 2026-09-10), so the cadence the
+    # latencies were actually read at is elapsed / observations, and that is
+    # the resolution a latency carries -- not the nominal one.
+    polled = [r for r in results if int(r.get("observations", 0)) > 0 and r.get("elapsedMs") is not None]
+    effective = (
+        int(round(sum(int(r["elapsedMs"]) for r in polled) / sum(int(r["observations"]) for r in polled)))
+        if polled
+        else None
+    )
     summary = {
         "transactions": len(results),
         "outcomes": counts,
         "rpcErrors": sum(int(result.get("rpcErrors", 0)) for result in results),
         "resolutionMs": poll_ms,
+        "effectiveResolutionMs": effective,
         "latency": None,
     }
     if latencies:
@@ -298,7 +329,15 @@ def conflict_check(rpc, results, args):
     locked = [r for r in results if r["outcome"] in ("locked", "mined-with-lock") and r.get("txid")]
     if not locked:
         return {"attempted": False, "reason": "no locked transaction to conflict with"}
-    target = locked[0]
+    # The most recently locked one, not the first: a twenty-transaction run
+    # lasts a minute or more against 150 s blocks, so the first lock's input has
+    # a fair chance of being mined by the time the conflict is offered, and a
+    # spend of a mined input is refused as missing inputs -- which proves
+    # nothing about the lock. The refusal reason is kept verbatim so the three
+    # cases stay apart: tx-txlock-conflict is InstantSend refusing,
+    # txn-mempool-conflict the plain mempool, bad-txns-inputs-missingorspent an
+    # offer that came too late to test anything.
+    target = locked[-1]
     txid, vout = target["input"].split(":")
     other = rpc.call("getnewaddress", ["isprobe-conflict"])
     amount = Decimal(target["inputAmount"]) - Decimal(str(args.fee))

@@ -71,11 +71,19 @@ class Classifying(unittest.TestCase):
     def test_a_lock_on_an_unconfirmed_transaction_is_the_only_case_with_a_latency(self):
         self.assertEqual(probe.classify({"instantlock": True}, sent_at=0, now=1.2, timeout=180), "locked")
 
-    def test_mined_is_told_apart_by_whether_the_lock_survived(self):
-        # `instantlock` stays true through the ChainLock; `instantlock_internal`
-        # does not, and is deliberately not consulted.
-        self.assertEqual(probe.classify({"instantlock": True, "instantlock_internal": False, "blockhash": "b"}, 0, 5, 180), "mined-with-lock")
-        self.assertEqual(probe.classify({"instantlock": False, "blockhash": "b"}, 0, 5, 180), "mined-unlocked")
+    def test_mined_is_told_apart_by_the_live_lock_not_by_the_or_ed_field(self):
+        # `instantlock` is islock OR chainlock. A mined transaction whose only
+        # true bit comes from the ChainLock has had its islock pruned, and its
+        # lock state is unknowable -- the 2026-09-10 run scored one of those
+        # "mined-with-lock" after polling it 734 times unlocked.
+        self.assertEqual(probe.classify({"instantlock": True, "instantlock_internal": True, "chainlock": False, "blockhash": "b"}, 0, 5, 180), "mined-with-lock")
+        self.assertEqual(probe.classify({"instantlock": True, "instantlock_internal": True, "chainlock": True, "blockhash": "b"}, 0, 5, 180), "mined-with-lock")
+        self.assertEqual(probe.classify({"instantlock": True, "instantlock_internal": False, "chainlock": True, "blockhash": "b"}, 0, 5, 180), "mined-lock-unknown")
+        self.assertEqual(probe.classify({"instantlock": False, "instantlock_internal": False, "chainlock": False, "blockhash": "b"}, 0, 5, 180), "mined-unlocked")
+
+    def test_an_unconfirmed_lock_needs_no_internal_field(self):
+        # Nothing unconfirmed can be ChainLocked, so `instantlock` alone is the islock there.
+        self.assertEqual(probe.classify({"instantlock": True, "instantlock_internal": True}, 0, 1.2, 180), "locked")
 
     def test_keeps_polling_until_the_timeout_and_then_says_so(self):
         self.assertIsNone(probe.classify({"instantlock": False}, sent_at=0, now=10, timeout=180))
@@ -83,8 +91,8 @@ class Classifying(unittest.TestCase):
 
 
 class Summarising(unittest.TestCase):
-    def result(self, outcome, latency=None, errors=0):
-        return {"outcome": outcome, "latencyMs": latency, "rpcErrors": errors}
+    def result(self, outcome, latency=None, errors=0, observations=0, elapsed=None):
+        return {"outcome": outcome, "latencyMs": latency, "rpcErrors": errors, "observations": observations, "elapsedMs": elapsed}
 
     def test_latency_is_over_locked_transactions_only_and_errors_are_counted_apart(self):
         summary = probe.summarise(
@@ -109,6 +117,16 @@ class Summarising(unittest.TestCase):
     def test_no_lock_means_no_latency_not_zero(self):
         summary = probe.summarise([self.result("mined-with-lock"), self.result("timeout")], poll_ms=100)
         self.assertIsNone(summary["latency"])
+        self.assertIsNone(summary["effectiveResolutionMs"])
+
+    def test_effective_resolution_is_elapsed_over_observations_not_the_nominal_poll(self):
+        # 3362 ms in 18 polls and 2626 ms in 20: the RPC call takes time too.
+        summary = probe.summarise(
+            [self.result("locked", 3362, observations=18, elapsed=3362), self.result("locked", 2626, observations=20, elapsed=2626)],
+            poll_ms=100,
+        )
+        self.assertEqual(summary["resolutionMs"], 100)
+        self.assertEqual(summary["effectiveResolutionMs"], 158)
 
     def test_amounts_are_eight_decimals_rounded_down(self):
         self.assertEqual(probe.fmt_amount(Decimal("4998.988999999")), "4998.98899999")

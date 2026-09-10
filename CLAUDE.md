@@ -213,6 +213,22 @@ Two corrections to what this entry said before, both verified at
   `instantlock_internal` reverts to false and `getislocks` answers `None`,
   while `instantlock` stays true through the ChainLock.
 
+  **Measured under Q60, 2026-09-10** (two declared runs, 40 transactions):
+  lock latency median ~2.7 s, p90 ~5 s, max 7 s; the double spend of a locked
+  coin refused with `tx-txlock-conflict`. Two traps the runs exposed. First,
+  `instantlock` is islock **OR** chainlock (`instantlock_internal` is the islock
+  alone), so a mined transaction in a ChainLocked block reads locked on the
+  ChainLock's word -- the probe once scored one "mined-with-lock" after 734
+  polls that all read unlocked. Second, **a non-masternode's "no lock" is not
+  evidence that no lock exists**: it verifies an islock's BLS signature against
+  the quorum *it* selects for that height (`instantsend.cpp:912-935`), and near
+  a DKG cycle boundary it can pick the wrong one and log `invalid sig in
+  islock` on a lock the network holds -- the seed and devnet2 both rejected one
+  while the producer mined that transaction locked at ~109 s, under the 120 s
+  unlocked wait the assembler only waives for `IsLocked` (`miner.cpp:409-415`).
+  Benign for safety, misleading for measurement: ask a second observer, and
+  read the `instantsend` log category, before calling a lock absent.
+
 - **A masternode can never also stake.** `init.cpp:997` soft-sets
   `disablewallet=1` whenever `masternodeblsprivkey` is present, and overriding
   it with an explicit `disablewallet=0` makes the node refuse to start at all:
