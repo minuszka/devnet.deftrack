@@ -220,14 +220,29 @@ Two corrections to what this entry said before, both verified at
   alone), so a mined transaction in a ChainLocked block reads locked on the
   ChainLock's word -- the probe once scored one "mined-with-lock" after 734
   polls that all read unlocked. Second, **a non-masternode's "no lock" is not
-  evidence that no lock exists**: it verifies an islock's BLS signature against
-  the quorum *it* selects for that height (`instantsend.cpp:912-935`), and near
-  a DKG cycle boundary it can pick the wrong one and log `invalid sig in
-  islock` on a lock the network holds -- the seed and devnet2 both rejected one
-  while the producer mined that transaction locked at ~109 s, under the 120 s
+  evidence that no lock exists**, and the reason is exact (three runs, 60
+  transactions, every verdict predicted; `ops/islock-selection-reproduce.py`
+  with a fixture from the chain): the verifier re-derives the signing quorum
+  from the islock's `cycleHash` with **rotation** logic -- select at `B+23`,
+  retry at `B-1` (`instantsend.cpp:862-875, 912-935`) -- while the signer of
+  this **non-rotated** type chose by min-hash over the four quorums active at
+  `tip-8` (`quorums.cpp:1330-1384`). A lock signed by a quorum older than one
+  cycle is therefore checked against {B and older} where the signer chose
+  among {B and newer}, and is rejected as `invalid sig in islock` whenever an
+  older quorum outscores B -- about 1/5, 1/3 and 3/7 at two, three and four
+  cycles of age -- but only when the ISLOCK outruns its recovered signature,
+  because `HasRecoveredSig` short-circuits the reconstruction and that path
+  carries the quorum explicitly. An earlier version of this note said "near a
+  DKG cycle boundary"; the rejected locks were sent mid-cycle with every node
+  at the same tip, and that reading is withdrawn. The seed and devnet2 rejected
+  such locks while the producer mined the transaction locked, or -- the eight
+  fleet stakers are non-masternodes and reject the same way -- after the 120 s
   unlocked wait the assembler only waives for `IsLocked` (`miner.cpp:409-415`).
-  Benign for safety, misleading for measurement: ask a second observer, and
-  read the `instantsend` log category, before calling a lock absent.
+  Benign for safety, misleading for measurement, and a fork-integration defect
+  for the Core audit (Dash's InstantSend rotates; ours does not; the fix is to
+  take the quorum at `cycleHash` directly for a non-rotated type). Ask a second
+  observer, and read the `instantsend` log category, before calling a lock
+  absent.
 
 - **A masternode can never also stake.** `init.cpp:997` soft-sets
   `disablewallet=1` whenever `masternodeblsprivkey` is present, and overriding

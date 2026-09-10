@@ -1,0 +1,142 @@
+{
+ "source": "defcon-q60 devnet, run instantsend-q60-verify-reproduction-2026-09-10, seed node 25c3966adc",
+ "llmqType": 7,
+ "dkgInterval": 24,
+ "signingActiveQuorumCount": 4,
+ "signHeightOffset": 8,
+ "quorums": {
+  "10752": {
+   "quorumHash": "4c59edea4da1c5ef743e8f72c5f4c5a9ed79e0ae7836f1d71b624e580e43eab6",
+   "mined": 10763
+  },
+  "10776": {
+   "quorumHash": "bd94a5a9acb95f30fc4048819f952b94ef175528b919b7c27559d4fcedcd30d0",
+   "mined": 10787
+  },
+  "10800": {
+   "quorumHash": "87d82dfe7856e01e665350b17e5b4839d76e2eab1f41e15f1903a84fb50702c2",
+   "mined": 10811
+  },
+  "10824": {
+   "quorumHash": "f54b979b6d546c55179b48211c62850f0f4eb3e4a79d3056b9ed1643140cf27c",
+   "mined": 10835
+  },
+  "10848": {
+   "quorumHash": "0b94d8bd742b467dfd5af5e743f08fd078260f34096ef0b10b78ac83ae0023c5",
+   "mined": 10859
+  },
+  "10872": {
+   "quorumHash": "a850df150eba0b9d3d10515870ebdfc2a0a760112b5324594eba7b2db3210042",
+   "mined": 10883
+  },
+  "10896": {
+   "quorumHash": "c41f20a2d71b409a9757c78ba3f62fc2b1d244402f8d5e84633419f2908232b1",
+   "mined": 10907
+  },
+  "10920": {
+   "quorumHash": "bdb0fe295c91a1890faedc2316da53a6de3b9ede8cadc2ba2fe3dbd34c808885",
+   "mined": 10931
+  },
+  "10944": {
+   "quorumHash": "66455fb7b6174280dd9c35923dae4a43e6b1dcfc924b285bba28168282164431",
+   "mined": 10955
+  },
+  "10968": {
+   "quorumHash": "3904e78e7dd15fe71059621f5664d460c903877b4502515251f16587f65bc1a4",
+   "mined": 10979
+  },
+  "10992": {
+   "quorumHash": "c48e21aaf9ebac332bed64e093e57b591e7a64ba8fc9d1ab3b8b26ed53f8f369",
+   "mined": 11003
+  },
+  "11016": {
+   "quorumHash": "2ed60ad99eae7f43ad7f21beddc7f04363c2eae1d52d0adfb1d6285ce668c281",
+   "mined": 11027
+  },
+  "11040": {
+   "quorumHash": "b375b37173fb87a2b63d2ae4edfab2cf6b351c3f4bec8dc002ddbfe37df72143",
+   "mined": 11051
+  },
+  "11064": {
+   "quorumHash": "7e1f2c8acd36c22176abfe65a91cdd3debd60c0ce4d10c803a81dd0dfe4888e4",
+   "mined": 11075
+  },
+  "11088": {
+   "quorumHash": "d368440bd98ba058f00efc3969c39c9d6b0ba9e8b5741bab0e3fd53dee86d545",
+   "mined": 11099
+  }
+ },
+ "cases": [
+  {
+   "index": 1,
+   "txid": "3dd65cbebc673ffe2f1e1d41fdce3ff8a0c4e7f8b00e4d98220736901d608804",
+   "inputs": [
+    {
+     "txid": "e6614e9b2ef57e6fe931b30f467120dd66d180b6338c1d966d1a33491c307dfd",
+     "vout": 1
+    }
+   ],
+   "tipAtSend": 11104,
+   "cycleHash": "b375b37173fb87a2b63d2ae4edfab2cf6b351c3f4bec8dc002ddbfe37df72143",
+   "signerBase": 11040,
+   "seedVerdict": "accept"
+  },
+  {
+   "index": 3,
+   "txid": "fff926eb832686e57f3af8c8209e54b6e5eb42b86ebdc4446b3f263c1a070e75",
+   "inputs": [
+    {
+     "txid": "966d6203df3c636f00f90e9691439cfd166a621bb9eba5ee40101512bed3d1a0",
+     "vout": 1
+    }
+   ],
+   "tipAtSend": 11104,
+   "cycleHash": "7e1f2c8acd36c22176abfe65a91cdd3debd60c0ce4d10c803a81dd0dfe4888e4",
+   "signerBase": 11064,
+   "seedVerdict": "accept"
+  },
+  {
+   "index": 4,
+   "txid": "fa03feecabf9b3dc5f510f3b0ab9b8adb48371cb0cdbe88450b7258853fc22c7",
+   "inputs": [
+    {
+     "txid": "01760c5f989897d75c78615de2f7830d0693b1ff43e2b3ac364f7b2331550fbe",
+     "vout": 1
+    }
+   ],
+   "tipAtSend": 11104,
+   "cycleHash": "c48e21aaf9ebac332bed64e093e57b591e7a64ba8fc9d1ab3b8b26ed53f8f369",
+   "signerBase": 10992,
+   "seedVerdict": "accept"
+  },
+  {
+   "index": 10,
+   "txid": "7237da0b6991bbd41c39487ba60b320f70b26226030e7d97e4a6cd82f4dec317",
+   "inputs": [
+    {
+     "txid": "7ff3aa8bb630f14a592e01f2370b8697e80e45ce748091848b46e83fcb398603",
+     "vout": 1
+    }
+   ],
+   "tipAtSend": 11104,
+   "cycleHash": null,
+   "signerBase": null,
+   "seedVerdict": "reject",
+   "note": "no islock ever held by the seed; both attempts logged invalid sig; mined 250 s later"
+  },
+  {
+   "index": 13,
+   "txid": "d85cdfe41609207fb455847884abd23d86762569f7119a1e7fd121db177bc436",
+   "inputs": [
+    {
+     "txid": "963b3fc495086bc9e6e69b1148de68252418596ebff6cd92faedc1977d21ed3c",
+     "vout": 1
+    }
+   ],
+   "tipAtSend": 11105,
+   "cycleHash": "2ed60ad99eae7f43ad7f21beddc7f04363c2eae1d52d0adfb1d6285ce668c281",
+   "signerBase": 11016,
+   "seedVerdict": "accept"
+  }
+ ]
+}
