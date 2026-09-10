@@ -15,6 +15,7 @@ import type {
   BlockDetail,
   TxRow,
   TxDetail,
+  BlockArrivalReport,
   ChainLockReport,
   HealthSnapshot,
   StakingHealth,
@@ -34,6 +35,7 @@ import type {
  * a response looks like, not the wire contract package.
  */
 export type {
+  BlockArrivalReport,
   ChainLockReport,
   HealthSnapshot,
   StakingHealth,
@@ -167,6 +169,8 @@ function makeApi(signal?: AbortSignal) {
     masternodeVersions: () => get<MasternodeVersions>('/masternodes/versions'),
 
     chainlocks: (blocks: number) => get<ChainLockReport>('/chainlocks', { blocks }),
+
+    blockArrival: (blocks: number) => get<BlockArrivalReport>('/block-arrival', { blocks }),
 
     blocks: (params?: { limit?: number; offset?: number }) => get<Page<BlockRow>>('/blocks', params),
 

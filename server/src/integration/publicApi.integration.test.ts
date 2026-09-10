@@ -50,6 +50,7 @@ const PROBES: Probe[] = [
   { path: '/api/v1/fairness/selection?rounds=50' },
   { path: '/api/v1/staking/health?blocks=100' },
   { path: '/api/v1/chainlocks?blocks=100' },
+  { path: '/api/v1/block-arrival?blocks=100' },
   { path: '/api/v1/blocks?limit=10' },
   { path: '/api/v1/txs?limit=10' },
   { path: '/api/v1/experiments?limit=10' },

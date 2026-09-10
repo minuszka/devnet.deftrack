@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, svg, type TemplateResult } from 'lit';
-import type { ChainLockReport } from '../lib/api.js';
+import type { BlockArrivalReport, ChainLockReport } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
@@ -9,9 +9,10 @@ import './dd-stat.js';
 const REFRESH_MS = 20_000;
 
 export class DdPageChainLocks extends LitElement {
-  static override properties = { _d: { state: true }, _error: { state: true } };
+  static override properties = { _d: { state: true }, _arrival: { state: true }, _error: { state: true } };
 
   private _d: ChainLockReport | null = null;
+  private _arrival: BlockArrivalReport | null = null;
   private _error = '';
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
@@ -54,9 +55,12 @@ export class DdPageChainLocks extends LitElement {
 
   private async _load(run: PollRun): Promise<void> {
     try {
-      const d = await run.api.chainlocks(500);
+      // Same window for both, so the latency figures and the calibration
+      // underneath them describe the same blocks.
+      const [d, arrival] = await Promise.all([run.api.chainlocks(500), run.api.blockArrival(500)]);
       if (run.stale) return;
       this._d = d;
+      this._arrival = arrival;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -79,7 +83,9 @@ export class DdPageChainLocks extends LitElement {
       </div>
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
-      ${!d ? html`<div class="note">Loading…</div>` : html`${this._tiles(d)} ${this._strip(d)} ${this._gaps(d)}`}
+      ${!d
+        ? html`<div class="note">Loading…</div>`
+        : html`${this._tiles(d)} ${this._strip(d)} ${this._gaps(d)} ${this._arrivalCard()}`}
     `;
   }
 
@@ -259,6 +265,113 @@ export class DdPageChainLocks extends LitElement {
             </table>
           </div>
         </div>
+      </section>
+    `;
+  }
+
+  /**
+   * How late this node's own view of a block is -- the calibration of the
+   * instrument every latency above was measured with.
+   *
+   * It sits on this page because the ChainLock numbers are the ones it
+   * qualifies: a lock that "arrived slowly" may be a block that arrived
+   * slowly. Two of sixty InstantSend transactions measured on 2026-09-10 read
+   * as a quorum failure and were exactly that.
+   */
+  private _arrivalCard(): TemplateResult | typeof nothing {
+    const a = this._arrival;
+    if (!a) return nothing;
+
+    const fmt = (s: number | null): string => {
+      if (s === null) return '—';
+      if (Math.abs(s) < 60) return `${s.toFixed(1)}s`;
+      const m = Math.floor(Math.abs(s) / 60);
+      const rest = Math.round(Math.abs(s) % 60);
+      return `${s < 0 ? '−' : ''}${m}m ${rest}s`;
+    };
+    const late = (thresholdSec: number) => a.late.find((l) => l.thresholdSec === thresholdSec);
+    const worst = late(120);
+
+    return html`
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title">Block arrival at this node</div>
+          <div class="page-sub mono">
+            ${a.measured === 0 ? 'nothing measured' : `p50 ${fmt(a.lagSec.p50)} · max ${fmt(a.lagSec.max)}`}
+          </div>
+        </div>
+        <div class="card-body">
+          ${!a.zmqEnabled
+            ? html`<div class="note caveat">
+                The live feed is switched off, so no block has an arrival time. The polling
+                fallback measures the poll interval, not the arrival, and is deliberately not
+                shown here as if it were one.
+              </div>`
+            : a.measured === 0
+              ? html`<div class="note caveat">
+                  None of the ${num(a.blocksConsidered)} blocks in this window was seen arriving —
+                  they were indexed before the watcher ran. That is a gap in the record, not a set
+                  of instant arrivals, so no distribution is shown.
+                </div>`
+              : html`
+                  <div class="note">
+                    Each block's own timestamp against the moment this node handed it to us:
+                    <span class="mono">p50 ${fmt(a.lagSec.p50)}</span>,
+                    <span class="mono">p90 ${fmt(a.lagSec.p90)}</span>,
+                    <span class="mono">p99 ${fmt(a.lagSec.p99)}</span>,
+                    <span class="mono">max ${fmt(a.lagSec.max)}</span> over
+                    <strong>${num(a.measured)}</strong> measured blocks.
+                    ${late(30) && late(30)!.blocks > 0
+                      ? html`<span class="mono"
+                          >${num(late(30)!.blocks)} over 30s (${(late(30)!.share! * 100).toFixed(1)}%)</span
+                        >, `
+                      : html`None over 30s. `}
+                    ${worst && worst.blocks > 0
+                      ? html`<span class="mono"
+                          >${num(worst.blocks)} over 120s (${(worst.share! * 100).toFixed(1)}%)</span
+                        >.`
+                      : html`None over 120s.`}
+                  </div>
+                  <div class="note caveat">
+                    The timestamp is the producing node's clock and the sighting is ours, so a
+                    negative value means the two disagree rather than that a block arrived early;
+                    it is kept rather than clamped. Shares are over the ${num(a.measured)} measured
+                    blocks, never over the ${num(a.blocksConsidered)} in the window
+                    (${num(a.unmeasured)} were never seen arriving). The tail is the whole story:
+                    on this devnet the median is a couple of seconds while a few per cent of blocks
+                    land minutes late, and while that lasts nothing in RPC says so.
+                  </div>
+                `}
+        </div>
+        ${a.slowest.length === 0
+          ? nothing
+          : html`
+              <div class="card-body flush">
+                <div class="twrap">
+                  <table>
+                    <caption class="sr-only">
+                      The blocks in this window that reached this node latest.
+                    </caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" class="r">Height</th>
+                        <th scope="col" class="r">Late by</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${a.slowest.slice(0, 8).map(
+                        (p) => html`
+                          <tr>
+                            <td class="r mono"><a href="/block/${p.height}">${num(p.height)}</a></td>
+                            <td class="r mono">${fmt(p.lagSec)}</td>
+                          </tr>
+                        `
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            `}
       </section>
     `;
   }

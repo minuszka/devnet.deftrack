@@ -461,6 +461,41 @@ export interface ChainLockReport {
   }>;
 }
 
+/**
+ * The instrument's own calibration: how late this node's view of a block is.
+ *
+ * `lagSec` is the block's own header timestamp subtracted from the moment ZMQ
+ * handed us that block. It is not a chain fact -- the timestamp comes from the
+ * producing node's clock and the sighting from ours -- and it is not a health
+ * check. It is what qualifies every wall-clock number this explorer publishes,
+ * because a lock or a transaction that "never arrived" may be a block that had
+ * not arrived yet. Measured on this devnet: median 2 s, but a few per cent of
+ * blocks land minutes late.
+ *
+ * Every share is over `measured`, never over `blocksConsidered`: a block the
+ * watcher never saw arrive is unmeasured, not instant. A negative lag is kept
+ * rather than clamped, because it says the two clocks disagree.
+ */
+export interface BlockArrivalReport {
+  blocksConsidered: number;
+  measured: number;
+  unmeasured: number;
+  firstMeasuredHeight: number | null;
+  lastMeasuredHeight: number | null;
+  lagSec: {
+    min: number | null;
+    p50: number | null;
+    p90: number | null;
+    p99: number | null;
+    max: number | null;
+  };
+  late: Array<{ thresholdSec: number; blocks: number; share: number | null }>;
+  slowest: Array<{ height: number; time: number; lagSec: number | null }>;
+  points: Array<{ height: number; time: number; lagSec: number | null }>;
+  /** Whether the live feed is running at all; polling produces no sightings. */
+  zmqEnabled: boolean;
+}
+
 export interface HealthSnapshot {
   /** 'ok' | 'degraded' | 'down' -- the endpoint answers 503 for the last two. */
   status: string;
