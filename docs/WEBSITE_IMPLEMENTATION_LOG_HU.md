@@ -9,7 +9,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 |---|---|---|---|
 | 01 | Baseline és UI-tesztek | ELLENŐRZÖTT | `web/audit-2026-09-11`; K1 zöld (820+80 unit), K2 zöld (8 böngészőteszt), két negatív kontroll pirosra vitte a suite-ot |
 | 02 | Router | ELLENŐRZÖTT | `db77551`; K1 zöld (820+83 unit), K2 zöld (16 böngészőteszt); a javítás előtti viselkedés mérve |
-| 03 | Adatfrissesség | TERVEZETT | — |
+| 03 | Adatfrissesség | ELLENŐRZÖTT | `c5c872c`; K1 zöld (820+98 unit), K2 zöld (23 böngészőteszt); negatív kontroll: a néma catch visszatéve 3 teszt pirosra vált |
 | 04 | Presetek és módok | TERVEZETT | — |
 | 05 | Admin kliensszerződés | TERVEZETT | — |
 | 06 | Vezérlés visszatöltése | TERVEZETT | — |
@@ -270,13 +270,115 @@ Napi státusz: ELLENŐRZÖTT (F07 részben — lásd fent)
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 03. nap – Adatfrissesség
+
+```text
+Nap / dátum / implementáló: 03 / 2026-09-11 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ e4221bd
+Napi feladat és előfeltételei: F03. Előfeltétel: K2 — megvan.
+Auditpontok: F03
+```
+
+**Reprodukált kiinduló hiba:** a `dd-shell._loadHealth` üres `catch`-csel nyelte
+el a health-hibát („a chain line is decoration”), így a számlálók változatlanul
+maradtak a képernyőn, mellettük a lélegző zöld ponttal, ameddig a végpont
+elérhetetlen volt. Az Overview `.refresh` címkéje feltétel nélkül azt írta:
+`live · refreshes every 30 s`. Mérve a nap végi negatív kontrollal: a néma
+`catch` visszatéve a hét frissességi teszt közül **három** elbukik.
+
+**Változtatás röviden:** új tiszta modul (`client/src/lib/freshness.ts`) mondja
+meg, hány másodperces az adat és mi történt a legutóbbi kísérlettel. A szabályok:
+
+- az utolsó jó adat a képernyőn maradhat, de kiírja, mikor volt jó;
+- a legutóbbi hiba **azonnal** látszik, üzenettel és Retry gombbal (nem a
+  következő rajzoláskor egy másodperccel később: külön `requestUpdate()`);
+- két frissítési periódusnál öregebb adat `stale`. Kettő, nem egy: egy lassú
+  válasz még nem elavultság;
+- a sikert **azért** törli a hibát, mert újabb, nem mert valaki visszaállított
+  egy flaget. Egy saját sikerét túlélő flag az, amitől egy lap vörös marad a
+  helyreállás után;
+- az első kérés hibája `unavailable` + Retry, nem örök skeleton;
+- az időbélyeg az utolsó **elfogadott** siker ideje. Abort vagy felülírt futam
+  válasza sem siker, sem hiba.
+
+A `-1` hibajelző kikerült a számlálókból (`measuredCount`). A négy körszámláló
+összege **teljesen elmarad**, ha bármelyik tagja mérhetetlen — egy hiányzó tag
+nem kisebbé, hanem értelmetlenné teszi az összeget. Szándékosan **nem** általános
+szabály a negatív számokra: delta, margin és lag jogosan negatív. A `behind: -1`
+többé nem rejti el a lag-csipet: az elrejtés azt állította, „nincs lemaradás”,
+most azt írja, `unknown`.
+
+**Érintett fájlok:** új `client/src/lib/freshness.ts` + `freshness.test.ts`, új
+`client/e2e/freshness.spec.ts`; módosítva `dd-shell.ts`,
+`dd-page-overview.ts`, `format.ts`.
+
+**Terven kívüli szükséges módosítás és indoka:** `format.ts` kapott egy
+`elapsed(ms)` függvényt, és az `ago(iso)` mostantól ezt hívja. Indok: a
+frissesség-olvasás szabályozott órával készül, ezért nem mehet át olyan
+függvényen, amelyik maga hívja a `Date.now()`-t. Duplikálás helyett egysoros
+átvezetés.
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerver, route, DTO változatlan.
+Az `api.ts` már eddig is a borítékra döntött, nem a `response.ok`-ra — ezt most
+teszt védi.
+
+**Parancsok, exit-kódok és teszteredmények:**
+
+| Kapu | Parancs | Eredmény |
+|---|---|---|
+| K1 | build shared / typecheck / build / `git diff --check` | mind exit 0 |
+| K1 | `npm test` | exit 0 — 820 szerver + **98** kliens (83 → 98: 15 új frissességi eset) |
+| K2 | `npx playwright test` | exit 0 — **23 passed (7,9 s)** (16 → 23) |
+
+**UI-fixture tesztek (7 új, szabályozott órával):** friss lap kiírja a kort és a
+periódust; hibás frissítés azonnal látszik, a számlálók megmaradnak; helyreállás
+törli a hibát; **rejtett lap** (valódi `visibilitychange` úton) 90 s után
+`stale`, visszatéréskor újra friss; első kérés hibája → `no data — retry`, nincs
+skeleton; `503` + `success:true` továbbra is adat (degraded státusz és
+`behind: 42` megjelenik); `-1` sehol nem jelenik meg számként, a lag `unknown`.
+
+**Negatív kontroll:** a `dd-shell` hibaágát visszaírva a régi néma `catch`-re a
+frissességi tesztekből **3 elbukik** (`refresh failed` sosem jelenik meg).
+Visszaállítva a suite újra 23/23 zöld.
+
+**Valós HTTP/Mongo tesztek:** NEM FUTOTT — K3 nem alkalmazandó, szerveroldali
+változás nincs.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Kihagyott ellenőrzés és oka:**
+
+- „Elavult válasz nem teheti ismét frissé az újabb hibás állapotot”: a
+  szerződést **unit teszt** védi (`FreshnessTracker` — a nem elfogadott válasz
+  nyomtalan) és a komponensekben az `isAbortError` / `run.stale` őr. Böngészőben
+  determinisztikusan kikényszeríteni két egymást keresztező, késleltetett
+  választ kellene; ezt nem építettem meg, és nem is állítom, hogy megvan.
+- „Ha az adat DTO-ja közöl forrásidőt, az is maradjon látható”: a
+  `HealthSnapshot` **nem közöl megfigyelési időbélyeget**. A legközelebbi
+  forrásidő-jelzés a `behind`, amit most `unknown`-ként is kiír. Ha később a DTO
+  kap ilyen mezőt, ez a nap újranyitandó.
+
+**Nyitott probléma / következő lépés:**
+
+- A frissesség-kijelzés egyelőre csak a fejlécen és az Overview-n van. A többi
+  tizenkét oldal saját pollere továbbra sem mond adatkort — nem e nap
+  hatóköre (a terv a fejlécet és az Overview-t nevezi meg), de a 18. napi
+  navigációs munkánál érdemes lehet kiterjeszteni.
+
+```text
+Commit(ok), végső SHA: c5c872c
+Végső git státusz: tiszta (a napló commitja után)
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
 | F01 | 05–06 | Nyitott | — | — |
 | F02 | 05–07 | Nyitott | — | — |
-| F03 | 03 | Nyitott | — | — |
+| F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | Nyitott | — | — |
 | F05 | 09 | Nyitott | — | — |
 | F06 | 09 | Nyitott | — | — |
