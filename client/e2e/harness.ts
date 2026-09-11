@@ -74,6 +74,14 @@ export interface RecordedRequest {
   path: string;
   /** The parsed JSON body, or null when there was none (or it was not JSON). */
   body: unknown;
+  /**
+   * The `x-idempotency-key` header, when one was sent.
+   *
+   * Recorded because it is the thing that makes repeating an uncertain
+   * mutation safe, and because getting its scope wrong is invisible in the
+   * response: the server would simply answer that it had already done it.
+   */
+  idempotencyKey: string | null;
 }
 
 export class AppHarness {
@@ -163,7 +171,12 @@ export class AppHarness {
         } catch {
           // Not JSON. Recorded as null rather than guessed at.
         }
-        this.requests.push({ method: request.method(), path, body });
+        this.requests.push({
+          method: request.method(),
+          path,
+          body,
+          idempotencyKey: request.headers()['x-idempotency-key'] ?? null,
+        });
         const handler = this.resolve(url.pathname);
         if (handler === undefined) {
           this.violations.push(

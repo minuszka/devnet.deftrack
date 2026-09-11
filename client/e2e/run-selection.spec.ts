@@ -89,11 +89,15 @@ test.describe('run selection', () => {
         status: 404,
         body: fail('simulation run not found'),
       },
+      [`/api/v1/admin/simulations/runs/${RUN_A}/recovery`]: {
+        status: 404,
+        body: fail('simulation run not found'),
+      },
     });
     await app.goto(`/admin?run=${RUN_A}`);
 
-    // Both surfaces name the key: a bare "not found" beside a list of runs
-    // does not say which one failed.
+    // The message names the key: a bare "not found" beside a list of runs does
+    // not say which one failed.
     await expect(page.locator('.alert[role="alert"]').filter({ hasText: RUN_A }).first()).toBeVisible();
     expect(new URL(page.url()).searchParams.get('run')).toBe(RUN_A);
     // And no controls for a run that could not be loaded.

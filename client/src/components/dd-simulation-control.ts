@@ -17,14 +17,16 @@ import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '
 type Network = 'regtest' | 'devnet';
 type Mode = 'dry-run' | 'live';
 
-interface PreparedRun {
-  descriptor: ScenarioSummary;
-  run: SimulationControlRun;
-  plan: DryRunPlan;
-  preflight: SimulationPreflight | null;
-  /** Null until the server has been asked; undefined is never assumed clear. */
-  recovery: RecoveryReportView | null;
-}
+/*
+ * There is no `PreparedRun` here any more.
+ *
+ * The panel used to hold its own copy of the selected run, loaded once when the
+ * selection changed and never renewed. So the run list beside it could show
+ * `recovery` while these controls still offered to start a run that had already
+ * finished, and the only thing that ever corrected them was another selection.
+ * The dashboard owns the run and refreshes it; this component renders what it
+ * is given and reports what the server answered.
+ */
 
 /**
  * The panel no longer keeps its own table of parameter defaults.
@@ -84,12 +86,15 @@ export class DdSimulationControl extends LitElement {
     scenarios: { attribute: false },
     capabilities: { attribute: false },
     selectedRunKey: { attribute: false },
+    run: { attribute: false },
+    plan: { attribute: false },
+    recovery: { attribute: false },
+    preflight: { attribute: false },
     _scenarioId: { state: true },
     _network: { state: true },
     _mode: { state: true },
     _seed: { state: true },
     _parameters: { state: true },
-    _prepared: { state: true },
     _riskAcknowledged: { state: true },
     _startAcknowledged: { state: true },
     _busy: { state: true },
@@ -111,6 +116,14 @@ export class DdSimulationControl extends LitElement {
    * recovery controls off the screen.
    */
   selectedRunKey: string | null = null;
+  /** The selected run, owned and refreshed by the dashboard. */
+  run: SimulationControlRun | null = null;
+  /** Its saved, immutable plan. */
+  plan: DryRunPlan | null = null;
+  /** Recovery evidence, or null for "none recorded" -- never read as clear. */
+  recovery: RecoveryReportView | null = null;
+  /** A preflight the server actually produced. Null means not run. */
+  preflight: SimulationPreflight | null = null;
   private _scenarioId = 'mn-stop';
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
@@ -118,18 +131,15 @@ export class DdSimulationControl extends LitElement {
   private _parameters = '';
   /** Which scenario the parameter field was last filled from. */
   private _seededScenarioId: string | null = null;
-  /** Which run the panel has loaded, so a repeat of the same key is a no-op. */
-  private _loadedRunKey: string | null = null;
-  /** Bumped per load, so a slower answer for an earlier key cannot land. */
-  private _loadGeneration = 0;
-  private _prepared: PreparedRun | null = null;
+
   private _riskAcknowledged = false;
   private _startAcknowledged = false;
   private _busy = false;
   private _message = '';
   private _now = Date.now();
   private _clock: number | null = null;
-  private _retryKey: { operation: string; key: string } | null = null;
+  /** One idempotency key per run-and-operation, kept until that one succeeds. */
+  private readonly _retryKeys = new Map<string, string>();
 
   static override styles = [
     baseStyles,
@@ -209,61 +219,10 @@ export class DdSimulationControl extends LitElement {
    * and again whenever the selection changes. One rule covers both.
    */
   override willUpdate(): void {
-    if (this.selectedRunKey !== this._loadedRunKey) {
-      this._loadedRunKey = this.selectedRunKey;
-      void this._loadSelectedRun(this.selectedRunKey);
-    }
     const descriptor = this._descriptor;
     if (descriptor === null || this._seededScenarioId === descriptor.scenarioId) return;
     this._seededScenarioId = descriptor.scenarioId;
     this._parameters = templateJson(descriptor);
-  }
-
-  /**
-   * Restore a run's controls from the server, using the plan it was SAVED with.
-   *
-   * Not by creating anything: `POST /runs` with the same form would mint a
-   * different run, and the one still holding the lab would be left with no
-   * controls at all. `GET /runs/:key/dry-run` returns the run and its immutable
-   * plan, which is exactly what a reload needs.
-   */
-  private async _loadSelectedRun(runKey: string | null): Promise<void> {
-    const generation = ++this._loadGeneration;
-    if (runKey === null) {
-      this._prepared = null;
-      return;
-    }
-    if (this._prepared?.run.runKey === runKey) return;
-    this._busy = true;
-    try {
-      const result = await adminApi.dryRun(runKey);
-      // A slower answer for a key the panel has moved on from must not land.
-      if (generation !== this._loadGeneration) return;
-      if (!acceptsRunUpdate(this._prepared?.run ?? null, result.run)) return;
-      const descriptor =
-        this.scenarios.find((item) => item.scenarioId === result.run.metadata.scenarioId) ??
-        this._descriptor;
-      if (descriptor === null) return;
-      // A failure to read the recovery evidence leaves it null, which the panel
-      // reports as unknown. It must never read as clear.
-      const recovery = await adminApi.recovery(runKey).then((r) => r.recovery).catch(() => null);
-      if (generation !== this._loadGeneration) return;
-      // preflight stays null: the server did not report one here, and "not run"
-      // and "passed" are different answers.
-      this._prepared = { descriptor, run: result.run, plan: result.plan, preflight: null, recovery };
-      this._riskAcknowledged = false;
-      this._startAcknowledged = false;
-      this._retryKey = null;
-      this._message = '';
-    } catch (error) {
-      if (generation !== this._loadGeneration) return;
-      this._prepared = null;
-      // Named, because a bare "not found" beside a dashboard showing several
-      // runs does not say which one could not be loaded.
-      this._message = `Run ${runKey} could not be loaded: ${errorMessage(error)}`;
-    } finally {
-      if (generation === this._loadGeneration) this._busy = false;
-    }
   }
 
   /**
@@ -279,16 +238,59 @@ export class DdSimulationControl extends LitElement {
     this._message = '';
   }
 
-  private _idempotency(operation: string): string {
-    if (this._retryKey?.operation === operation) return this._retryKey.key;
-    const key = newIdempotencyKey(operation);
-    this._retryKey = { operation, key };
+  /**
+   * The same key for the same uncertain request, a different key for anything
+   * else.
+   *
+   * A request that times out may still have been applied, and the only safe way
+   * to find out is to repeat it under the key it was first sent with -- which
+   * is what makes the server answer `idempotentReplay` instead of refusing.
+   *
+   * Keyed by RUN and operation, not by operation alone. With one key per
+   * operation, aborting run A and then aborting run B inside the same panel
+   * reused A's key: the second abort would have been recognised as a replay of
+   * the first, and B would never have been aborted at all.
+   */
+  private _idempotency(runKey: string, operation: string): string {
+    const scope = `${runKey}:${operation}`;
+    const held = this._retryKeys.get(scope);
+    if (held !== undefined) return held;
+    const key = newIdempotencyKey(scope);
+    this._retryKeys.set(scope, key);
     return key;
   }
 
-  private _completedOperation(): void {
-    this._retryKey = null;
+  /** Only the key that just succeeded is retired; the others are still owed. */
+  private _completedOperation(runKey: string, operation: string): void {
+    this._retryKeys.delete(`${runKey}:${operation}`);
     this.dispatchEvent(new CustomEvent('simulation-changed', { bubbles: true, composed: true }));
+  }
+
+  /**
+   * Hand the freshest description of the run to its owner.
+   *
+   * A mutation's response IS the newest state there is, and the operator has
+   * just acted: making them wait for the next tick is how a second click
+   * happens. The dashboard still decides whether to take it -- on the server's
+   * revision, so an answer describing an older state is refused here too.
+   */
+  private _report(run: SimulationControlRun, preflight?: SimulationPreflight): void {
+    this.dispatchEvent(
+      new CustomEvent('run-updated', {
+        detail: preflight === undefined ? { run } : { run, preflight },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  /** The descriptor for the SELECTED run, which need not be the drafted one. */
+  private _runDescriptor(): ScenarioSummary | null {
+    const run = this.run;
+    if (run === null) return null;
+    return (
+      this.scenarios.find((item) => item.scenarioId === run.metadata.scenarioId) ?? this._descriptor
+    );
   }
 
   private _selectScenario(event: Event): void {
@@ -339,13 +341,15 @@ export class DdSimulationControl extends LitElement {
     try {
       const result = await adminApi.createRun({
         csrfToken: session.csrfToken,
-        idempotencyKey: this._idempotency('create'),
+        // A draft has no run key yet, so the seed scopes it: repeating the
+        // same draft is the same request, a new seed is a new one.
+        idempotencyKey: this._idempotency(`draft:${this._seed}`, 'create'),
         network: this._network,
         mode: this._mode,
         scenario: { scenarioId: descriptor.scenarioId, scenarioVersion: descriptor.version, seed: this._seed, parameters },
       });
-      this._prepared = { descriptor, run: result.run, plan: result.plan, preflight: null, recovery: null };
-      this._loadedRunKey = result.run.runKey;
+      this._report(result.run);
+      this._completedOperation(`draft:${this._seed}`, 'create');
       this._riskAcknowledged = false;
       this._startAcknowledged = false;
       // The dashboard owns the address bar; it puts this key in it, so a reload
@@ -357,7 +361,6 @@ export class DdSimulationControl extends LitElement {
           composed: true,
         })
       );
-      this._completedOperation();
     } catch (error) {
       this._message = errorMessage(error);
     } finally {
@@ -366,15 +369,15 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _validate(): Promise<void> {
-    const prepared = this._prepared;
+    const run = this.run;
     const session = this.session;
-    if (prepared === null || session === null) return;
+    if (run === null || session === null) return;
     this._busy = true;
     this._message = '';
     try {
-      const result = await adminApi.validateRun(prepared.run.runKey, session.csrfToken, this._idempotency('validate'));
-      this._prepared = { ...prepared, run: result.run, preflight: result.preflight };
-      this._completedOperation();
+      const result = await adminApi.validateRun(run.runKey, session.csrfToken, this._idempotency(run.runKey, 'validate'));
+      this._report(result.run, result.preflight);
+      this._completedOperation(run.runKey, 'validate');
     } catch (error) {
       this._message = errorMessage(error);
     } finally {
@@ -383,22 +386,23 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _arm(): Promise<void> {
-    const prepared = this._prepared;
+    const run = this.run;
     const session = this.session;
-    if (prepared === null || session === null || !this._riskAcknowledged) return;
+    const descriptor = this._runDescriptor();
+    if (run === null || session === null || descriptor === null || !this._riskAcknowledged) return;
     this._busy = true;
     this._message = '';
     try {
       const result = await adminApi.armRun(
-        prepared.run.runKey, session.csrfToken, this._idempotency('arm'), prepared.descriptor.riskClass
+        run.runKey, session.csrfToken, this._idempotency(run.runKey, 'arm'), descriptor.riskClass
       );
       // An idempotent replay of arm answers WITHOUT a preflight -- the checks
       // were run once, and re-running them is not what a retry means. Keeping
       // the one already held is the difference between "checked earlier" and
       // "never checked"; overwriting it with undefined would turn a passed
       // preflight into "not run" on a retry after a network timeout.
-      this._prepared = { ...prepared, run: result.run, preflight: result.preflight ?? prepared.preflight };
-      this._completedOperation();
+      this._report(result.run, result.preflight);
+      this._completedOperation(run.runKey, 'arm');
     } catch (error) {
       this._message = errorMessage(error);
     } finally {
@@ -407,15 +411,15 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _start(): Promise<void> {
-    const prepared = this._prepared;
+    const run = this.run;
     const session = this.session;
-    if (prepared === null || session === null || !this._startAcknowledged) return;
+    if (run === null || session === null || !this._startAcknowledged) return;
     this._busy = true;
     this._message = '';
     try {
-      const result = await adminApi.startRun(prepared.run.runKey, session.csrfToken, this._idempotency('start'));
-      this._prepared = { ...prepared, run: result.run };
-      this._completedOperation();
+      const result = await adminApi.startRun(run.runKey, session.csrfToken, this._idempotency(run.runKey, 'start'));
+      this._report(result.run);
+      this._completedOperation(run.runKey, 'start');
     } catch (error) {
       this._message = errorMessage(error);
     } finally {
@@ -424,15 +428,15 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _abort(): Promise<void> {
-    const prepared = this._prepared;
+    const run = this.run;
     const session = this.session;
-    if (prepared === null || session === null) return;
+    if (run === null || session === null) return;
     this._busy = true;
     this._message = '';
     try {
-      const result = await adminApi.abortRun(prepared.run.runKey, session.csrfToken, this._idempotency('abort'));
-      this._prepared = { ...prepared, run: result.run };
-      this._completedOperation();
+      const result = await adminApi.abortRun(run.runKey, session.csrfToken, this._idempotency(run.runKey, 'abort'));
+      this._report(result.run);
+      this._completedOperation(run.runKey, 'abort');
     } catch (error) {
       this._message = errorMessage(error);
     } finally {
@@ -441,15 +445,15 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _recover(): Promise<void> {
-    const prepared = this._prepared;
+    const run = this.run;
     const session = this.session;
-    if (prepared === null || session === null) return;
+    if (run === null || session === null) return;
     this._busy = true;
     this._message = '';
     try {
-      const result = await adminApi.recoverRun(prepared.run.runKey, session.csrfToken, this._idempotency('recover'));
-      this._prepared = { ...prepared, run: result.run };
-      this._completedOperation();
+      const result = await adminApi.recoverRun(run.runKey, session.csrfToken, this._idempotency(run.runKey, 'recover'));
+      this._report(result.run);
+      this._completedOperation(run.runKey, 'recover');
     } catch (error) {
       this._message = errorMessage(error);
     } finally {
@@ -469,7 +473,7 @@ export class DdSimulationControl extends LitElement {
         </div>
         ${this._message ? html`<div class="alert" role="alert">${this._message}</div>` : nothing}
         ${this._form(descriptor)}
-        ${this._prepared ? this._preparedView(this._prepared) : nothing}
+        ${this.run !== null && this.plan !== null ? this._selectedView(this.run, this.plan) : nothing}
       </section>
     `;
   }
@@ -572,8 +576,8 @@ export class DdSimulationControl extends LitElement {
    * "nothing to worry about". It says what the server does report
    * (`faultMayBeActive`) and that the proof itself is not available here.
    */
-  private _safetyLine(prepared: PreparedRun): TemplateResult {
-    const safety = runSafety(prepared.run, prepared.recovery);
+  private _safetyLine(run: SimulationControlRun): TemplateResult {
+    const safety = runSafety(run, this.recovery);
     const proof =
       safety.allClear === 'unknown'
         ? html`<span class="state-line">
@@ -582,7 +586,7 @@ export class DdSimulationControl extends LitElement {
         : html`<span class=${safety.allClear === 'yes' ? 'recovery-ok' : 'recovery-bad'}>
             Recovery proof:
             ${safety.allClear === 'yes' ? 'all targets clear' : 'manual attention required'}
-            (${num(prepared.recovery?.targets.length ?? 0)} targets checked)
+            (${num(this.recovery?.targets.length ?? 0)} targets checked)
           </span>`;
     return html`
       <div class=${safety.faultMayBeActive ? 'recovery-bad' : ''}>
@@ -594,11 +598,11 @@ export class DdSimulationControl extends LitElement {
     `;
   }
 
-  private _preparedView(prepared: PreparedRun): TemplateResult {
+  private _selectedView(run: SimulationControlRun, plan: DryRunPlan): TemplateResult {
     return html`
-      ${this._preview(prepared.plan)}
-      ${this._preflight(prepared)}
-      ${this._approvalAndRecovery(prepared)}
+      ${this._preview(plan)}
+      ${this._preflightCard()}
+      ${this._approvalAndRecovery(run)}
     `;
   }
 
@@ -626,35 +630,39 @@ export class DdSimulationControl extends LitElement {
     `;
   }
 
-  private _preflight(prepared: PreparedRun): TemplateResult {
-    const preflight = prepared.preflight;
+  private _preflightCard(): TemplateResult {
+    const preflight = this.preflight;
     return html`
       <section class="card">
         <div class="card-head"><div class="card-title">2. Preflight</div><div class="page-sub mono">${preflight ? (preflight.passed ? 'passed' : 'blocked') : 'not run'}</div></div>
         ${preflight === null
           ? html`<div class="card-body"><p class="intro">The server verifies chain identity, data quality, target mapping and recovery readiness before this plan can be armed.</p><div class="actions" style="margin-top:var(--sp-4)"><button class="btn primary" ?disabled=${this._busy} @click=${this._validate}>Validate preflight</button></div></div>`
-          : html`<ul class="check-list">${preflight.checks.map((check) => html`<li class=${check.passed ? 'passed' : 'failed'}><strong>${check.passed ? '✓' : '×'} ${check.checkId}</strong> — ${check.publicMessage}</li>`)}</ul>`}
+          : html`<ul class="check-list">${preflight.checks.map((check: SimulationPreflight['checks'][number]) => html`<li class=${check.passed ? 'passed' : 'failed'}><strong>${check.passed ? '✓' : '×'} ${check.checkId}</strong> — ${check.publicMessage}</li>`)}</ul>`}
       </section>
     `;
   }
 
-  private _approvalAndRecovery(prepared: PreparedRun): TemplateResult {
-    const run = prepared.run;
+  private _approvalAndRecovery(run: SimulationControlRun): TemplateResult {
+    const descriptor = this._runDescriptor();
     const isArmed = run.state.status === 'armed';
-    const mayApprove = prepared.descriptor.riskClass !== 'high' || this.session?.role === 'safety-admin';
+    // A descriptor the panel cannot resolve is not a reason to widen approval:
+    // an unknown scenario is treated as the strictest one it could be.
+    const mayApprove =
+      (descriptor !== null && descriptor.riskClass !== 'high') ||
+      this.session?.role === 'safety-admin';
     const canAbort = run.state.live && !['completed', 'aborted', 'rejected'].includes(run.state.status);
     const needsRecovery = run.state.faultMayBeActive || run.state.status === 'failed';
     return html`
       <section class="card">
         <div class="card-head"><div class="card-title">3. Approval and recovery</div><div class="page-sub mono">${run.state.status}</div></div>
         <div class="approval">
-          <div class="state-line">Run <strong class="mono">${run.runKey}</strong> is <strong>${run.state.status}</strong>${run.state.live ? ' (live lab run)' : ' (dry-run)'}.</div>
+          <div class="state-line run-state">Run <strong class="mono">${run.runKey}</strong> is <strong>${run.state.status}</strong>${run.state.live ? ' (live lab run)' : ' (dry-run)'}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}
-          ${this._safetyLine(prepared)}
+          ${this._safetyLine(run)}
           ${run.state.status === 'scheduled'
             ? html`
                 <label><input type="checkbox" .checked=${this._riskAcknowledged} @change=${(event: Event) => { this._riskAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy || !mayApprove} />
-                  <span>I acknowledge the server-declared <strong>${prepared.descriptor.riskClass}</strong> risk for “${prepared.descriptor.title}”.</span>
+                  <span>I acknowledge the server-declared <strong>${descriptor?.riskClass ?? 'unknown'}</strong> risk for “${descriptor?.title ?? run.metadata.scenarioId}”.</span>
                 </label>
                 ${!mayApprove ? html`<div class="alert">Only a safety-admin may approve this high-risk scenario.</div>` : nothing}
                 <div class="actions"><button class="btn primary" ?disabled=${this._busy || !this._riskAcknowledged || !mayApprove} @click=${this._arm}>Arm approved plan</button></div>
