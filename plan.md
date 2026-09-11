@@ -1242,7 +1242,54 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 
 ## 4. Current state of the network
 
-- **Every daemon runs `c739d9f504` (#208) since 2026-09-07, height 9147.**
+- **Two masternodes were banned at 11411 on 2026-09-11, outside any declared
+  run, and the two layers disagreed about whether they were there.** The first
+  measured instance of the coincident-mining-window ban this file's notes
+  predict, and it cost nothing to observe because it happened on its own.
+
+  Block **11411** (`3538d09a…`, 04:42:42 UTC, 4 transactions) mined **both**
+  commitments of the 11400 cycle: `llmq_defcon` at 57/60 and `llmq_50_60` at
+  46/50, the same `quorumHash` `e3d74760…` and the **same `minedBlockHash`** --
+  which is the direct evidence that these two profiles share a mining window,
+  rather than an inference from the window arithmetic.
+
+  **Every one of the seven exclusions was on `roland-node-6`, and every member
+  it had was excluded:** 3 of its 3 selected Q60 members and 4 of its 4 selected
+  `llmq_50_60` members, against **103 of 103 member slots valid** across the
+  other fifteen hosts. Five distinct masternodes, because two sat in both
+  quorums -- and those two took 100 twice in one block: `PoSePunish` clamps with
+  `std::min` to the 152 ceiling, the threshold at 152 registered is 152, so they
+  were banned on the spot. The other three decayed exactly as the rule says (40
+  at tip 11471, 0 by 11525; the ban does not decay). No cascade: the 11424 and
+  11448 rounds formed at health 1.00 with nobody punished.
+
+  **The Sentinel layer recorded the same hour as clean.** Epochs 474 (boundary
+  11400) and 475 (11424) are both `committed` with **0 missed bits**, so the
+  quorum agreed those nodes were announcing while the DKG treated them as
+  absent. Three of the host's masternodes were also *paid* at 11470-11476, so
+  the machine serves. That is the two-layer comparison this project exists to
+  make, produced without an intervention: `interventions` on the round is `[]`.
+
+  **What this does NOT settle, and it needs the host's own log.** Whether the
+  DKG excluded them through the absence branch (`dkgsession.cpp:458`, "did not
+  send any contribution", judged per observer with no threshold) or through the
+  bad-vote threshold (`:676`) cannot be read from the explorer -- and the two
+  are different diagnoses, mesh churn against a host whose DKG traffic did not
+  flow. The fleet runs `debug=llmq-dkg`, so the answer is in that host's
+  debug.log around 11400 and nowhere else. Until it is read, "partial
+  connectivity" is a reading, not a measurement.
+
+  **Mainnet reading:** `llmq_50_60` is devnet-only, so as the v23 mainnet would
+  count this hour it punished **3** and banned **nobody**; the two bans exist
+  only because a devnet-only profile shares a block with a mainnet one.
+
+  **Owed:** revive the two by ProUpServTx (the daemons are up, which is the
+  check that decides it), and read that host's DKG log for the branch. Until the
+  revive, `enabled` is **150 of 152** -- not a roll effect, and not to be read
+  as one.
+
+- **(Stale as of 2026-09-10; see §1b for the 25c3966adc roll and the
+  229/230 roll below it.)** **Every daemon runs `c739d9f504` (#208) since 2026-09-07, height 9147.**
   162 of 162: 16 fleet hosts with 160 instances, plus seed and devnet2. Fleet
   and devnet2 md5 `406828f76173a5a23f3dd6db740afc76`, seed
   `a1ad976f18016c5a67672adacdb8f4f5`. 160/160 on one chain, 0 forked, 0
