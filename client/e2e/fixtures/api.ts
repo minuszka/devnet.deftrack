@@ -19,8 +19,10 @@ import type {
   ExperimentRow,
   HealthSnapshot,
   HealthTimeline,
+  LlmqProfileView,
   MasternodeTimelinePoint,
   Page as PageEnvelope,
+  QuorumRoundDetail,
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
 
@@ -152,11 +154,46 @@ export function roundListItem(overrides: Partial<QuorumRoundListItem> = {}): Quo
   };
 }
 
+export function roundDetail(overrides: Partial<QuorumRoundDetail> = {}): QuorumRoundDetail {
+  // The list row minus the two fields only a list carries, plus the two only a
+  // detail carries. Derived rather than retyped, so the two fixtures cannot
+  // drift into describing different rounds.
+  const { invalidMemberCount, failuresByOperator, ...base } = roundListItem();
+  void invalidMemberCount;
+  void failuresByOperator;
+  return {
+    ...base,
+    invalidMembers: ['c'.repeat(64)],
+    members: [
+      { proTxHash: 'c'.repeat(64), service: 'host-fixture-1:19799', valid: false, operatorLabel: 'op-fixture-1' },
+      { proTxHash: 'd'.repeat(64), service: 'host-fixture-2:19799', valid: true, operatorLabel: 'op-fixture-2' },
+    ],
+    mainnetNote: 'Fixture profile; this note is invented.',
+    ...overrides,
+  };
+}
+
 /** A short, descending run of rounds -- newest first, as the server serves them. */
 export function roundRun(count: number, startHeight = 11_400): QuorumRoundListItem[] {
   return Array.from({ length: count }, (_unused, i) =>
     roundListItem({ expectedHeight: startHeight - i * 24 })
   );
+}
+
+export function llmqProfile(overrides: Partial<LlmqProfileView> = {}): LlmqProfileView {
+  return {
+    llmqName: V2_PROFILE,
+    llmqType: 7,
+    size: 60,
+    minSize: 44,
+    threshold: 41,
+    dkgInterval: 24,
+    tracked: true,
+    formsOnV23Mainnet: true,
+    mainnetNote: 'Fixture profile; this note is invented.',
+    formationGateHeight: 3120,
+    ...overrides,
+  };
 }
 
 export function masternodeTimelinePoint(

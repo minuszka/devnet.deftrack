@@ -46,7 +46,16 @@ export interface StubResponse {
 /** A stub is fixed, or computed from the request URL when the query matters. */
 export type StubHandler = StubResponse | ((url: URL) => StubResponse);
 
-/** Keyed by pathname; the query string is matched inside a handler, not here. */
+/**
+ * Keyed by pathname; the query string is matched inside a handler, not here.
+ *
+ * A key ending in `/*` matches every path under it, which is how a detail route
+ * whose identifier is part of the path (`/quorum-rounds/7%3A7416%3A0`) is
+ * stubbed without spelling out the encoding. An exact key always wins over a
+ * prefix, and the longest prefix wins among prefixes -- so
+ * `/quorum-rounds/profiles` stays its own answer even with
+ * `/quorum-rounds/*` declared.
+ */
 export type ApiStubs = Record<string, StubHandler>;
 
 export class AppHarness {
@@ -117,7 +126,7 @@ export class AppHarness {
 
       if (url.pathname.startsWith('/api/')) {
         this.apiCalls.push(`${url.pathname}${url.search}`);
-        const handler = this.stubs[url.pathname];
+        const handler = this.resolve(url.pathname);
         if (handler === undefined) {
           this.violations.push(
             `unstubbed API request: ${request.method()} ${url.pathname}${url.search}`
@@ -150,6 +159,25 @@ export class AppHarness {
   assertNoViolations(): void {
     if (this.violationsExpected) return;
     expect(this.violations, 'requests the harness refused').toEqual([]);
+  }
+
+  /** Exact first, then the longest declared `/*` prefix. */
+  private resolve(pathname: string): StubHandler | undefined {
+    const exact = this.stubs[pathname];
+    if (exact !== undefined) return exact;
+
+    let bestPrefix = '';
+    let bestHandler: StubHandler | undefined;
+    for (const [key, handler] of Object.entries(this.stubs)) {
+      if (!key.endsWith('/*')) continue;
+      const prefix = key.slice(0, -1);
+      if (!pathname.startsWith(prefix)) continue;
+      if (prefix.length > bestPrefix.length) {
+        bestPrefix = prefix;
+        bestHandler = handler;
+      }
+    }
+    return bestHandler;
   }
 
   private async safeAbort(route: { abort: (code: string) => Promise<void> }): Promise<void> {

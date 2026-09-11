@@ -19,6 +19,7 @@ import './dd-page-staking.js';
 import './dd-page-experiments.js';
 import './dd-page-peers.js';
 import './dd-page-fairness.js';
+import './dd-page-not-found.js';
 
 const HEALTH_REFRESH_MS = 30_000;
 
@@ -358,8 +359,18 @@ export class DdShell extends LitElement {
         return html`<dd-page-block .param=${id}></dd-page-block>`;
       case 'dd-page-tx':
         return html`<dd-page-tx .param=${id}></dd-page-tx>`;
-      default:
+      case 'dd-page-overview':
         return html`<dd-page-overview></dd-page-overview>`;
+      // Not a fallback: every route above names its own page, and a tag with no
+      // case here is a route somebody added without wiring it up. Rendering the
+      // overview for it is the same silent substitution this page exists to
+      // stop -- the reader would be looking at the front page believing it was
+      // the one they asked for.
+      default:
+        return html`<dd-page-not-found
+          .status=${this._route.status}
+          .path=${this._route.path}
+        ></dd-page-not-found>`;
     }
   }
 }

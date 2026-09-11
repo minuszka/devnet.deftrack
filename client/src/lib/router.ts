@@ -17,9 +17,58 @@ export interface Route {
   key?: string;
 }
 
+/**
+ * Why a path resolved the way it did.
+ *
+ * `not-found` and `malformed` are different failures and were both invisible.
+ * An unknown path rendered the overview, so a stale link looked like a working
+ * link to the front page; a malformed percent-escape threw out of `matchRoute`,
+ * and because the shell calls it while constructing itself, the custom element
+ * never upgraded and the page was simply blank.
+ */
+export type MatchStatus = 'matched' | 'not-found' | 'malformed';
+
 export interface Match {
   route: Route;
   param: string | null;
+  status: MatchStatus;
+  /** The pathname this match was made from, verbatim -- shown by the error page. */
+  path: string;
+}
+
+/*
+ * Neither of these is in ROUTES: they are what a path resolves *to*, never
+ * something a path resolves *from*. Their `path` exists only so the navigation's
+ * `aria-current` comparison has something to not match -- which is why it is a
+ * sentinel no section uses, rather than `/`. The overview tab staying unlit on a
+ * "page not found" is the whole point.
+ */
+export const NOT_FOUND_ROUTE: Route = {
+  path: '/__not-found',
+  tag: 'dd-page-not-found',
+  label: 'Not found',
+  hidden: true,
+};
+
+export const MALFORMED_ROUTE: Route = {
+  path: '/__broken-link',
+  tag: 'dd-page-not-found',
+  label: 'Broken link',
+  hidden: true,
+};
+
+/**
+ * `decodeURIComponent` throws a `URIError` on a truncated or invalid escape --
+ * `/round/%` and `/tx/%E0%A4%A` both do. Narrow on purpose: one call, one
+ * failure mode, and the caller is told which, rather than a catch that swallows
+ * whatever else went wrong on the way past.
+ */
+function decodeParam(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
 }
 
 export const ROUTES: Route[] = [
@@ -81,12 +130,20 @@ export function matchRoute(pathname: string): Match {
   for (const route of ROUTES) {
     if (route.pattern) {
       const m = route.pattern.exec(clean);
-      if (m) return { route, param: decodeURIComponent(m[1]!) };
+      if (!m) continue;
+      const param = decodeParam(m[1]!);
+      // The shape was a detail route's, but the identifier is unreadable. That
+      // is a broken link, not a missing page, and saying so is the difference
+      // between "fix your link" and "this page is gone".
+      if (param === null) {
+        return { route: MALFORMED_ROUTE, param: null, status: 'malformed', path: pathname };
+      }
+      return { route, param, status: 'matched', path: pathname };
     } else if (route.path === clean) {
-      return { route, param: null };
+      return { route, param: null, status: 'matched', path: pathname };
     }
   }
-  return { route: ROUTES[0]!, param: null };
+  return { route: NOT_FOUND_ROUTE, param: null, status: 'not-found', path: pathname };
 }
 
 export function navigate(href: string): void {
