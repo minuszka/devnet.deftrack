@@ -1242,6 +1242,134 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 
 ## 4. Current state of the network
 
+- **Every daemon runs `f569316413` (#229 + #230) since 2026-09-11, rolled with
+  block production deliberately frozen.** 162 of 162: 16 fleet hosts with 160
+  instances, plus seed and devnet2. Fleet and devnet2 md5
+  `d067c3dd6ba9a29eb86797db75816a47`, seed `07ac431840c27840d040d90e430018b0`;
+  `fleet-chain-check2.sh` afterwards **hosts=16 instances=160 same-chain=160
+  forked=0 unreachable=0**, one tip hash on all sixteen. Run
+  `fleet-rollout-229-230-2026-09-11`, declared before any restart.
+
+  **What is new on the network.** #229 carries the v23 activation bundle (eight
+  gates and two V2 profiles behind one height, dormant: `CheckV23ActivationBundle`
+  returns early off main and testnet, and there is not one `CDevNetParams` hunk
+  in the diff), the ChainLock pause for `[H-lead, H)` (devnet window
+  `[3120, 3240)` -- long past, inert, and `VerifyChainLock` untouched so history
+  stays verifiable), and **the protocol floor**: `PROTOCOL_VERSION` 70241 to
+  70242 with `Q60_SWITCHOVER_PROTO_VERSION` required from `H-lead`, which on this
+  devnet is height **3120** and therefore already in force. #230 re-mines the
+  testnet genesis and writes `CTestNetParams` only.
+
+  **Consensus-neutral for the devnet, and measured rather than read:** the
+  `bad-/pos-/pow-/dsl` fingerprint is `559683c468564314759dfe943705e359`
+  (178 strings) on the old fleet binary, the old seed binary and both new ones --
+  a four-way match -- with the `^bad-` negative control differing at
+  `e2cb189210bb49c76e035a7ea3f2c2f0` (165), so the probe discriminates. `nm`
+  finds both new symbols in the artefacts, and on a throwaway regtest datadir the
+  new binary answers `protocolversion` **70242** against the old one's 70241 --
+  while both answer subversion `/DeFCoN:22.1.5/`. **The version string cannot
+  distinguish these two builds at all; md5 and the protocol number are the only
+  evidence of the update.**
+
+  **The floor makes a partial roll impossible, and the topology made that
+  sharper than the plan assumed.** The fleet dials the seed, so while the seed
+  still advertised 70241 every updated fleet daemon sat at **0 peers** -- twelve
+  hosts of isolated daemons, not an island -- and no production could have
+  happened there regardless, since `mn_sync.IsSynced()` never completes without
+  peers and `pos/minter.cpp:164` waits on it. The floor was also visible from
+  the other side: the seed's connection count fell **169 to 64** as hosts were
+  updated, and climbed back to 161 once it took 70242 itself, every peer at the
+  new version and **zero below the floor** across all sixteen hosts.
+
+  **Production was frozen for the roll, and that is what bought the clean
+  result.** All nine producers were stopped once the 11544 cycle's commitments
+  were mined: the eight fleet stakers by stopping *and masking*
+  `defcon-devnet-mn@11` (masking, because `ops/fleet-deploy.sh` restarts every
+  instance it finds and a merely stopped staker would have come back up mid-roll),
+  and devnet2 by stopping it. The tip then held at **11558 for seven readings
+  over six minutes, on both sides of the split**. Order: the sixteen fleet hosts
+  first, then seed and devnet2 **last** -- the reverse of the 2026-09-10 roll --
+  so the explorer's own RPC source tracked the real chain to the end instead of
+  an island.
+
+  **The whole cost to the chain was one gap of 1664 seconds**, which the
+  explorer measures for itself as `longestGapSec` over the 500-block window;
+  the mean interval across that window is 156.5 s against the 150 s target, with
+  the median at 110 s and 0.693 x mean = 108.4 -- the exponential fit this file
+  documents, undisturbed. So the trade is exactly quotable: **28 minutes of no
+  blocks instead of three penalties, a failed Q60 round and a lost hour.** Said
+  honestly, it did not buy everything: the absent Sentinel epoch came anyway.
+
+  **Result: 0 failed DKG rounds, 0 `penalty_up`, 0 bans, 0 revivals from the
+  roll** -- not one masternode event at or above height 11550. Against
+  2026-09-10 (3 penalties, one failed Q60 round, one absent epoch) and
+  2026-09-07 (8 penalties, one ban). The reason the freeze works is worth stating
+  plainly: **a fork needs two producing sides, and a DKG round needs a cycle base
+  block.** With nothing produced anywhere, neither exists, so the roll cannot
+  cost a round or a penalty however long it takes.
+
+  **After the thaw, measured in order.** All eight stakers staking with a live
+  minter thread; the first post-roll Q60 cycle (base 11568) formed at **60 of
+  60, health 1.00, nobody punished**, with `llmq_50_60` at the same base 50 of
+  50 likewise -- where the 2026-09-10 roll's Q60 round at its own base failed
+  outright;
+  ChainLock **9 of 9 post-roll blocks locked by `llmq_defcon`**, median 2 s, and
+  the 500-block window still coverage 1.00 with zero gaps; InstantSend **8 of 8
+  locked**, median 1190 ms (faster than the 2026-09-10 baseline's ~2 s) with the
+  double spend of a locked coin refused as `tx-txlock-conflict` and no
+  `invalid sig in islock` in the set; the proof-of-stake rules clean over the
+  post-roll blocks -- zero non-zero nonces, zero non-increasing block times,
+  every coinstake minting exactly the subsidy with the block's fees left burned
+  -- with a negative control (subsidy off by one satoshi) flagging all eight, so
+  the zero is a pass and not a vacuum. **#164, the connect-time stake modifier,
+  is NOT checkable from RPC** and is reported as such rather than as a pass; only
+  a reindex reaching the same tip hash shows it, which is how the 7560 gate was
+  proven.
+
+  **Sentinel epoch 481 (boundary 11568) is absent, and it was predicted before
+  the evidence existed.** The run's `expected` had argued "no absent epoch" from
+  the roll crossing no epoch *boundary*, which is true and insufficient; the
+  refinement was written onto the run while the tip was frozen at 11558 with
+  epoch 480 the latest judged, so it cannot be read as fitting the result. The
+  freeze protects the DKG, which is height-driven; it does not protect a report
+  pool, which is time-and-memory driven.
+
+  **And the absence is sharper than "the pool was lost".** Sampled across all
+  sixteen hosts at positions 22-23 of that epoch, every one answered
+  `respondedcount` **152**, `missedreports` **0**, and a **single identical
+  poolhash** (`56944c5d3f98…`) -- the pool had fully reconverged -- and the
+  commitment still did not appear. That points at the signing window rather than
+  at pool convergence, which is exactly the open v23 decision.
+
+  **DSL logging is now on at runtime on 27 daemons**, which this roll made
+  possible for the first time: #228 gave the Sentinel layer its first log lines
+  and shipped in this binary. Until now not one absent epoch on this network
+  could be explained from a log, because the layer wrote nothing at all. The
+  stakers are included, because the decisive line for an absent epoch (F-2026-140,
+  "block built without the commitment") is emitted by the *producer*, which is a
+  staker and not a masternode. Runtime only, so it does **not** survive a
+  restart -- which is also how this roll silently switched off the `instantsend`
+  logging the 2026-09-10 runs had left on, now restored on seed and devnet2.
+
+  **Three of my own tools gave clean, wrong answers during this roll, and all
+  three were caught by looking at the raw evidence** ([[verify-the-verifier]]).
+  The key-extraction pipeline returned nothing because `$SSH` carried `-n`, which
+  points stdin at `/dev/null`, so `sudo -n bash -s` ran an empty script -- the
+  exact trap this file already records from 2026-09-10, repeated. The staker
+  check called all eight minter threads dead by comparing `thread start` against
+  `thread exit` counts, when the node shrinks a `debug.log` over 10 MB at startup
+  and drops the first `start`; the reliable test is whether the **last** minter
+  line is a start, and it was on all eight. And the protocol check reported
+  **4930 peers below the floor on a fully rolled fleet**, because a peer entry
+  carries more than one line that looks like a version field and a text scrape
+  counted three per peer; `jq` on `.version` answers zero. A checker that cannot
+  be wrong in a way you would notice is not a checker.
+
+  **Still owed, and this roll did not discharge them:** the
+  `ops/systemd/defcon-enable-staking@.service` migration, which §3 says is due at
+  the next planned restart -- this was one, and it was not done; and the firewall
+  unification, which §6 says rides the roll after 10608.
+
 - **Two masternodes were banned at 11411 on 2026-09-11, outside any declared
   run, and the two layers disagreed about whether they were there.** The first
   measured instance of the coincident-mining-window ban this file's notes
