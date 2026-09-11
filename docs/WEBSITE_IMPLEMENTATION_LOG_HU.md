@@ -8,7 +8,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | Nap | Rövid feladat | Státusz | Commit / bizonyíték |
 |---|---|---|---|
 | 01 | Baseline és UI-tesztek | ELLENŐRZÖTT | `web/audit-2026-09-11`; K1 zöld (820+80 unit), K2 zöld (8 böngészőteszt), két negatív kontroll pirosra vitte a suite-ot |
-| 02 | Router | TERVEZETT | — |
+| 02 | Router | ELLENŐRZÖTT | `db77551`; K1 zöld (820+83 unit), K2 zöld (16 böngészőteszt); a javítás előtti viselkedés mérve |
 | 03 | Adatfrissesség | TERVEZETT | — |
 | 04 | Presetek és módok | TERVEZETT | — |
 | 05 | Admin kliensszerződés | TERVEZETT | — |
@@ -172,6 +172,104 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 02. nap – Router és hibaoldalak
+
+```text
+Nap / dátum / implementáló: 02 / 2026-09-11 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ 056d6e0
+Napi feladat és előfeltételei: F07 (hibás escape) és F08 (ismeretlen útvonal). Előfeltétel: 01. napi K2 — megvan.
+Auditpontok: F07, F08
+```
+
+**Reprodukált kiinduló hiba – mindkettő mérve, nem feltételezve:**
+
+1. **F08.** `/audit-nonexistent-20260911` az Overview-t rendereli. A böngészős
+   teszt a javítás előtt elbukott: `.page-title` „Page not found” helyett
+   „Overview”.
+2. **F07.** A dokumentumbetöltés útját végigmérve kiderült, hogy **az audit
+   leírása pontos a kódról, de nem teljes a láncról**: a dev szerver 404-et ad
+   minden olyan útvonalra, amelynek escape-jét a `decodeURIComponent`
+   visszautasítaná (mért: `/round/%`, `/round/%ff`, `/round/%FF`,
+   `/tx/%E0%A4%A`, `/round/%c0%af` → 404; a szabályos `/tx/%E0%A4%AF` → 200).
+   Így a hibás URL dokumentumbetöltéssel el sem jut a klienshez.
+   Ami **valóban elérhető**: az alkalmazáson belüli navigáció. A régi kóddal
+   `/round/%`-ra pusholva a konzolon `URIError: URI malformed` jelent meg, és a
+   **címsorban `/round/%` állt, miközben az Overview maradt a képernyőn**. Ez a
+   mért kiindulóhiba.
+
+**Változtatás röviden:** `matchRoute` mostantól `matched` / `not-found` /
+`malformed` státuszt ad, és viszi magával a kapott útvonalat. A dekódolás szűk
+`try/catch`-ben van: egy hívás, egy hibamód. A két hibaág olyan route-okra
+oldódik fel, amelyek **nincsenek benne a `ROUTES` tömbben** — ezek olyanok,
+amikre egy útvonal feloldódik, nem amikből. Ezért nem gyullad ki egyetlen
+menüpont sem hibaoldalon, és az `ROUTES[0]` sem szolgál többé hibakezelőként.
+Új `dd-page-not-found` komponens mondja ki a két esetet külön; egyik sem írja át
+a címsort.
+
+**Érintett fájlok:** `client/src/lib/router.ts`, `client/src/lib/router.test.ts`,
+`client/src/components/dd-shell.ts`, új
+`client/src/components/dd-page-not-found.ts`, új `client/e2e/router.spec.ts`,
+valamint a harness/fixture bővítése (`/*` prefix-stub, `roundDetail`,
+`llmqProfile`, `shellStubs`, `roundStubs`).
+
+**Terven kívüli szükséges módosítás és indoka:**
+
+1. A `dd-shell` `_page()` switchje kapott explicit `dd-page-overview` ágat, a
+   `default` pedig a hibaoldalra megy. Egy `case` nélküli route-tag olyan
+   útvonal, amit valaki bekötetlenül adott hozzá; erre az Overview-t mutatni
+   ugyanaz a néma helyettesítés, ami ellen ez a nap szól. Szkripttel
+   ellenőrizve: mind a **16** route-tagnek van saját ága.
+2. Harness `/*` prefix-stub. A részletoldalak azonosítója az útvonal része és
+   százalékkódolt; enélkül a round/tx oldalak nem lettek volna stubolhatók.
+
+**Szerződésváltozás / kompatibilitás:** a `Match` interfész két mezővel bővült
+(`status`, `path`). Kizárólag kliensoldali típus, szerver/DTO nem érintett.
+
+**Parancsok, exit-kódok és teszteredmények:**
+
+| Kapu | Parancs | Eredmény |
+|---|---|---|
+| K1 | `npm run build -w shared` / `typecheck` / `build` / `git diff --check` | mind exit 0 |
+| K1 | `npm test` | exit 0 — 820 szerver + **83** kliens (80 → 83: 1 lecserélt, 4 új router-eset) |
+| K2 | `npx playwright test` | exit 0 — **16 passed (5,8 s)** (8 → 16) |
+
+**UI-fixture tesztek (8 új):** hibás escape alkalmazáson belüli navigációval
+(hibaoldal, változatlan URL, **nulla `pageerror`**); csonka többbájtos escape
+ugyanígy; szabályos `%E0%A4%AF` escape továbbra is a tranzakciós oldalra visz;
+ismeretlen útvonal → „Page not found”, megőrzött URL, `dd-page-overview` nincs
+a lapon; a hibaoldal „Go to the overview” linkje tényleg működik; kódolt
+roundKey továbbra is a round oldalra visz és `7%3A7416%3A0`-ként megy az API-ra;
+`/rounds` és `/rounds/` nem nyeli el a részletroute; Back/Forward visszaadja a
+két oldalt.
+
+**Valós HTTP/Mongo tesztek:** NEM FUTOTT — K3 nem alkalmazandó, szerveroldali
+változás nincs. A szerveroldali SPA fallback a terv szerint **nem módosult**.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Kihagyott ellenőrzés és oka:** dokumentumbetöltéses ellenőrzés hibás escape-re
+— a dev szerver 404-el megelőzi a klienst (lásd fent). Ezt a 14. napon, az
+nginx fejléc- és kiszolgálási munkánál kell tisztázni: a production
+belépési pont viselkedése hibás URI-ra nem ellenőrzött.
+
+**Nyitott probléma / következő lépés:**
+
+- **F07 csak részben zárható.** A kliensoldali defektus javítva és mérve; a
+  teljes lezáráshoz a production belépési pont (nginx) viselkedése kell hibás
+  percent-escape-re. 14. nap.
+- Írás közben az egyik szerkesztésem **valódi NUL bájtot** írt a
+  `router.ts`-be (` ` escape-nek szántam). A typecheck és a tesztek
+  **átmentek vele**; a `file` parancs buktatta le („data” a „JavaScript source”
+  helyett). Sentinelre cserélve (`/__not-found`, `/__broken-link`), a fájl újra
+  ASCII. Tanulság a naplóba: a zöld teszt nem bizonyítja, hogy a forrás ép.
+
+```text
+Commit(ok), végső SHA: db77551
+Végső git státusz: tiszta (a napló commitja után)
+Napi státusz: ELLENŐRZÖTT (F07 részben — lásd fent)
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
@@ -182,8 +280,8 @@ Napi státusz: ELLENŐRZÖTT
 | F04 | 08 | Nyitott | — | — |
 | F05 | 09 | Nyitott | — | — |
 | F06 | 09 | Nyitott | — | — |
-| F07 | 02 | Nyitott | — | — |
-| F08 | 02 | Nyitott | — | — |
+| F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
+| F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | Nyitott | — | — |
 | F10 | 14 | Nyitott | — | — |
 | F11 | 10–11 | Nyitott | — | — |
