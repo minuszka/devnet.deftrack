@@ -1418,10 +1418,18 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   count this hour it punished **3** and banned **nobody**; the two bans exist
   only because a devnet-only profile shares a block with a mainnet one.
 
-  **Owed:** revive the two by ProUpServTx (the daemons are up, which is the
-  check that decides it), and read that host's DKG log for the branch. Until the
-  revive, `enabled` is **150 of 152** -- not a roll effect, and not to be read
-  as one.
+  **Revived 2026-09-11 at 11623 and 11624, and the ban was indeed stale:** both
+  daemons were `active`, at the tip, `MASTERNODE_SYNC_FINISHED`, `NRestarts=0`,
+  differing from their five healthy neighbours on the same host only in holding
+  **90 peers against 151-159** -- which is itself the ban's doing, since a
+  PoSe-banned masternode is not dialled for quorum connections. Two ProUpServTx
+  broadcast together were mined one block apart, the second waiting out
+  `WAIT_FOR_ISLOCK_TIMEOUT` while the chain sat on 11623 for five minutes;
+  `enabled` is 152 of 152 and both `revived` events are on record.
+
+  **Still owed:** read that host's DKG log around 11400 for the branch -- the
+  absence route (`dkgsession.cpp:458`) or the bad-vote threshold (`:676`) --
+  because the explorer cannot tell them apart and they are different diagnoses.
 
 - **(Stale as of 2026-09-10; see §1b for the 25c3966adc roll and the
   229/230 roll below it.)** **Every daemon runs `c739d9f504` (#208) since 2026-09-07, height 9147.**
