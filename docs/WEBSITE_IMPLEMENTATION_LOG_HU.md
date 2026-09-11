@@ -12,7 +12,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 03 | Adatfrissesség | ELLENŐRZÖTT | `c5c872c`; K1 zöld (820+98 unit), K2 zöld (23 böngészőteszt); negatív kontroll: a néma catch visszatéve 3 teszt pirosra vált |
 | 04 | Presetek és módok | ELLENŐRZÖTT | `127e53d`; K1 zöld (836+98 unit), K2 zöld (31 böngészőteszt), **K3 zöld** (11 integrációs fájl, valódi MongoDB); negatív kontroll: üres `dsl-fault` sablon 3 tesztet pirosra vitt |
 | 05 | Admin kliensszerződés | ELLENŐRZÖTT | `8735d1d`; K1 zöld (836+111 unit), K2 zöld (31), K3 zöld (12 fájl, 75 teszt); negatív kontroll: a `recovery` visszatétele a projekcióba pirosra viszi a HTTP-tesztet |
-| 06 | Vezérlés visszatöltése | TERVEZETT | — |
+| 06 | Vezérlés visszatöltése | ELLENŐRZÖTT | `5fd3307`; K1 zöld (839+121 unit), K2 zöld (40 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: a draftszerkesztés futamtörlő viselkedését visszatéve 1 teszt pirosra vált |
 | 07 | Futamállapot szinkron | TERVEZETT | — |
 | 08 | Kísérletlapozás | TERVEZETT | — |
 | 09 | Fairness | TERVEZETT | — |
@@ -584,11 +584,110 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 06. nap – Visszavehető futamvezérlés
+
+```text
+Nap / dátum / implementáló: 06 / 2026-09-11 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ f26aa5b
+Napi feladat és előfeltételei: F01. Előfeltétel: 05. nap — megvan.
+Auditpontok: F01 (és az F02 fele)
+```
+
+**Reprodukált kiinduló hiba — három út vezetett a vezérlés elvesztéséhez:**
+
+1. **Oldalfrissítés.** A kiválasztott futam egyetlen komponens memóriájában élt.
+2. **Bármely draftmező szerkesztése.** A `_newInput()` törölte a `_prepared`
+   értéket, tehát egy karakter a seed mezőben ugyanazt csinálta, mint egy F5.
+3. **A saját 30 másodperces frissítés.** A `_loadDashboard` így számolta újra a
+   kiválasztást: `activeRuns[0]?.runKey ?? this._selectedRunKey`. Kiválasztasz
+   egy futamot, vársz egy kört, és a képernyőn lévő Abort gomb **egy másik
+   futamhoz tartozik**. Ezt az auditban nem szerepelt; kód olvasás közben
+   találtam, és `decideSelection` unit teszt rögzíti.
+
+**Változtatás röviden:** a kiválasztás az URL-be került (`/admin?run=sim_…`, a
+futamkulcs és semmi más — egy URL bekerül hibajegyekbe). A szabályt egy tesztelt
+helyen tartja a `decideSelection`: **explicit URL-kulcs > már kiválasztott >
+aktív futam**. Hibás kulcs **hiba**, nem ok arra, hogy mást vezéreljünk. A Back
+visszavisz; az aktív futam átvétele `replace`, mert az korrekció, nem döntés.
+
+A visszatöltés a `GET /runs/:key/dry-run`-t olvassa — a futamot és a **mentett**
+tervet. Új draft POST-olása másik futamot hozna létre, és a labort fogó futam
+maradna vezérlés nélkül. A késői válasz generációszám és a szerver `revision`
+alapján is elesik.
+
+**A recovery-bizonyíték végre létezik** (ezt a döntést rám bíztad). Nem a
+projekció bővítésével: az négy mezőt épít kézzel, hat válaszba ágyazódik, és a
+`loadRun` minden olvasáskor összeveti az audit-visszajátszással. Helyette **saját
+végpont**: `GET /runs/:key/recovery`, **szerveroldalon redaktálva** — a prober
+`privateDetail` mezője célpontonkénti szabad szöveg, oda kerül egy hostcím, és
+egy böngészőbeli típus nem akadályoz meg semmit abban, hogy a böngészőbe
+jusson. Három válasz kettő helyett: tiszta / beavatkozás kell / **nincs rögzített
+bizonyíték** — ez utóbbi soha nem olvasható tisztának.
+
+**Érintett fájlok:** új `client/src/lib/adminRunSelection.ts` (+ teszt), új
+`client/e2e/run-selection.spec.ts`, új `server/src/simulator/recoveryView.ts`
+(+ teszt); módosítva `dd-admin-shell.ts`, `dd-simulation-control.ts`,
+`admin-api.ts`, `simulationRunState.ts`, `simulationControl.service.ts`,
+`simulationPersistence.service.ts`, `simulationAdmin.v1.routes.ts`,
+`playwright.config.ts`, a harness és a fixture-ök.
+
+**Szerződésváltozás / kompatibilitás:** **új** végpont
+(`GET /runs/:runKey/recovery`), additív. A meglévő válaszok alakja változatlan.
+Régi szerver + új kliens: a recovery-olvasás hibára fut, a panel `null`-t tart,
+és **nem** ír ki tisztát. Telepítési sorrend: szerver előbb.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **839** szerver (836 → 839) + **121** kliens (111 → 121) |
+| K2 | exit 0 — **40** böngészőteszt (37 → 40) |
+| K3 | exit 0 — 12 integrációs fájl, **77** teszt (8 skipped) |
+
+**Valós HTTP/Mongo tesztek (2 új, összesen 7 a fájlban):** a recovery-végpont
+kiszolgálja a bizonyítékot, de a válasz **nem tartalmazza** a `privateDetail`
+mezőt és a beültetett `198.51.100.11` címet; nem létező futamra **404**, nem
+„nincs recovery" (az utóbbi azt olvasná, hogy nincs mit takarítani).
+
+**UI-fixture tesztek (9 új):** URL-ből visszatöltött futam a mentett tervvel
+(és **nulla POST**); draftszerkesztés után is ott az Abort gomb; hibás kulcs →
+hiba, és az aktív futamot **nem** veszi át; nem feloldható kulcs → mindkét
+felület kiírja a kulcsot, nincs vezérlés; A→B váltás 1,2 s-ot késő A-válasszal;
+sessionlejárat elveszi a vezérlést; kijelentkezés törli az URL-paramétert;
+recovery-bizonyíték megjelenik; bizonyíték hiányában „nincs rögzítve", nem
+„tiszta".
+
+**Negatív kontroll:** a `_draftChanged()`-be visszatéve a
+`this._prepared = null` sort a draftszerkesztéses teszt elbukik, a másik hét
+átmegy. Visszaállítva minden zöld.
+
+**Két flake, és ami mögötte volt.** Ma kétszer bukott el egy-egy teszt, mindkettő
+**egyedül futtatva zöld** (`experimentOutcome.integration.test.ts` és a
+sessionlejárat E2E). Nem retry-jal kezeltem: minden Playwright worker ugyanazt a
+Vite dev szervert hajtja, és négy fölött a torlódás állítás-timeoutként
+jelentkezik, ami viselkedési hibának látszik, pedig kapacitás. A worker-szám
+4-re korlátozva, az `expect` budget 10 s; a suite ezután **kétszer egymás után
+40/40**. Az integrációs flake-et nem vezettem vissza gyökérokra — a hibaüzenetet
+nem kaptam meg, és a fájl azóta kétszer zöld. **Nyitva marad.**
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Más munkából megőrzött változtatás:** a `CLAUDE.md` munkafában lévő
+módosítása (a node-binárisok sora, 2026-09-11-i méréssel) **nem az enyém**;
+érintetlenül hagytam, és nem került a commitba.
+
+```text
+Commit(ok), végső SHA: 5fd3307
+Végső git státusz: tiszta, a fenti CLAUDE.md-módosítás kivételével
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
-| F01 | 05–06 | Nyitott | — | — |
+| F01 | 05–06 | `8735d1d`, `5fd3307` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 9 eset (F5, hibás kulcs, 404, A→B késői válasz, 401, draftszerkesztés) | Kliensoldalon lezárva. A vezérlés URL-ből visszatölthető, a mentett tervből; a recovery-bizonyíték új, redaktált végponton érhető el |
 | F02 | 05–07 | Nyitott | — | — |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | Nyitott | — | — |
