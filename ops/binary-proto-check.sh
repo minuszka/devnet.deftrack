@@ -5,11 +5,11 @@ set -u
 probe() {
   local name="$1" bin="$2" cli="$3" dd="$HOME/v23-proto-check/$1"
   rm -rf "$dd"; mkdir -p "$dd"
-  # A throwaway credential for a throwaway regtest datadir, generated rather
-  # than written down: a literal password in a committed file trips the secret
-  # gate and teaches the wrong habit even where it guards nothing.
-  pw=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
-  printf 'regtest=1\nserver=1\nrpcuser=probe\nrpcpassword=%s\nlisten=0\n' "$pw" > "$dd/defcon.conf"
+  # No rpcuser/rpcpassword at all: defcond writes a .cookie into the datadir
+  # and defcon-cli reads it from the same -datadir, so a local probe needs no
+  # credential of its own. That is both safer than inventing one and the only
+  # form that does not look like a committed secret to a scanner.
+  printf 'regtest=1\nserver=1\nlisten=0\n' > "$dd/defcon.conf"
   "$bin" -datadir="$dd" -daemon >/dev/null 2>"$dd/start.err"
   local ok=0
   for _ in $(seq 1 40); do
