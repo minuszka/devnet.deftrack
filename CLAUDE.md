@@ -251,6 +251,28 @@ Two corrections to what this entry said before, both verified at
   production therefore needs a separate daemon per host -- instance 11 of the
   same systemd template, with a wallet and no BLS key.
 
+  **But "instance 11" does not mean "staker", and acting on that shorthand
+  takes a masternode off the network.** The host carrying 14 masternodes has an
+  `mn11` that *is* a masternode: its conf holds a `masternodeblsprivkey`, and
+  `defcon-devnet-mn@11` there is one of its fourteen. Measured 2026-09-11 while
+  stopping block production for a roll -- a first pass keyed on "the unit is
+  active" counted **9** stakers on the fleet and would have masked that
+  masternode for the whole roll, which is the surest way to manufacture the
+  PoSe ban wave the roll exists to avoid. The decisive local test is the BLS
+  key, not the instance number, not the inventory: conf carries
+  `masternodeblsprivkey` -> masternode, leave it alone; no such line -> staker.
+  With that test the fleet answers **8 stakers, 1 masternode-at-11, 7 hosts
+  with no mn11 at all**, and the `masternode-at-11` line is the negative
+  control that proves the filter discriminates.
+
+  Second trap in the same probe, and it is the one that nearly carried the day:
+  on the hosts that do not log in as root the datadirs are mode 0700 owned by
+  `defcon`, so a bare `[ -f /opt/defcon-devnet/mn11/defcon.conf ]` answers
+  **false for a file that is there**. The first classifier read that as "no
+  conf" and therefore "not a staker" by luck rather than by reason. Every
+  filesystem test in a fleet probe goes through `sudo -n` on those hosts, or it
+  reports absence it cannot see ([[verify-the-verifier]]).
+
 - **`createwallet` defaults to a legacy wallet the fleet build cannot create.**
   The `--without-bdb` binary answers "Compiled without bdb support (required for
   legacy wallets)"; pass `descriptors=true` (and `load_on_startup=true`).
