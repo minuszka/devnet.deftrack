@@ -58,11 +58,22 @@ export type StubHandler = StubResponse | ((url: URL) => StubResponse);
  */
 export type ApiStubs = Record<string, StubHandler>;
 
+/** One `/api/` request as the harness saw it go out. */
+export interface RecordedRequest {
+  method: string;
+  /** Pathname and query, as sent. */
+  path: string;
+  /** The parsed JSON body, or null when there was none (or it was not JSON). */
+  body: unknown;
+}
+
 export class AppHarness {
   /** Requests that broke the harness contract. Asserted empty at teardown. */
   readonly violations: string[] = [];
   /** Every `/api/` request the app made, path and query, in order. */
   readonly apiCalls: string[] = [];
+  /** The same requests with their method and body: what a mutation actually sent. */
+  readonly requests: RecordedRequest[] = [];
 
   private stubs: ApiStubs = {};
   private violationsExpected = false;
@@ -100,6 +111,15 @@ export class AppHarness {
     return this.apiCalls.filter((call) => call === pathname || call.startsWith(`${pathname}?`));
   }
 
+  /** Recorded requests to one pathname, optionally narrowed to one method. */
+  requestsTo(pathname: string, method?: string): RecordedRequest[] {
+    return this.requests.filter(
+      (entry) =>
+        (entry.path === pathname || entry.path.startsWith(`${pathname}?`)) &&
+        (method === undefined || entry.method === method)
+    );
+  }
+
   async goto(path: string): Promise<void> {
     await this.page.goto(path);
   }
@@ -125,7 +145,16 @@ export class AppHarness {
       }
 
       if (url.pathname.startsWith('/api/')) {
-        this.apiCalls.push(`${url.pathname}${url.search}`);
+        const path = `${url.pathname}${url.search}`;
+        this.apiCalls.push(path);
+        let body: unknown = null;
+        try {
+          const raw = request.postData();
+          if (raw !== null && raw !== '') body = JSON.parse(raw);
+        } catch {
+          // Not JSON. Recorded as null rather than guessed at.
+        }
+        this.requests.push({ method: request.method(), path, body });
         const handler = this.resolve(url.pathname);
         if (handler === undefined) {
           this.violations.push(

@@ -6,6 +6,7 @@ import {
   type AdminSession,
   type PublicSimulationRun,
   type ScenarioSummary,
+  type SimulationCapabilities,
   type SimulationHistory,
   type SimulationTarget,
 } from '../lib/admin-api.js';
@@ -43,6 +44,7 @@ export class DdAdminShell extends LitElement {
     _activeRuns: { state: true },
     _runs: { state: true },
     _scenarios: { state: true },
+    _capabilities: { state: true },
     _history: { state: true },
     _selectedRunKey: { state: true },
     _loading: { state: true },
@@ -56,6 +58,8 @@ export class DdAdminShell extends LitElement {
   private _activeRuns: ActiveSimulationRun[] = [];
   private _runs: PublicSimulationRun[] = [];
   private _scenarios: ScenarioSummary[] = [];
+  /** Undefined until the server has answered; absent from an older server. */
+  private _capabilities: SimulationCapabilities | undefined = undefined;
   private _history: SimulationHistory | null = null;
   private _selectedRunKey: string | null = null;
   private _loading = false;
@@ -279,6 +283,7 @@ export class DdAdminShell extends LitElement {
       this._activeRuns = [];
       this._runs = [];
       this._scenarios = [];
+      this._capabilities = undefined;
       this._history = null;
       this._selectedRunKey = null;
       this._screen = 'signed-out';
@@ -304,6 +309,7 @@ export class DdAdminShell extends LitElement {
       this._activeRuns = activeRuns.items;
       this._runs = runs.items;
       this._scenarios = scenarios.items;
+      this._capabilities = scenarios.capabilities;
 
       const nextRunKey = this._activeRuns[0]?.runKey ?? this._selectedRunKey;
       if (nextRunKey !== null && nextRunKey !== undefined) await this._loadHistory(nextRunKey);
@@ -435,7 +441,7 @@ export class DdAdminShell extends LitElement {
       </section>
 
       <div class="grid">
-        <dd-simulation-control class="wide" .session=${session} .scenarios=${this._scenarios} @simulation-changed=${this._loadDashboard}></dd-simulation-control>
+        <dd-simulation-control class="wide" .session=${session} .scenarios=${this._scenarios} .capabilities=${this._capabilities} @simulation-changed=${this._loadDashboard}></dd-simulation-control>
         ${this._runsCard()}
         ${this._timelineCard()}
         ${this._targetsCard()}

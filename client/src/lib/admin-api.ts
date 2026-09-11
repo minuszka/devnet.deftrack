@@ -137,6 +137,29 @@ export interface ScenarioSummary {
   title: string;
   description: string;
   riskClass: 'low' | 'medium' | 'high';
+  /**
+   * A parameter object that satisfies this scenario's schema, served by the
+   * same module that validates it.
+   *
+   * Optional because a server built before this field simply does not send it,
+   * and absent is the honest reading -- not the same as an empty object, which
+   * would look runnable and is refused for every scenario that requires a field.
+   */
+  parameterTemplate?: Record<string, unknown>;
+  /** The template names a placeholder target that no registry will resolve. */
+  templateNeedsTargetId?: boolean;
+}
+
+/**
+ * What this deployment can be asked to do.
+ *
+ * Absent from a server that predates it, and the panel treats absent as "not
+ * established" rather than as "yes": offering a live run that the server will
+ * refuse at creation is the trap this field exists to remove.
+ */
+export interface SimulationCapabilities {
+  liveExecutorConfigured: boolean;
+  liveNetworks: Array<'regtest' | 'devnet'>;
 }
 
 interface RequestInput {
@@ -182,7 +205,10 @@ export const adminApi = {
     request<{ signedOut: true }>(`${ADMIN_BASE}/session`, { method: 'DELETE', csrfToken }),
 
   targets: () => request<{ items: SimulationTarget[]; total: number }>(`${ADMIN_BASE}/simulations/targets`),
-  scenarios: () => request<{ items: ScenarioSummary[] }>(`${ADMIN_BASE}/simulations/scenarios`),
+  scenarios: () =>
+    request<{ items: ScenarioSummary[]; capabilities?: SimulationCapabilities }>(
+      `${ADMIN_BASE}/simulations/scenarios`
+    ),
   activeRuns: () =>
     request<{ items: ActiveSimulationRun[]; total: number }>(`${ADMIN_BASE}/simulations/runs?live=true`),
   history: (runKey: string) =>

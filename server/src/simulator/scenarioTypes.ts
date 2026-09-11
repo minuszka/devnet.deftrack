@@ -44,6 +44,44 @@ export interface ScenarioDescriptor {
   riskClass: SimulationRiskClass;
 }
 
+/**
+ * A descriptor as the control API serves it: the metadata above, plus a
+ * parameter object that satisfies this scenario's schema.
+ *
+ * The template exists so the panel never has to carry its own copy of what a
+ * scenario takes. A separately maintained table drifts from the validator, and
+ * it did: the panel had no entry for `dsl-fault` and offered `{}`, which is
+ * three required fields short.
+ *
+ * A template is a starting point, never a run. `templateNeedsTargetId` says the
+ * operator must replace a placeholder before the server could resolve it --
+ * satisfying the schema and naming a registered target are different questions,
+ * answered in different places.
+ */
+export interface ScenarioCatalogueEntry extends ScenarioDescriptor {
+  parameterTemplate: Record<string, unknown>;
+  templateNeedsTargetId: boolean;
+}
+
+/**
+ * What this deployment can actually be asked to do, taken from the same
+ * configuration decision that builds the executor.
+ *
+ * The panel offered `live` beside `devnet` and the server refused the pair at
+ * creation -- correctly, since the only executor is the Docker lab. Offering a
+ * combination that is always refused is not a safety feature, it is a trap, and
+ * guessing the answer from a hostname would be a second source of truth.
+ *
+ * `liveExecutorConfigured` says an executor exists. It says nothing about
+ * whether a run would pass preflight; that remains a separate question with a
+ * separate answer.
+ */
+export interface SimulationCapabilities {
+  liveExecutorConfigured: boolean;
+  /** The networks a live run may name. Empty when live is impossible here. */
+  liveNetworks: SimulationNetwork[];
+}
+
 export type PlannedActionPayload =
   | { kind: 'service-stop'; faultLeaseSeconds: number }
   | { kind: 'service-start' }

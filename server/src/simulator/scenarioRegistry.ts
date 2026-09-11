@@ -4,6 +4,7 @@ import {
   DSL_EPOCH_BLOCKS,
   DSL_FAULT_KINDS,
   SIMULATION_SCENARIO_IDS,
+  type ScenarioCatalogueEntry,
   type ScenarioDescriptor,
   type SimulationScenarioId,
 } from './scenarioTypes.js';
@@ -255,6 +256,56 @@ export const SCENARIO_REGISTRY: Readonly<Record<SimulationScenarioId, ScenarioDe
   },
 };
 
+/**
+ * A target id that is syntactically valid and deliberately does not exist.
+ *
+ * The panel used to seed these fields with `target-id`, which reads like a
+ * value somebody might have meant. The distinction it blurred is the one that
+ * matters here: a parameter object can satisfy the schema completely and still
+ * name no registered target, and the two failures are found in different places
+ * -- the schema at parse time, the target at resolution time. A placeholder
+ * that cannot be mistaken for a real id keeps them apart.
+ */
+export const PLACEHOLDER_TARGET_ID = 'replace-with-a-registered-target-id';
+
+/**
+ * One schema-valid parameter object per scenario, so the panel never has to
+ * guess what a scenario takes.
+ *
+ * It lives here, next to the schema, rather than in the client: a table of
+ * defaults maintained separately from the validator drifts, and it did -- the
+ * panel had no entry for `dsl-fault` at all and sent `{}`, which is missing
+ * three required fields. Keyed by the scenario id union, so a scenario added to
+ * the registry without a template fails to compile.
+ *
+ * These are starting points, not runs. `scenarioRegistry.test.ts` puts every one
+ * of them through `parseScenarioRequest`, which is the only claim they make.
+ */
+export const SCENARIO_PARAMETER_TEMPLATES: Readonly<
+  Record<SimulationScenarioId, Readonly<Record<string, unknown>>>
+> = {
+  'mn-stop': { count: 1, durationSeconds: 60 },
+  'host-outage': { anchorTargetId: PLACEHOLDER_TARGET_ID, durationSeconds: 60 },
+  'quorum-member-outage': { count: 1, phase: 'dkg', durationSeconds: 60 },
+  'staker-stop': { count: 1, durationSeconds: 60 },
+  'restart-flapping': { role: 'masternode', count: 1, cycles: 1, downSeconds: 10, upSeconds: 10 },
+  'network-degradation': {
+    role: 'masternode',
+    count: 1,
+    durationSeconds: 60,
+    latencyMs: 100,
+    jitterMs: 20,
+    lossPercent: 1,
+    correlationPercent: 0,
+  },
+  'node-isolation': { count: 1, durationSeconds: 60 },
+  'clear-recover': { targetIds: [PLACEHOLDER_TARGET_ID] },
+  // The smallest observable Sentinel fault: one running masternode withholds
+  // one response for one epoch. The panel sent `{}` here, which the schema
+  // refuses for three separate missing fields.
+  'dsl-fault': { faultKind: 'response-drop', count: 1, epochs: 1 },
+};
+
 export const SIMULATION_PRESET_IDS = [
   'dkg-minus-16',
   'dkg-minus-17',
@@ -328,8 +379,18 @@ export function parseScenarioRequest(input: unknown): SimulationScenarioRequest 
   return validateCrossFields(simulationScenarioRequestSchema.parse(input));
 }
 
-export function scenarioDescriptors(): ScenarioDescriptor[] {
-  return SIMULATION_SCENARIO_IDS.map((id) => ({ ...SCENARIO_REGISTRY[id] }));
+export function scenarioDescriptors(): ScenarioCatalogueEntry[] {
+  return SIMULATION_SCENARIO_IDS.map((id) => {
+    const parameterTemplate = { ...SCENARIO_PARAMETER_TEMPLATES[id] };
+    return {
+      ...SCENARIO_REGISTRY[id],
+      parameterTemplate,
+      // Whether the operator has to replace something before this can resolve.
+      // Said by the server rather than sniffed for by the panel, because the
+      // placeholder is the server's own constant.
+      templateNeedsTargetId: JSON.stringify(parameterTemplate).includes(PLACEHOLDER_TARGET_ID),
+    };
+  });
 }
 
 /** Builds a normal validated request; presets are shortcuts, not a validation bypass. */

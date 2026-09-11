@@ -4,6 +4,7 @@ import {
   type AdminSession,
   type DryRunPlan,
   type ScenarioSummary,
+  type SimulationCapabilities,
   type SimulationControlRun,
   type SimulationPreflight,
 } from '../lib/admin-api.js';
@@ -20,17 +21,25 @@ interface PreparedRun {
   preflight: SimulationPreflight | null;
 }
 
-const parameterDefaults: Record<string, Record<string, unknown>> = {
-  'mn-stop': { count: 1, durationSeconds: 60 },
-  'host-outage': { anchorTargetId: 'target-id', durationSeconds: 60 },
-  'quorum-member-outage': { count: 1, phase: 'dkg', durationSeconds: 60 },
-  'staker-stop': { count: 1, durationSeconds: 60 },
-  'restart-flapping': { role: 'masternode', count: 1, cycles: 1, downSeconds: 10, upSeconds: 10 },
-  'network-degradation': {
-    role: 'masternode', count: 1, durationSeconds: 60, latencyMs: 100, jitterMs: 20, lossPercent: 1, correlationPercent: 0,
-  },
-  'node-isolation': { count: 1, durationSeconds: 60 },
-  'clear-recover': { targetIds: ['target-id'] },
+/**
+ * The panel no longer keeps its own table of parameter defaults.
+ *
+ * It kept one, maintained separately from the schema that validates it, and it
+ * drifted exactly as such a table does: `dsl-fault` had no entry at all, so
+ * selecting it put `{}` in the field -- three required fields short, refused by
+ * the server, with nothing here saying why. The template now comes from the
+ * module that owns the schema, and a scenario this server does not describe
+ * gets no template rather than an empty one that looks runnable.
+ */
+function templateJson(descriptor: ScenarioSummary | null): string {
+  if (descriptor?.parameterTemplate === undefined) return '';
+  return JSON.stringify(descriptor.parameterTemplate, null, 2);
+}
+
+/** What the panel may offer when the server has not said. Deliberately nothing. */
+const NO_CAPABILITIES: SimulationCapabilities = {
+  liveExecutorConfigured: false,
+  liveNetworks: [],
 };
 
 function newSeed(): string {
@@ -68,6 +77,7 @@ export class DdSimulationControl extends LitElement {
   static override properties = {
     session: { attribute: false },
     scenarios: { attribute: false },
+    capabilities: { attribute: false },
     _scenarioId: { state: true },
     _network: { state: true },
     _mode: { state: true },
@@ -83,11 +93,15 @@ export class DdSimulationControl extends LitElement {
 
   session: AdminSession | null = null;
   scenarios: ScenarioSummary[] = [];
+  /** Undefined until the server answers; an older server never sends it. */
+  capabilities: SimulationCapabilities | undefined = undefined;
   private _scenarioId = 'mn-stop';
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
   private _seed = newSeed();
-  private _parameters = JSON.stringify(parameterDefaults['mn-stop'], null, 2);
+  private _parameters = '';
+  /** Which scenario the parameter field was last filled from. */
+  private _seededScenarioId: string | null = null;
   private _prepared: PreparedRun | null = null;
   private _riskAcknowledged = false;
   private _startAcknowledged = false;
@@ -111,6 +125,7 @@ export class DdSimulationControl extends LitElement {
       label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: var(--fs-sm); }
       label > span, .field-label { font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
       .parameters { grid-column: 1 / -1; }
+      .notes { display: flex; flex-direction: column; gap: var(--sp-2); }
       textarea { width: 100%; min-height: 156px; resize: vertical; line-height: 1.5; }
       .form-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding: 0 var(--sp-4) var(--sp-4); }
       .warning { color: var(--warn); font-size: var(--fs-sm); }
@@ -155,6 +170,31 @@ export class DdSimulationControl extends LitElement {
     return this.scenarios.find((scenario) => scenario.scenarioId === this._scenarioId) ?? this.scenarios[0] ?? null;
   }
 
+  /** Fail closed: what the server has not established, the panel does not offer. */
+  private get _caps(): SimulationCapabilities {
+    return this.capabilities ?? NO_CAPABILITIES;
+  }
+
+  private get _liveNetworks(): string[] {
+    return this._caps.liveNetworks;
+  }
+
+  private get _liveOffered(): boolean {
+    return this._caps.liveExecutorConfigured && this._liveNetworks.length > 0;
+  }
+
+  /**
+   * The allowlist arrives after the first render, so the parameter field is
+   * filled from whichever scenario is selected once its descriptor exists --
+   * and again whenever the selection changes. One rule covers both.
+   */
+  override willUpdate(): void {
+    const descriptor = this._descriptor;
+    if (descriptor === null || this._seededScenarioId === descriptor.scenarioId) return;
+    this._seededScenarioId = descriptor.scenarioId;
+    this._parameters = templateJson(descriptor);
+  }
+
   private _newInput(): void {
     this._prepared = null;
     this._riskAcknowledged = false;
@@ -177,7 +217,26 @@ export class DdSimulationControl extends LitElement {
 
   private _selectScenario(event: Event): void {
     this._scenarioId = (event.target as HTMLSelectElement).value;
-    this._parameters = JSON.stringify(parameterDefaults[this._scenarioId] ?? {}, null, 2);
+    // The parameter field is refilled by willUpdate, from the server's own
+    // template for the newly chosen scenario.
+    this._newInput();
+  }
+
+  /**
+   * Choosing live also settles the network, rather than leaving the reader to
+   * assemble a pair the server refuses at creation.
+   *
+   * `live` on `devnet` was selectable and always rejected: the only executor is
+   * the Docker lab. The refusal was correct; offering the combination was the
+   * defect.
+   */
+  private _selectMode(event: Event): void {
+    const mode = (event.target as HTMLSelectElement).value as Mode;
+    this._mode = mode;
+    if (mode === 'live') {
+      const only = this._liveNetworks[0];
+      if (only !== undefined) this._network = only as Network;
+    }
     this._newInput();
   }
 
@@ -334,22 +393,77 @@ export class DdSimulationControl extends LitElement {
           </label>
           <label><span>Network</span>
             <select .value=${this._network} @change=${(event: Event) => { this._network = (event.target as HTMLSelectElement).value as Network; this._newInput(); }} ?disabled=${this._busy}>
-              <option value="regtest">regtest (local lab)</option><option value="devnet">devnet</option>
+              <option value="regtest">regtest (local lab)</option>
+              <!-- While live is selected the only reachable network is the lab's,
+                   so the other one is not offered rather than offered and refused. -->
+              <option value="devnet" ?disabled=${this._mode === 'live'}>devnet</option>
             </select>
           </label>
           <label><span>Mode</span>
-            <select .value=${this._mode} @change=${(event: Event) => { this._mode = (event.target as HTMLSelectElement).value as Mode; this._newInput(); }} ?disabled=${this._busy}>
-              <option value="dry-run">dry-run</option><option value="live">live (lab only)</option>
+            <select .value=${this._mode} @change=${this._selectMode} ?disabled=${this._busy}>
+              <option value="dry-run">dry-run</option>
+              <option value="live" ?disabled=${!this._liveOffered}>Live · regtest lab</option>
             </select>
           </label>
           <label><span>Deterministic seed</span><input type="text" .value=${this._seed} @input=${(event: Event) => { this._seed = (event.target as HTMLInputElement).value; this._newInput(); }} ?disabled=${this._busy} required /></label>
           <label class="parameters"><span>Typed scenario parameters (JSON)</span><textarea .value=${this._parameters} @input=${(event: Event) => { this._parameters = (event.target as HTMLTextAreaElement).value; this._newInput(); }} ?disabled=${this._busy} spellcheck="false" required></textarea></label>
+          ${this._parameterNotes(descriptor)}
         </div>
         <div class="form-foot">
           <span class="warning">${descriptor ? `${descriptor.riskClass.toUpperCase()} RISK — ${descriptor.description}` : 'Loading scenario allowlist…'}</span>
-          <button class="btn primary" type="submit" ?disabled=${this._busy || descriptor === null}>${this._busy ? 'Preparing…' : 'Prepare dry-run preview'}</button>
+          <!-- The label used to read "dry-run" whatever was selected, while the
+               request carried the selected mode. It says which mode it is
+               preparing now; preparing itself still performs no remote action. -->
+          <button class="btn primary" type="submit" ?disabled=${this._busy || descriptor === null}>
+            ${this._busy
+              ? 'Preparing…'
+              : this._mode === 'live'
+                ? 'Prepare live plan · regtest lab'
+                : 'Prepare dry-run plan'}
+          </button>
         </div>
       </form>
+    `;
+  }
+
+  /**
+   * What the operator still has to do before this plan could resolve, and what
+   * this deployment cannot do at all.
+   *
+   * Kept apart on purpose. A schema-valid parameter object is not a resolvable
+   * target, and a configured executor is not a passed preflight.
+   */
+  private _parameterNotes(descriptor: ScenarioSummary | null): TemplateResult {
+    if (descriptor === null) return html`${nothing}`;
+    return html`
+      <div class="parameters notes">
+        ${descriptor.parameterTemplate === undefined
+          ? html`<div class="notice">
+              This server offered no parameter template for
+              <b class="mono">${descriptor.scenarioId}</b>. Enter the parameters its schema
+              requires — the server validates them, and refuses what it does not recognise.
+            </div>`
+          : nothing}
+        ${descriptor.templateNeedsTargetId === true
+          ? html`<div class="notice">
+              The template names a placeholder target id. Replace it with a registered target:
+              the schema accepts the placeholder, the registry will not.
+            </div>`
+          : nothing}
+        ${this._liveOffered
+          ? nothing
+          : html`<div class="notice">
+              Live mode is unavailable: this deployment reports no configured lab executor.
+              Dry-run plans are unaffected.
+            </div>`}
+        ${this._mode === 'live'
+          ? html`<div class="notice">
+              A live run executes in the regtest lab only. A configured executor is not a passed
+              preflight — chain identity, data quality, target mapping and recovery readiness are
+              checked separately when the plan is validated.
+            </div>`
+          : nothing}
+      </div>
     `;
   }
 
