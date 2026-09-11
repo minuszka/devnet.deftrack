@@ -93,3 +93,120 @@ export function adminSessionStubs(options: AdminStubOptions = {}): ApiStubs {
     '/api/v1/simulations': { body: ok(pageOf([])) },
   };
 }
+
+/** A run key of the shape the server mints, for the selection tests. */
+export const RUN_A = `sim_${'a'.repeat(32)}`;
+export const RUN_B = `sim_${'b'.repeat(32)}`;
+
+export interface RunStubOptions {
+  runKey: string;
+  /** The recovery evidence the server reports. `null` means none recorded. */
+  recovery?: {
+    required: boolean;
+    allClear: boolean;
+    targets: Array<{
+      targetId: string;
+      faultStateClear: boolean;
+      expectedServiceRunning: boolean;
+      observerFresh: boolean;
+      checkedAtMs: number;
+    }>;
+  } | null;
+  status?: string;
+  revision?: number;
+  live?: boolean;
+  faultMayBeActive?: boolean;
+  faultLeaseExpiresAtMs?: number | null;
+  abortRequested?: boolean;
+  scenarioId?: string;
+}
+
+/** The run projection, as `GET /runs/:key` and `/dry-run` carry it. */
+export function controlRun(options: RunStubOptions): Record<string, unknown> {
+  return {
+    runKey: options.runKey,
+    metadataFingerprint: `fingerprint-${options.runKey.slice(4, 10)}`,
+    metadata: {
+      network: 'regtest',
+      scenarioId: options.scenarioId ?? 'mn-stop',
+      scenarioVersion: 1,
+      seed: 'fixture-seed',
+      parameters: { count: 1, durationSeconds: 60 },
+    },
+    state: {
+      status: options.status ?? 'armed',
+      revision: options.revision ?? 3,
+      live: options.live ?? true,
+      createdAtMs: 1_000,
+      updatedAtMs: 2_000,
+      stateEnteredAtMs: 2_000,
+      runExpiresAtMs: 9_000_000,
+      faultLeaseExpiresAtMs: options.faultLeaseExpiresAtMs ?? null,
+      faultMayBeActive: options.faultMayBeActive ?? false,
+      abortRequested: options.abortRequested ?? false,
+      lastTransition: null,
+    },
+  };
+}
+
+/** The saved plan for a run. Minimal, and never a new one. */
+export function savedPlan(runKey: string): Record<string, unknown> {
+  return {
+    runKey,
+    network: 'regtest',
+    scenarioId: 'mn-stop',
+    selectedTargetIds: ['lab-mn-1'],
+    actions: [
+      { actionId: 'a1', targetId: 'lab-mn-1', kind: 'service-stop', notBeforeOffsetMs: 0 },
+    ],
+    impact: {
+      affectedTargetCount: 1,
+      affectedMasternodeCount: 1,
+      affectedStakerCount: 0,
+      affectedHostCount: 1,
+      affectedCurrentQuorumMembers: 0,
+      currentQuorumSize: null,
+      survivingCurrentQuorumMembers: null,
+      dkgMarginAfterFault: null,
+      chainLockMarginAfterFault: null,
+      warnings: [],
+    },
+    assurances: ['NO_REMOTE_ACTION'],
+  };
+}
+
+/** Everything the dashboard needs to show one existing run. */
+export function runStubs(options: RunStubOptions): ApiStubs {
+  const run = controlRun(options);
+  const base = `/api/v1/admin/simulations/runs/${options.runKey}`;
+  return {
+    [base]: { body: ok(run) },
+    [`${base}/dry-run`]: { body: ok({ run, plan: savedPlan(options.runKey) }) },
+    [`${base}/recovery`]: {
+      body: ok({
+        recovery:
+          options.recovery === undefined
+            ? null
+            : options.recovery === null
+              ? null
+              : { startedAtMs: 1_000, finishedAtMs: 2_000, ...options.recovery },
+      }),
+    },
+    [`${base}/history`]: {
+      body: ok({
+        run,
+        audit: [
+          {
+            sequence: 1,
+            stream: 'run',
+            eventType: 'dry_run_completed',
+            atMs: 2_000,
+            fromStatus: 'draft',
+            toStatus: options.status ?? 'armed',
+          },
+        ],
+        artifacts: [],
+      }),
+    },
+  };
+}

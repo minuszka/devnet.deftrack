@@ -3,6 +3,7 @@ import {
   adminApi,
   type AdminSession,
   type DryRunPlan,
+  type RecoveryReportView,
   type ScenarioSummary,
   type SimulationCapabilities,
   type SimulationControlRun,
@@ -10,7 +11,7 @@ import {
 } from '../lib/admin-api.js';
 
 import { num } from '../lib/format.js';
-import { runSafety } from '../lib/simulationRunState.js';
+import { acceptsRunUpdate, runSafety } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
 type Network = 'regtest' | 'devnet';
@@ -21,6 +22,8 @@ interface PreparedRun {
   run: SimulationControlRun;
   plan: DryRunPlan;
   preflight: SimulationPreflight | null;
+  /** Null until the server has been asked; undefined is never assumed clear. */
+  recovery: RecoveryReportView | null;
 }
 
 /**
@@ -80,6 +83,7 @@ export class DdSimulationControl extends LitElement {
     session: { attribute: false },
     scenarios: { attribute: false },
     capabilities: { attribute: false },
+    selectedRunKey: { attribute: false },
     _scenarioId: { state: true },
     _network: { state: true },
     _mode: { state: true },
@@ -97,6 +101,16 @@ export class DdSimulationControl extends LitElement {
   scenarios: ScenarioSummary[] = [];
   /** Undefined until the server answers; an older server never sends it. */
   capabilities: SimulationCapabilities | undefined = undefined;
+  /**
+   * The run the dashboard is looking at, from the URL. Null while a new draft
+   * is being written.
+   *
+   * A draft and a selected run are two different things, and conflating them is
+   * what lost the Abort button: any edit to the form used to discard the
+   * prepared run, so touching the seed field while a fault was live took its
+   * recovery controls off the screen.
+   */
+  selectedRunKey: string | null = null;
   private _scenarioId = 'mn-stop';
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
@@ -104,6 +118,10 @@ export class DdSimulationControl extends LitElement {
   private _parameters = '';
   /** Which scenario the parameter field was last filled from. */
   private _seededScenarioId: string | null = null;
+  /** Which run the panel has loaded, so a repeat of the same key is a no-op. */
+  private _loadedRunKey: string | null = null;
+  /** Bumped per load, so a slower answer for an earlier key cannot land. */
+  private _loadGeneration = 0;
   private _prepared: PreparedRun | null = null;
   private _riskAcknowledged = false;
   private _startAcknowledged = false;
@@ -191,18 +209,74 @@ export class DdSimulationControl extends LitElement {
    * and again whenever the selection changes. One rule covers both.
    */
   override willUpdate(): void {
+    if (this.selectedRunKey !== this._loadedRunKey) {
+      this._loadedRunKey = this.selectedRunKey;
+      void this._loadSelectedRun(this.selectedRunKey);
+    }
     const descriptor = this._descriptor;
     if (descriptor === null || this._seededScenarioId === descriptor.scenarioId) return;
     this._seededScenarioId = descriptor.scenarioId;
     this._parameters = templateJson(descriptor);
   }
 
-  private _newInput(): void {
-    this._prepared = null;
-    this._riskAcknowledged = false;
-    this._startAcknowledged = false;
+  /**
+   * Restore a run's controls from the server, using the plan it was SAVED with.
+   *
+   * Not by creating anything: `POST /runs` with the same form would mint a
+   * different run, and the one still holding the lab would be left with no
+   * controls at all. `GET /runs/:key/dry-run` returns the run and its immutable
+   * plan, which is exactly what a reload needs.
+   */
+  private async _loadSelectedRun(runKey: string | null): Promise<void> {
+    const generation = ++this._loadGeneration;
+    if (runKey === null) {
+      this._prepared = null;
+      return;
+    }
+    if (this._prepared?.run.runKey === runKey) return;
+    this._busy = true;
+    try {
+      const result = await adminApi.dryRun(runKey);
+      // A slower answer for a key the panel has moved on from must not land.
+      if (generation !== this._loadGeneration) return;
+      if (!acceptsRunUpdate(this._prepared?.run ?? null, result.run)) return;
+      const descriptor =
+        this.scenarios.find((item) => item.scenarioId === result.run.metadata.scenarioId) ??
+        this._descriptor;
+      if (descriptor === null) return;
+      // A failure to read the recovery evidence leaves it null, which the panel
+      // reports as unknown. It must never read as clear.
+      const recovery = await adminApi.recovery(runKey).then((r) => r.recovery).catch(() => null);
+      if (generation !== this._loadGeneration) return;
+      // preflight stays null: the server did not report one here, and "not run"
+      // and "passed" are different answers.
+      this._prepared = { descriptor, run: result.run, plan: result.plan, preflight: null, recovery };
+      this._riskAcknowledged = false;
+      this._startAcknowledged = false;
+      this._retryKey = null;
+      this._message = '';
+    } catch (error) {
+      if (generation !== this._loadGeneration) return;
+      this._prepared = null;
+      // Named, because a bare "not found" beside a dashboard showing several
+      // runs does not say which one could not be loaded.
+      this._message = `Run ${runKey} could not be loaded: ${errorMessage(error)}`;
+    } finally {
+      if (generation === this._loadGeneration) this._busy = false;
+    }
+  }
+
+  /**
+   * The draft changed.
+   *
+   * It used to clear the prepared run as well, which is why editing any field
+   * -- even the seed, even by one character -- removed the abort and recovery
+   * controls of a run that was still going. The draft is what this form
+   * describes; the selected run is what the server is holding, and the two only
+   * meet when Prepare is pressed.
+   */
+  private _draftChanged(): void {
     this._message = '';
-    this._retryKey = null;
   }
 
   private _idempotency(operation: string): string {
@@ -221,7 +295,7 @@ export class DdSimulationControl extends LitElement {
     this._scenarioId = (event.target as HTMLSelectElement).value;
     // The parameter field is refilled by willUpdate, from the server's own
     // template for the newly chosen scenario.
-    this._newInput();
+    this._draftChanged();
   }
 
   /**
@@ -239,7 +313,7 @@ export class DdSimulationControl extends LitElement {
       const only = this._liveNetworks[0];
       if (only !== undefined) this._network = only as Network;
     }
-    this._newInput();
+    this._draftChanged();
   }
 
   private _prepare(event: SubmitEvent): void {
@@ -270,7 +344,19 @@ export class DdSimulationControl extends LitElement {
         mode: this._mode,
         scenario: { scenarioId: descriptor.scenarioId, scenarioVersion: descriptor.version, seed: this._seed, parameters },
       });
-      this._prepared = { descriptor, run: result.run, plan: result.plan, preflight: null };
+      this._prepared = { descriptor, run: result.run, plan: result.plan, preflight: null, recovery: null };
+      this._loadedRunKey = result.run.runKey;
+      this._riskAcknowledged = false;
+      this._startAcknowledged = false;
+      // The dashboard owns the address bar; it puts this key in it, so a reload
+      // comes back to the run that was just created rather than to nothing.
+      this.dispatchEvent(
+        new CustomEvent('run-selected', {
+          detail: { runKey: result.run.runKey },
+          bubbles: true,
+          composed: true,
+        })
+      );
       this._completedOperation();
     } catch (error) {
       this._message = errorMessage(error);
@@ -399,7 +485,7 @@ export class DdSimulationControl extends LitElement {
             </select>
           </label>
           <label><span>Network</span>
-            <select .value=${this._network} @change=${(event: Event) => { this._network = (event.target as HTMLSelectElement).value as Network; this._newInput(); }} ?disabled=${this._busy}>
+            <select .value=${this._network} @change=${(event: Event) => { this._network = (event.target as HTMLSelectElement).value as Network; this._draftChanged(); }} ?disabled=${this._busy}>
               <option value="regtest">regtest (local lab)</option>
               <!-- While live is selected the only reachable network is the lab's,
                    so the other one is not offered rather than offered and refused. -->
@@ -412,8 +498,8 @@ export class DdSimulationControl extends LitElement {
               <option value="live" ?disabled=${!this._liveOffered}>Live · regtest lab</option>
             </select>
           </label>
-          <label><span>Deterministic seed</span><input type="text" .value=${this._seed} @input=${(event: Event) => { this._seed = (event.target as HTMLInputElement).value; this._newInput(); }} ?disabled=${this._busy} required /></label>
-          <label class="parameters"><span>Typed scenario parameters (JSON)</span><textarea .value=${this._parameters} @input=${(event: Event) => { this._parameters = (event.target as HTMLTextAreaElement).value; this._newInput(); }} ?disabled=${this._busy} spellcheck="false" required></textarea></label>
+          <label><span>Deterministic seed</span><input type="text" .value=${this._seed} @input=${(event: Event) => { this._seed = (event.target as HTMLInputElement).value; this._draftChanged(); }} ?disabled=${this._busy} required /></label>
+          <label class="parameters"><span>Typed scenario parameters (JSON)</span><textarea .value=${this._parameters} @input=${(event: Event) => { this._parameters = (event.target as HTMLTextAreaElement).value; this._draftChanged(); }} ?disabled=${this._busy} spellcheck="false" required></textarea></label>
           ${this._parameterNotes(descriptor)}
         </div>
         <div class="form-foot">
@@ -486,22 +572,24 @@ export class DdSimulationControl extends LitElement {
    * "nothing to worry about". It says what the server does report
    * (`faultMayBeActive`) and that the proof itself is not available here.
    */
-  private _safetyLine(run: SimulationControlRun): TemplateResult {
-    const safety = runSafety(run);
-    if (!safety.faultMayBeActive && safety.allClear === 'unknown') {
-      return html`<div class="state-line">
-        The server reports no fault outstanding for this run. Per-target recovery proof is not
-        returned by this API.
-      </div>`;
-    }
+  private _safetyLine(prepared: PreparedRun): TemplateResult {
+    const safety = runSafety(prepared.run, prepared.recovery);
+    const proof =
+      safety.allClear === 'unknown'
+        ? html`<span class="state-line">
+            No recovery proof has been recorded for this run yet.
+          </span>`
+        : html`<span class=${safety.allClear === 'yes' ? 'recovery-ok' : 'recovery-bad'}>
+            Recovery proof:
+            ${safety.allClear === 'yes' ? 'all targets clear' : 'manual attention required'}
+            (${num(prepared.recovery?.targets.length ?? 0)} targets checked)
+          </span>`;
     return html`
-      <div class=${safety.faultMayBeActive ? 'recovery-bad' : 'recovery-ok'}>
+      <div class=${safety.faultMayBeActive ? 'recovery-bad' : ''}>
         ${safety.faultMayBeActive
-          ? 'A fault may still be active: the server has not recorded a proven recovery.'
-          : 'No fault outstanding.'}
-        ${safety.allClear === 'unknown'
-          ? html`<span class="state-line"> Per-target recovery proof is not returned by this API.</span>`
-          : nothing}
+          ? 'A fault may still be active: the server has not recorded a proven recovery. '
+          : 'No fault outstanding. '}
+        ${proof}
       </div>
     `;
   }
@@ -562,7 +650,7 @@ export class DdSimulationControl extends LitElement {
         <div class="approval">
           <div class="state-line">Run <strong class="mono">${run.runKey}</strong> is <strong>${run.state.status}</strong>${run.state.live ? ' (live lab run)' : ' (dry-run)'}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}
-          ${this._safetyLine(run)}
+          ${this._safetyLine(prepared)}
           ${run.state.status === 'scheduled'
             ? html`
                 <label><input type="checkbox" .checked=${this._riskAcknowledged} @change=${(event: Event) => { this._riskAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy || !mayApprove} />

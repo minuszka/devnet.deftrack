@@ -1,5 +1,5 @@
 import { expect, ok, test, type ApiStubs, type AppHarness } from './harness.js';
-import { adminSessionStubs, SCENARIO_STUBS } from './fixtures/admin.js';
+import { adminSessionStubs, controlRun, savedPlan, SCENARIO_STUBS } from './fixtures/admin.js';
 
 /**
  * F09: the panel offered parameters and modes the server could only refuse.
@@ -143,6 +143,21 @@ test.describe('simulation control', () => {
                 },
               }),
             },
+    });
+
+    // Creating a run selects it, and a selected run is loaded back from the
+    // server -- day 6's restoration path. Both reads have to be answered or the
+    // harness refuses them, which is how this test found the new behaviour.
+    const created = 'sim_00000000000000000000000000000001';
+    app.stub({
+      [`/api/v1/admin/simulations/runs/${created}`]: { body: ok(controlRun({ runKey: created })) },
+      [`/api/v1/admin/simulations/runs/${created}/dry-run`]: {
+        body: ok({ run: controlRun({ runKey: created }), plan: savedPlan(created) }),
+      },
+      [`/api/v1/admin/simulations/runs/${created}/history`]: {
+        body: ok({ run: controlRun({ runKey: created }), audit: [], artifacts: [] }),
+      },
+      [`/api/v1/admin/simulations/runs/${created}/recovery`]: { body: ok({ recovery: null }) },
     });
 
     await page.locator(MODE).selectOption('live');

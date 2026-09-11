@@ -30,6 +30,23 @@ export type RunUpdateOutcome =
   /** An answer describing a state the selected run has already left. */
   | 'stale-revision';
 
+/**
+ * May this answer replace what is already held?
+ *
+ * The one rule, exported so the store and the components that hold a run
+ * directly cannot disagree about it. Equal revisions are accepted: an
+ * idempotent replay answers with the same one, and taking the newer object
+ * costs nothing. Strictly older is refused -- that is the late answer.
+ */
+export function acceptsRunUpdate(
+  held: SimulationControlRun | null | undefined,
+  incoming: SimulationControlRun
+): boolean {
+  if (held === null || held === undefined) return true;
+  if (held.runKey !== incoming.runKey) return false;
+  return incoming.state.revision >= held.state.revision;
+}
+
 export type RecoveryEvidence =
   | { known: false; reason: 'not-reported' }
   | { known: true; allClear: boolean; targetCount: number };
@@ -126,11 +143,7 @@ export class SelectedRunStore {
     const selected = this.selected;
     if (selected === null || selected.runKey !== run.runKey) return 'other-run';
 
-    const held = selected.run;
-    // Equal revisions are accepted: an idempotent replay answers with the same
-    // revision, and taking the newer object costs nothing. Strictly older is
-    // refused -- that is the late answer this whole module exists for.
-    if (held !== null && run.state.revision < held.state.revision) return 'stale-revision';
+    if (!acceptsRunUpdate(selected.run, run)) return 'stale-revision';
 
     this.selected = { ...selected, run };
     return 'accepted';

@@ -127,6 +127,21 @@ export interface IdempotentResult {
   idempotentReplay?: boolean;
 }
 
+/** Recovery evidence for one run, as the control API serves it. */
+export interface RecoveryReportView {
+  required: boolean;
+  startedAtMs: number | null;
+  finishedAtMs: number | null;
+  allClear: boolean;
+  targets: Array<{
+    targetId: string;
+    faultStateClear: boolean;
+    expectedServiceRunning: boolean;
+    observerFresh: boolean;
+    checkedAtMs: number;
+  }>;
+}
+
 /** Who holds the lab, and whether that lease still blocks a new live run. */
 export interface LiveRunLockStatus {
   configured: boolean;
@@ -322,6 +337,20 @@ export const adminApi = {
   dryRun: (runKey: string, signal?: AbortSignal) =>
     request<{ run: SimulationControlRun; plan: DryRunPlan }>(
       `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/dry-run`,
+      { signal }
+    ),
+
+  /**
+   * Whether the lab was proven clean for this run, per target.
+   *
+   * Its own endpoint because the run projection does not carry recovery -- it
+   * is a separate field on the document, built past by a projection that lists
+   * its fields. Redacted server-side: the prober's private detail never leaves
+   * the server.
+   */
+  recovery: (runKey: string, signal?: AbortSignal) =>
+    request<{ recovery: RecoveryReportView | null }>(
+      `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/recovery`,
       { signal }
     ),
 

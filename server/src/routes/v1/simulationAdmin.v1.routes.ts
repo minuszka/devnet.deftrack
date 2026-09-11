@@ -438,6 +438,19 @@ export function createSimulationAdminRouter(
   router.get('/runs/:runKey', controlRoute(async (req, res) => {
     sendData(res, await service.status(runKey(req)));
   }));
+  /**
+   * Whether the lab was proven clean for this run, per target.
+   *
+   * Its own endpoint rather than a wider run projection: the projection is
+   * built field by field and is compared against an audit replay on every read,
+   * so widening it changes six responses and one equality check. The answer is
+   * redacted -- the prober's `privateDetail` is where a host address ends up,
+   * and no operator decision needs it.
+   */
+  router.get('/runs/:runKey/recovery', controlRoute(async (req, res) => {
+    sendData(res, await service.recovery(runKey(req)));
+  }));
+
   router.get('/runs/:runKey/history', controlRoute(async (req, res) => {
     sendData(res, await service.history(runKey(req)));
   }));

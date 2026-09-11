@@ -160,6 +160,18 @@ export class SimulationPersistenceService {
     return repaired;
   }
 
+  /**
+   * The recovery result recorded for a run, or null.
+   *
+   * Read separately because it is stored separately: the run projection is
+   * `{runKey, metadataFingerprint, metadata, state}` and widening it would
+   * change six responses and the equality checks `loadRun` makes against the
+   * audit replay. One read, one caller.
+   */
+  async recoveryFor(runKey: string): Promise<SimulationRecoveryResult | null> {
+    return this.repository.findRecovery(runKey);
+  }
+
   async loadRun(runKey: string): Promise<SimulationRunProjection> {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
       const events = await this.repository.listRunAudit(runKey);

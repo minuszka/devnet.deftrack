@@ -29,9 +29,13 @@ export default defineConfig({
   // No retries: a test that passes on the second attempt is a defect report,
   // not a pass, and hiding it here is how a suite stops meaning anything.
   retries: 0,
-  workers: process.env.CI ? 1 : undefined,
+  // Capped rather than one-per-core: every worker drives the same Vite dev
+  // server, and past four of them the contention shows up as assertion
+  // timeouts that look like flaky behaviour and are not. Retries would hide
+  // that; a realistic budget fixes it.
+  workers: process.env.CI ? 1 : 4,
   timeout: 30_000,
-  expect: { timeout: 7_000 },
+  expect: { timeout: 10_000 },
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   outputDir: 'test-results',
   use: {

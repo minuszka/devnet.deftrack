@@ -11,6 +11,12 @@ import {
   type SimulationTarget,
 } from '../lib/admin-api.js';
 import { num } from '../lib/format.js';
+import {
+  adminHref,
+  decideSelection,
+  isRunKey,
+  runKeyFromSearch,
+} from '../lib/adminRunSelection.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-simulation-control.js';
 
@@ -47,6 +53,7 @@ export class DdAdminShell extends LitElement {
     _capabilities: { state: true },
     _history: { state: true },
     _selectedRunKey: { state: true },
+    _badRunKey: { state: true },
     _loading: { state: true },
     _message: { state: true },
   };
@@ -62,6 +69,17 @@ export class DdAdminShell extends LitElement {
   private _capabilities: SimulationCapabilities | undefined = undefined;
   private _history: SimulationHistory | null = null;
   private _selectedRunKey: string | null = null;
+  /**
+   * A run key in the URL that is not a run key.
+   *
+   * Held rather than swallowed: the alternative is falling through to another
+   * run, which puts an Abort button for something the operator never asked for
+   * on their screen.
+   */
+  private _badRunKey: string | null = null;
+  private _onPopState = (): void => {
+    void this._applyUrlSelection();
+  };
   private _loading = false;
   private _message = '';
   private _timer: number | null = null;
@@ -215,12 +233,46 @@ export class DdAdminShell extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     document.title = 'devnet.deftrack — Admin';
+    window.addEventListener('popstate', this._onPopState);
     void this._restoreSession();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    window.removeEventListener('popstate', this._onPopState);
     if (this._timer !== null) clearInterval(this._timer);
+  }
+
+  /**
+   * Put the selection in the address bar, so a reload, a second tab and a
+   * pasted link all reach the same run.
+   *
+   * `replace` for a correction the reader did not ask for -- adopting the live
+   * slot, or clearing a key that turned out not to exist -- and `push` for a
+   * choice they made, so Back returns to what they were looking at.
+   */
+  private _writeUrl(runKey: string | null, mode: 'push' | 'replace'): void {
+    const href = adminHref(runKey);
+    if (href === `${location.pathname}${location.search}`) return;
+    if (mode === 'push') history.pushState(null, '', href);
+    else history.replaceState(null, '', href);
+  }
+
+  /** Read the URL and act on it. The one place a selection is decided. */
+  private async _applyUrlSelection(): Promise<void> {
+    const decision = decideSelection({
+      urlRunKey: runKeyFromSearch(location.search),
+      heldRunKey: null,
+      activeRunKeys: this._activeRuns.map((entry) => entry.runKey),
+    });
+    this._badRunKey = decision.malformedRunKey;
+    if (decision.runKey === null) {
+      this._selectedRunKey = null;
+      this._history = null;
+      return;
+    }
+    if (decision.runKey === this._selectedRunKey && this._history !== null) return;
+    await this._loadSelectedRun(decision.runKey);
   }
 
   private async _restoreSession(): Promise<void> {
@@ -286,6 +338,10 @@ export class DdAdminShell extends LitElement {
       this._capabilities = undefined;
       this._history = null;
       this._selectedRunKey = null;
+      this._badRunKey = null;
+      // The key is not a secret, but leaving it in the address bar of a
+      // signed-out browser invites the next person to reload into it.
+      this._writeUrl(null, 'replace');
       this._screen = 'signed-out';
       this._loading = false;
       if (this._timer !== null) clearInterval(this._timer);
@@ -311,9 +367,31 @@ export class DdAdminShell extends LitElement {
       this._scenarios = scenarios.items;
       this._capabilities = scenarios.capabilities;
 
-      const nextRunKey = this._activeRuns[0]?.runKey ?? this._selectedRunKey;
-      if (nextRunKey !== null && nextRunKey !== undefined) await this._loadHistory(nextRunKey);
-      else this._history = null;
+      /*
+       * The selection is decided, not recomputed.
+       *
+       * This used to read `activeRuns[0]?.runKey ?? selected`, so every refresh
+       * moved the panel to the first active run: choose run B, wait thirty
+       * seconds, and the Abort button on screen belonged to run A. The held
+       * selection now wins over the live slot, and the live slot is adopted
+       * only when nothing is selected at all.
+       */
+      const decision = decideSelection({
+        urlRunKey: runKeyFromSearch(location.search),
+        heldRunKey: this._selectedRunKey,
+        activeRunKeys: this._activeRuns.map((entry) => entry.runKey),
+      });
+      this._badRunKey = decision.malformedRunKey;
+      if (decision.runKey === null) {
+        this._selectedRunKey = null;
+        this._history = null;
+      } else if (decision.runKey !== this._selectedRunKey || this._history === null) {
+        await this._loadSelectedRun(decision.runKey);
+        // A run adopted rather than asked for is a correction, not a choice.
+        // Replace, not push: neither adopting the live slot nor confirming
+        // what the URL already said is a step the reader chose to take.
+        this._writeUrl(this._selectedRunKey, 'replace');
+      }
       this._message = '';
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -336,15 +414,39 @@ export class DdAdminShell extends LitElement {
   private _selectRun(runKey: string): void {
     if (this._selectedRunKey === runKey && this._history !== null) return;
     this._message = '';
+    this._badRunKey = null;
+    // The address bar first: a choice the operator made is one Back should
+    // return from, and one a reload must reproduce.
+    this._writeUrl(runKey, 'push');
     void this._loadSelectedRun(runKey);
   }
 
+  /**
+   * Load one run, and fail visibly rather than falling back.
+   *
+   * A key that does not resolve is an error about that key. Silently selecting
+   * something else would leave the operator looking at -- and able to abort --
+   * a run they never named.
+   */
   private async _loadSelectedRun(runKey: string): Promise<void> {
     this._loading = true;
+    // Held while the request is in flight, so the panel shows which run it is
+    // waiting for rather than the previous one.
+    this._selectedRunKey = runKey;
     try {
       await this._loadHistory(runKey);
+      this._message = '';
     } catch (error) {
-      this._message = messageOf(error);
+      this._history = null;
+      if (error instanceof ApiError && error.status === 404) {
+        this._message = `No run ${runKey} exists on this deployment.`;
+      } else if (error instanceof ApiError && error.status === 401) {
+        this._session = null;
+        this._screen = 'signed-out';
+        this._message = 'Your session ended. Sign in again to view the private dashboard.';
+      } else {
+        this._message = messageOf(error);
+      }
     } finally {
       this._loading = false;
     }
@@ -432,6 +534,12 @@ export class DdAdminShell extends LitElement {
         <div class="head-actions"><button class="btn" ?disabled=${this._loading} @click=${this._loadDashboard}>Refresh</button></div>
       </header>
 
+      ${this._badRunKey !== null
+        ? html`<div class="alert" role="alert">
+            The address asked for a run called <b class="mono">${this._badRunKey}</b>, which is not
+            a run key. Nothing was selected — choose a run below rather than assuming this one.
+          </div>`
+        : nothing}
       ${this._message ? html`<div class="alert" role="alert">${this._message}</div>` : nothing}
       <section class="metrics" aria-label="Orchestrator summary">
         ${this._metric('Explorer', this._health?.status ?? 'unknown', this._health ? `tip ${num(this._health.chainTip)}` : 'health unavailable', this._health?.status === 'ok' ? '' : 'warn')}
@@ -441,7 +549,15 @@ export class DdAdminShell extends LitElement {
       </section>
 
       <div class="grid">
-        <dd-simulation-control class="wide" .session=${session} .scenarios=${this._scenarios} .capabilities=${this._capabilities} @simulation-changed=${this._loadDashboard}></dd-simulation-control>
+        <dd-simulation-control
+          class="wide"
+          .session=${session}
+          .scenarios=${this._scenarios}
+          .capabilities=${this._capabilities}
+          .selectedRunKey=${this._selectedRunKey}
+          @simulation-changed=${this._loadDashboard}
+          @run-selected=${(event: CustomEvent<{ runKey: string }>) => this._selectRun(event.detail.runKey)}
+        ></dd-simulation-control>
         ${this._runsCard()}
         ${this._timelineCard()}
         ${this._targetsCard()}

@@ -178,7 +178,8 @@ describe.skipIf(!HAVE_MONGO)('the run projection over HTTP', () => {
                 expectedServiceRunning: true,
                 observerFresh: true,
                 checkedAtMs: now - 1_000,
-                privateDetail: null,
+                // A planted address, so the redaction has something to drop.
+                privateDetail: 'ssh 198.51.100.11: unit defcon-lab-mn@1 checked',
               },
             ],
           },
@@ -241,6 +242,35 @@ describe.skipIf(!HAVE_MONGO)('the run projection over HTTP', () => {
     const { status, body } = await getRun('/runs/sim_000000000000000000000000000000ff');
     expect(status).toBe(404);
     expect(body.success).toBe(false);
+  });
+
+  /**
+   * The evidence the panel could not get at, and the one field it must not be
+   * given. `privateDetail` is free text written per target by the prober, and
+   * is where a host address or a unit name ends up.
+   */
+  it('serves the recovery evidence, redacted, on its own endpoint', async () => {
+    const response = await fetch(`${base}/api/v1/admin/simulations/runs/${runKey}/recovery`, {
+      headers: { 'x-admin-api-key': API_KEY },
+    });
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    const body = JSON.parse(raw) as {
+      data?: { recovery?: { allClear?: boolean; targets?: Array<{ targetId?: string }> } };
+    };
+    expect(body.data?.recovery?.allClear).toBe(true);
+    expect(body.data?.recovery?.targets?.[0]?.targetId).toBe('lab-mn-1');
+    expect(raw).not.toContain('privateDetail');
+    expect(raw).not.toContain('198.51.100.11');
+  });
+
+  it('answers 404 for recovery on a run that does not exist', async () => {
+    const response = await fetch(
+      `${base}/api/v1/admin/simulations/runs/sim_000000000000000000000000000000ff/recovery`,
+      { headers: { 'x-admin-api-key': API_KEY } }
+    );
+    // Not "no recovery": that reads as nothing to clean up.
+    expect(response.status).toBe(404);
   });
 
   it('reports the live lock as its own state', async () => {

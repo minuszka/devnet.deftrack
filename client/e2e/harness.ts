@@ -41,6 +41,15 @@ export interface StubResponse {
   raw?: string;
   /** Defaults to application/json. */
   contentType?: string;
+  /**
+   * Hold the answer back this long.
+   *
+   * For the races a control surface has to survive: two requests in flight and
+   * the slower one describing a state the reader has already moved on from.
+   * Real time, not the page's clock -- the point is that the browser is doing
+   * other things while this one is outstanding.
+   */
+  delayMs?: number;
 }
 
 /** A stub is fixed, or computed from the request URL when the query matters. */
@@ -164,6 +173,9 @@ export class AppHarness {
           return;
         }
         const stub = typeof handler === 'function' ? handler(url) : handler;
+        if (stub.delayMs !== undefined && stub.delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, stub.delayMs));
+        }
         try {
           await route.fulfill({
             status: stub.status ?? 200,
