@@ -114,6 +114,26 @@ rounded up to a multiple of 24 (epoch boundaries are exactly the multiples).
 
 ## 1b. Owed on the next fleet roll
 
+- **Swept 2026-09-11 against what the fleet now runs, and the sweep discharged
+  two entries below.** The section's own rule -- someone has to check the range
+  a roll actually shipped against this list -- had not been applied to
+  `fleet-rollout-229-230-2026-09-11`. Measured from a script with both controls
+  (a self-ancestry positive and a tip-is-not-its-own-ancestor negative; the first
+  attempt was run inline through WSL, lost its loop variable to Windows-side
+  expansion, and printed a confident "not in" for every commit):
+  **`37e845beb0` (#209) and `292337f175` (#194) are both ancestors of
+  `f569316413`**, the commit every fleet daemon and the seed are running today.
+  So #209 no longer "rides the next roll" -- it rode this one. The triage table
+  further down stays as the record of how that call was made, but its verdict
+  column is now history for those two rows.
+
+  The next roll is **#231 + #232** (`f569316413..f572a7fd8b`), and outside
+  `src/` and `test/` it touches exactly one file, `.github/workflows/build.yml`
+  (#232), which cannot reach a daemon. **The binary delta of that roll is #231
+  alone**, and `defcon-cli` is byte-identical across the two commits
+  (`6ec8f617…` seed, `e5de7db6…` fleet, both unchanged), so only `defcond`
+  moves. Artefacts and their proof: `D:\www\DEFCON\v23-prep\build-231-artefacts-record.md`.
+
 - **M-02 came off the devnet, and had already done so before this entry was
   last read** (defcon-project/defcon#194). `CDevNetParams` no longer sets
   `nStrictBLSSigSizeActivationHeight`; the only assignment left in

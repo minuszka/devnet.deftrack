@@ -114,7 +114,7 @@ would print the password in `claude mcp list` output.
 | Second devnet node | same host, `defcond-devnet2`, exists so the seed has a peer -- **and it stakes**: `staking=1`, wallet `devnet2`, 10.05 M DFCN, about 4 % of blocks (22 of 500, measured 2026-09-08). Nothing observes it directly -- the explorer's own `SeedStatusService` reads the seed's RPC, and since 2026-09-08 the **peer's wallet too**, through the optional `PEER_RPC_*` block. Its payout scripts are folded into the **`seed` host row**, because `byHost` groups production by machine and two daemons on one box are one machine. Set on this devnet since 2026-09-08: `unattributedBlocks` went 21 -> 0 and `byHost.hhi` from `null` to **0.1179** over 500 blocks, nine machines, `seed` at 4.2 %. On any deployment where that block is missing, devnet2's key is unattributed and `byHost.hhi` is `null` **for the whole network**, since the index is withheld while any producer is unmapped. The header counts nine **stakers** either way: the eight fullnodes plus this one |
 | 152 masternodes | 16 hosts, ports 19799-19808, `defcon-devnet-mn@N`. Eleven are in the rollout inventory and log in as root: the 8 DeFCoN fullnodes with 10 each, and three more with 9. The other five carry 14, 10, 7, 7 and 7, and log in as their own unprivileged users, not root |
 | 8 fleet stakers | **instance 11**, and only on the 8 DeFCoN fullnodes -- a masternode cannot stake, so block production needs its own daemon. The remaining hosts carry masternodes only, which is why a wallet-side staking fix gains them nothing and is not worth a restart |
-| Node binaries | `/usr/local/bin/defcond` (seed, BDB wallet) and a `--without-bdb` build for the fleet |
+| Node binaries | The **seed** runs `/usr/local/bin/defcond` (BDB wallet). The **fleet does not**: its binary is `/opt/defcon-devnet/bin/defcond`, the `--without-bdb` build, and `devnet2` runs that same artefact under the name `defcond-nobdb`. On 8 of the 16 hosts `/usr/local/bin/defcond` exists but is a **mainnet** node (datadir `/var/lib/defcon` or `/data`) — those machines co-host production mainnet, so a fleet probe written against `/usr/local/bin` measures the wrong chain on half the fleet and says nothing about it. Measured 2026-09-11: all 16 hosts and all 155 running fleet daemons carry `d067c3dd6ba9a29eb86797db75816a47`, the seed `07ac4318…` |
 
 Reach the fleet through the jump host; the per-node key lives there, not
 locally. `ssh devnet` reaches the explorer VPS directly.
@@ -675,6 +675,31 @@ Two corrections to what this entry said before, both verified at
   age cap, and must say which. Claiming the lift was validated on-chain would
   be the same error as reading `formationRate` without the health ratio: a true
   number answering a question nobody asked.
+
+- **A Sentinel epoch is decided by one announcement at its start, so an outage
+  placed inside an epoch measures nothing.** A masternode announces its own
+  liveness **once per epoch** (`net_processing.cpp:5802-5809`, guarded by
+  `m_dsl_last_announced_epoch`), and a sentinel's verdict is set membership and
+  nothing else: `r.status = responded.count(t) ? ONLINE : MISSED`
+  (`pose_service_manager.cpp:218`). Once the answer is in, nothing later in that
+  epoch takes it back.
+
+  Measured 2026-09-11 (`dsl-outage-short-2026-09-11`, closed at 11712): five
+  masternodes announced between 15:53:44 and 15:53:56Z and were stopped at
+  16:15:17Z for 28 minutes, entirely inside epoch 486. The commitment at
+  boundary 11688 is `committed` with `missedCount 0`, read the same on the seed
+  and devnet2; every sentinel on 15 of the 16 hosts logged "0 marked missed"
+  after accepting all 152 announcements. The run's own expectation -- "the
+  register names exactly five" -- was **unreachable by the code**, and the run
+  refuted its own hypothesis rather than finding a defect.
+
+  Consequence for run design: an outage must cover the epoch's **announcement
+  window** -- down before the base block, back after the cutoff -- or it is
+  invisible to the Sentinel layer *and*, if placed after the DKG session, to the
+  DKG as well, which separates nothing. E1b and E2 detected their nodes because
+  they stopped them across boundaries. Whether "answered once in the hour" is
+  the right measure rather than "served through the hour" is an audit question,
+  not a measurement one (`v23-prep/finding-candidate-sentinel-lag.md`).
 
 - **A node that is simply ABSENT never reaches `dkgBadVotesThreshold`, so a
   ban model built on that threshold is modelling the wrong branch.**
