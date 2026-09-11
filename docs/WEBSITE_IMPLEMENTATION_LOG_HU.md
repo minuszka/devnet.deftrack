@@ -10,7 +10,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 01 | Baseline és UI-tesztek | ELLENŐRZÖTT | `web/audit-2026-09-11`; K1 zöld (820+80 unit), K2 zöld (8 böngészőteszt), két negatív kontroll pirosra vitte a suite-ot |
 | 02 | Router | ELLENŐRZÖTT | `db77551`; K1 zöld (820+83 unit), K2 zöld (16 böngészőteszt); a javítás előtti viselkedés mérve |
 | 03 | Adatfrissesség | ELLENŐRZÖTT | `c5c872c`; K1 zöld (820+98 unit), K2 zöld (23 böngészőteszt); negatív kontroll: a néma catch visszatéve 3 teszt pirosra vált |
-| 04 | Presetek és módok | TERVEZETT | — |
+| 04 | Presetek és módok | ELLENŐRZÖTT | `127e53d`; K1 zöld (836+98 unit), K2 zöld (31 böngészőteszt), **K3 zöld** (11 integrációs fájl, valódi MongoDB); negatív kontroll: üres `dsl-fault` sablon 3 tesztet pirosra vitt |
 | 05 | Admin kliensszerződés | TERVEZETT | — |
 | 06 | Vezérlés visszatöltése | TERVEZETT | — |
 | 07 | Futamállapot szinkron | TERVEZETT | — |
@@ -372,6 +372,115 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 04. nap – Scenario-alapértékek és futtatási módok
+
+```text
+Nap / dátum / implementáló: 04 / 2026-09-11 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ f38e5c7
+Napi feladat és előfeltételei: F09. Előfeltétel: K2 — megvan. Ez az első nap, ahol szerverroute is változik, tehát K3 alkalmazandó.
+Auditpontok: F09
+```
+
+**Reprodukált kiinduló hiba:** a `dd-simulation-control.ts` saját
+`parameterDefaults` táblájában **nem volt `dsl-fault` bejegyzés**, így a
+`?? {}` ág futott, és `{}` került a JSON-mezőbe — a séma szerint három
+kötelező mező hiányzik (`faultKind`, `count`, `epochs`). A többi bejegyzés
+sémahelyes volt, de `target-id` placeholderrel. A `live` mód a `devnet`
+hálózat mellett is választható volt, amit a szerver a létrehozásnál
+elutasít (`createSchema.refine`). Negatív kontrollal mérve: a sablont `{}`-ra
+visszaírva **2 unit és 1 HTTP teszt** bukik el.
+
+**Változtatás röviden — a sablon oda került, ahol a séma is van.**
+A szerver `SCENARIO_PARAMETER_TEMPLATES` táblája a scenario-id unióval van
+kulcsolva, tehát egy új scenario sablon nélkül **nem fordul le**. A
+`/admin/simulations/scenarios` végpont ezt a sablont és egy `capabilities`
+blokkot is visszaad. A kliensből eltűnt a párhuzamos tábla.
+
+A `live + devnet` megszűnt: a live választása most **beállítja** a hálózatot,
+és a `devnet` opció tiltott live mellett. A „van-e executor” kérdésre az a
+`labExecutorConfigured()` válaszol, ami szó szerint a `buildLabExecutor()`
+feltétele — nem hostname, nem környezeti tipp. A `LIVE_NETWORKS` konstansot a
+create-route elutasítása és a felület is ugyanonnan olvassa.
+
+**Érintett fájlok:**
+
+- szerver: `simulator/scenarioRegistry.ts` (+ teszt), `simulator/scenarioTypes.ts`,
+  új `simulator/simulationCapabilities.ts` (+ teszt),
+  `routes/v1/simulationAdmin.v1.routes.ts`, új
+  `integration/simulationScenarios.integration.test.ts`
+- kliens: `lib/admin-api.ts`, `components/dd-admin-shell.ts`,
+  `components/dd-simulation-control.ts`, új `e2e/fixtures/admin.ts`, új
+  `e2e/simulation-control.spec.ts`, `e2e/harness.ts` (kérés-törzs rögzítés)
+
+**Terven kívüli szükséges módosítás és indoka:** a harness mostantól rögzíti a
+kérések metódusát és JSON-törzsét (`requestsTo`). Enélkül nem lett volna
+bizonyítható, hogy a POST tényleg a kiválasztott módot viszi — márpedig
+pontosan ez volt a gomb feliratának hazugsága.
+
+**Szerződésváltozás / kompatibilitás:** a `/admin/simulations/scenarios` válasza
+**additívan** bővült (`parameterTemplate`, `templateNeedsTargetId`,
+`capabilities`). Régi szerver + új kliens: a kliens `capabilities` hiányában
+**bezár** — live opció letiltva —, és sablon hiányában üres mezőt ad
+magyarázattal, nem `{}`-t. Telepítési sorrend: szerver előbb.
+
+**Parancsok, exit-kódok és teszteredmények:**
+
+| Kapu | Parancs | Eredmény |
+|---|---|---|
+| K1 | build shared / typecheck / build / `git diff --check` | mind exit 0 |
+| K1 | `npm test` | exit 0 — **836** szerver (820 → 836) + 98 kliens |
+| K2 | `npx playwright test` | exit 0 — **31 passed** (23 → 31) |
+| K3 | `MONGODB_TEST_URI=… npm run test:integration` | exit 0 — **11 fájl, 70 teszt** (8 skipped), valódi MongoDB 27018 |
+
+**Valós HTTP/Mongo tesztek:** `simulationScenarios.integration.test.ts`, 4 eset:
+hitelesítés nélkül 401 (különben a többi állítás semmit nem érne); mind a
+**9** scenario kap nem üres sablont és `templateNeedsTargetId` mezőt;
+executor nélküli deployment **nem hirdet** live hálózatot; és a `live+devnet`
+POST továbbra is 400-zal, a helyes üzenettel.
+
+**UI-fixture tesztek (8 új):** sablon a szerverről (`dsl-fault` → valódi
+paraméterek, nem `{}`); sablon nélküli scenario → üres mező + magyarázat;
+placeholder célpont kimondva; live választásakor a hálózat regtestre áll és a
+devnet opció tiltott; executor nélkül a live opció tiltott; `capabilities`
+hiányában szintén tiltott; a POST törzse a kiválasztott módot viszi; és minden
+kínált scenario érvényes, nem üres JSON-t renderel.
+
+**Negatív kontroll:** `SCENARIO_PARAMETER_TEMPLATES['dsl-fault']` értékét
+`{}`-ra írva **2 registry unit teszt és 1 HTTP teszt** bukott el. Visszaállítva
+minden kapu zöld.
+
+Két saját hiba, amit a kapuk fogtak meg, nem én:
+
+1. Az első HTTP-futás `400`-at adott — de **rossz okból**: a tesztalkalmazás
+   nem mountolta a JSON body parsert, így `body: Required` jött a
+   `live run is only possible on regtest` helyett. Egy csak státuszkódot
+   vizsgáló állítás ezt átengedte volna.
+2. A Playwright futtató **nem típusellenőriz**. A saját kézzel írt strukturális
+   típusom a spec helperében nem illett az `AppHarness`-hez; a 8 böngészőteszt
+   zölden futott, a `tsc` kapu bukott el. A `npm test` és a `test:e2e` nem
+   helyettesíti egymást.
+
+**Valódi laborfutam:** NEM FUTOTT. A `live` mód felületi kezelése nem bizonyít
+semmit arról, hogy egy valódi laborfutam végigmenne.
+
+**Kihagyott ellenőrzés és oka:** nincs. A napi három kapu mind lefutott.
+
+**Nyitott probléma / következő lépés:**
+
+- A célpontmezők továbbra is placeholderek; a valódi registry-alapú
+  célpontválasztó a **16. nap** feladata, ahogy a terv előírja.
+- A teszt-MongoDB indítása két buktatót hozott, mindkettő ismert: a WSL-ben
+  `--fork`-olt daemon meghal, amint a `wsl.exe` kilép, és a Git Bash átírja a
+  `/home/...` utat, ha nincs `MSYS_NO_PATHCONV=1`. A működő forma: háttérben
+  futó, előtérben indított `MSYS_NO_PATHCONV=1 wsl -d Ubuntu -- /home/stejn/...`.
+
+```text
+Commit(ok), végső SHA: 127e53d
+Végső git státusz: tiszta (a napló commitja után)
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
@@ -384,7 +493,7 @@ Napi státusz: ELLENŐRZÖTT
 | F06 | 09 | Nyitott | — | — |
 | F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
-| F09 | 04 | Nyitott | — | — |
+| F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
 | F10 | 14 | Nyitott | — | — |
 | F11 | 10–11 | Nyitott | — | — |
 | F12 | 12 | Nyitott | — | — |
