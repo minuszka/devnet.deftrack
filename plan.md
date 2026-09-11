@@ -1310,8 +1310,9 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 
   **After the thaw, measured in order.** All eight stakers staking with a live
   minter thread; the first post-roll Q60 cycle (base 11568) formed at **60 of
-  60, health 1.00, nobody punished**, with `llmq_50_60` at the same base 50 of
-  50 likewise -- where the 2026-09-10 roll's Q60 round at its own base failed
+  60, health 1.00, nobody punished**, with `llmq_50_60` 50 of 50 and
+  `llmq_60_75` 60 of 60 at the same base, all three at health 1.00 with nobody
+  punished -- where the 2026-09-10 roll's Q60 round at its own base failed
   outright;
   ChainLock **9 of 9 post-roll blocks locked by `llmq_defcon`**, median 2 s, and
   the 500-block window still coverage 1.00 with zero gaps; InstantSend **8 of 8
@@ -1380,6 +1381,12 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   46/50, the same `quorumHash` `e3d74760…` and the **same `minedBlockHash`** --
   which is the direct evidence that these two profiles share a mining window,
   rather than an inference from the window arithmetic.
+
+  **And it is routine, not a coincidence:** the very next cycle measured for
+  this, base 11568, mined `llmq_defcon` and `llmq_50_60` into one block again
+  (`44a25f2c…`) -- harmlessly, because that round excluded nobody. So the
+  shared block is structural, and what made 11411 expensive was not the
+  coincidence but a host being excluded by both profiles at once.
 
   **Every one of the seven exclusions was on `roland-node-6`, and every member
   it had was excluded:** 3 of its 3 selected Q60 members and 4 of its 4 selected
