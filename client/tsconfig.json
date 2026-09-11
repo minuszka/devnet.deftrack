@@ -8,5 +8,5 @@
     "declaration": false,
     "types": ["vite/client", "node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "e2e/**/*.ts", "playwright.config.ts"]
 }
