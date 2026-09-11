@@ -8,7 +8,9 @@ import {
   type SimulationControlRun,
   type SimulationPreflight,
 } from '../lib/admin-api.js';
+
 import { num } from '../lib/format.js';
+import { runSafety } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
 type Network = 'regtest' | 'devnet';
@@ -304,7 +306,12 @@ export class DdSimulationControl extends LitElement {
       const result = await adminApi.armRun(
         prepared.run.runKey, session.csrfToken, this._idempotency('arm'), prepared.descriptor.riskClass
       );
-      this._prepared = { ...prepared, run: result.run, preflight: result.preflight };
+      // An idempotent replay of arm answers WITHOUT a preflight -- the checks
+      // were run once, and re-running them is not what a retry means. Keeping
+      // the one already held is the difference between "checked earlier" and
+      // "never checked"; overwriting it with undefined would turn a passed
+      // preflight into "not run" on a retry after a network timeout.
+      this._prepared = { ...prepared, run: result.run, preflight: result.preflight ?? prepared.preflight };
       this._completedOperation();
     } catch (error) {
       this._message = errorMessage(error);
@@ -467,6 +474,38 @@ export class DdSimulationControl extends LitElement {
     `;
   }
 
+  /**
+   * What is actually known about the lab's state, and what is not.
+   *
+   * This line used to read `run.recovery` and print "Recovery proof: all
+   * targets clear". The control API's run projection selects runKey,
+   * metadataFingerprint, metadata and state; the stored recovery result is a
+   * separate field on the document and no endpoint returns it -- so the
+   * condition was never true and the line never rendered. Removing it silently
+   * would leave the panel saying nothing about recovery at all, which reads as
+   * "nothing to worry about". It says what the server does report
+   * (`faultMayBeActive`) and that the proof itself is not available here.
+   */
+  private _safetyLine(run: SimulationControlRun): TemplateResult {
+    const safety = runSafety(run);
+    if (!safety.faultMayBeActive && safety.allClear === 'unknown') {
+      return html`<div class="state-line">
+        The server reports no fault outstanding for this run. Per-target recovery proof is not
+        returned by this API.
+      </div>`;
+    }
+    return html`
+      <div class=${safety.faultMayBeActive ? 'recovery-bad' : 'recovery-ok'}>
+        ${safety.faultMayBeActive
+          ? 'A fault may still be active: the server has not recorded a proven recovery.'
+          : 'No fault outstanding.'}
+        ${safety.allClear === 'unknown'
+          ? html`<span class="state-line"> Per-target recovery proof is not returned by this API.</span>`
+          : nothing}
+      </div>
+    `;
+  }
+
   private _preparedView(prepared: PreparedRun): TemplateResult {
     return html`
       ${this._preview(prepared.plan)}
@@ -523,7 +562,7 @@ export class DdSimulationControl extends LitElement {
         <div class="approval">
           <div class="state-line">Run <strong class="mono">${run.runKey}</strong> is <strong>${run.state.status}</strong>${run.state.live ? ' (live lab run)' : ' (dry-run)'}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}
-          ${run.recovery ? html`<div class=${run.recovery.allClear ? 'recovery-ok' : 'recovery-bad'}>Recovery proof: ${run.recovery.allClear ? 'all targets clear' : 'manual attention required'} (${num(run.recovery.targets.length)} targets checked)</div>` : nothing}
+          ${this._safetyLine(run)}
           ${run.state.status === 'scheduled'
             ? html`
                 <label><input type="checkbox" .checked=${this._riskAcknowledged} @change=${(event: Event) => { this._riskAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy || !mayApprove} />

@@ -44,26 +44,98 @@ export interface PublicSimulationRun {
   };
 }
 
+/**
+ * One transition of the run, as the server records it.
+ */
+export interface SimulationTransitionView {
+  eventId: string;
+  eventType: string;
+  /** Not nullable: every recorded transition has a status it came from. */
+  from: string;
+  to: string;
+  atMs: number;
+  reason: string | null;
+}
+
+/**
+ * The run state as the control API actually serves it.
+ *
+ * Read back from the server's own projection rather than inferred from what the
+ * panel happened to use. `revision` is the field that matters most here and was
+ * missing entirely: it is the server's own ordering key, incremented on every
+ * transition, and it is the only honest way to tell a late answer from a new
+ * one. Without it the panel had nothing to compare, so whichever response
+ * arrived last won -- including one describing a state the run had already left.
+ */
+export interface SimulationRunStateView {
+  status: string;
+  revision: number;
+  live: boolean;
+  createdAtMs: number;
+  updatedAtMs: number;
+  stateEnteredAtMs: number;
+  runExpiresAtMs: number;
+  cooldownExpiresAtMs?: number;
+  faultLeaseExpiresAtMs: number | null;
+  /** True until a successful recovery proves the remote mutation is gone. */
+  faultMayBeActive: boolean;
+  abortRequested: boolean;
+  lastTransition: SimulationTransitionView | null;
+}
+
+/**
+ * The subset of run metadata this panel reads.
+ *
+ * The projection carries more -- the target snapshot, the quorum snapshot, who
+ * requested it -- and those are deliberately not typed here. A field the panel
+ * has no use for is a field it cannot accidentally render, and this surface
+ * carries registry detail that has no business on a screen by accident.
+ */
+export interface SimulationRunMetadataView {
+  network: 'regtest' | 'devnet';
+  scenarioId: string;
+  scenarioVersion: number;
+  seed: string;
+  parameters: Record<string, unknown>;
+}
+
+/**
+ * The run projection: `runKey`, `metadataFingerprint`, `metadata`, `state`.
+ *
+ * Note what is NOT here. The stored recovery result is a separate top-level
+ * field on the document, and the repository's projection selects only the four
+ * above -- so no control endpoint has ever returned it. This interface used to
+ * declare `recovery?`, and the panel's "Recovery proof: all targets clear" line
+ * was therefore unreachable code. Recovery evidence is `unknown` on this API;
+ * see `simulationRunState.ts`, which says so rather than guessing.
+ */
 export interface SimulationControlRun {
   runKey: string;
-  state: {
+  metadataFingerprint: string;
+  metadata: SimulationRunMetadataView;
+  state: SimulationRunStateView;
+}
+
+/**
+ * Every mutation answers with this flag, and the panel ignored it.
+ *
+ * `true` means the server recognised the request as a replay of one it had
+ * already applied -- which is what makes a retry after a network timeout safe,
+ * and is a different thing from an operation that has just happened.
+ */
+export interface IdempotentResult {
+  idempotentReplay?: boolean;
+}
+
+/** Who holds the lab, and whether that lease still blocks a new live run. */
+export interface LiveRunLockStatus {
+  configured: boolean;
+  lock: {
+    runKey: string;
     status: string;
-    live: boolean;
-    stateEnteredAtMs: number;
-    faultLeaseExpiresAtMs: number | null;
-    faultMayBeActive: boolean;
-    abortRequested: boolean;
-  };
-  recovery?: {
-    required: boolean;
-    allClear: boolean;
-    targets: Array<{
-      targetId: string;
-      faultStateClear: boolean;
-      expectedServiceRunning: boolean;
-      observerFresh: boolean;
-    }>;
-  };
+    leaseUntilMs: number;
+  } | null;
+  blocking: boolean;
 }
 
 export interface DryRunPlan {
@@ -167,6 +239,15 @@ interface RequestInput {
   csrfToken?: string;
   idempotencyKey?: string;
   body?: unknown;
+  /**
+   * Cancels the request when a newer one supersedes it.
+   *
+   * Only ever passed on reads. A mutation must NOT be abandoned this way: the
+   * server may already have applied it, and a cancelled fetch tells the caller
+   * nothing about whether it did. Retrying one is what the idempotency key is
+   * for.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -186,6 +267,7 @@ async function request<T>(path: string, input: RequestInput = {}): Promise<T> {
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
     credentials: 'same-origin',
     cache: 'no-store',
+    signal: input.signal ?? null,
   });
 
   let body: ApiEnvelope<T>;
@@ -209,10 +291,43 @@ export const adminApi = {
     request<{ items: ScenarioSummary[]; capabilities?: SimulationCapabilities }>(
       `${ADMIN_BASE}/simulations/scenarios`
     ),
-  activeRuns: () =>
-    request<{ items: ActiveSimulationRun[]; total: number }>(`${ADMIN_BASE}/simulations/runs?live=true`),
-  history: (runKey: string) =>
-    request<SimulationHistory>(`${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/history`),
+  activeRuns: (signal?: AbortSignal) =>
+    request<{ items: ActiveSimulationRun[]; total: number }>(
+      `${ADMIN_BASE}/simulations/runs?live=true`,
+      { signal }
+    ),
+  history: (runKey: string, signal?: AbortSignal) =>
+    request<SimulationHistory>(
+      `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/history`,
+      { signal }
+    ),
+
+  /**
+   * One run's current projection. The endpoint the panel never called: it held
+   * whatever the last operation returned, in memory, and lost it on reload.
+   */
+  run: (runKey: string, signal?: AbortSignal) =>
+    request<SimulationControlRun>(
+      `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}`,
+      { signal }
+    ),
+
+  /**
+   * The run and the plan that was SAVED for it, not a new one.
+   *
+   * Restoring a selection through this endpoint reads the immutable plan the
+   * run was created with. Re-creating a draft to get a plan back would produce
+   * a different run, which is the failure this exists to prevent.
+   */
+  dryRun: (runKey: string, signal?: AbortSignal) =>
+    request<{ run: SimulationControlRun; plan: DryRunPlan }>(
+      `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/dry-run`,
+      { signal }
+    ),
+
+  /** Who holds the lab. Separate from the run list: a stale lock outlives its run. */
+  liveLock: (signal?: AbortSignal) =>
+    request<LiveRunLockStatus>(`${ADMIN_BASE}/simulations/lock`, { signal }),
 
   createRun: (input: {
     csrfToken: string;
@@ -220,32 +335,32 @@ export const adminApi = {
     network: 'regtest' | 'devnet';
     mode: 'dry-run' | 'live';
     scenario: unknown;
-  }) => request<{ run: SimulationControlRun; plan: DryRunPlan }>(`${ADMIN_BASE}/simulations/runs`, {
+  }) => request<{ run: SimulationControlRun; plan: DryRunPlan } & IdempotentResult>(`${ADMIN_BASE}/simulations/runs`, {
     method: 'POST', csrfToken: input.csrfToken, idempotencyKey: input.idempotencyKey,
     body: { network: input.network, mode: input.mode, scenario: input.scenario },
   }),
   validateRun: (runKey: string, csrfToken: string, idempotencyKey: string) =>
-    request<{ run: SimulationControlRun; preflight: SimulationPreflight }>(
+    request<{ run: SimulationControlRun; preflight: SimulationPreflight } & IdempotentResult>(
       `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/validate`,
       { method: 'POST', csrfToken, idempotencyKey, body: {} }
     ),
   armRun: (runKey: string, csrfToken: string, idempotencyKey: string, acknowledgedRiskClass: 'low' | 'medium' | 'high') =>
-    request<{ run: SimulationControlRun; preflight: SimulationPreflight }>(
+    request<{ run: SimulationControlRun; preflight?: SimulationPreflight } & IdempotentResult>(
       `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/arm`,
       { method: 'POST', csrfToken, idempotencyKey, body: { acknowledgedRiskClass } }
     ),
   startRun: (runKey: string, csrfToken: string, idempotencyKey: string) =>
-    request<{ run: SimulationControlRun }>(
+    request<{ run: SimulationControlRun } & IdempotentResult>(
       `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/start`,
       { method: 'POST', csrfToken, idempotencyKey, body: {} }
     ),
   abortRun: (runKey: string, csrfToken: string, idempotencyKey: string) =>
-    request<{ run: SimulationControlRun }>(
+    request<{ run: SimulationControlRun } & IdempotentResult>(
       `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/abort`,
       { method: 'POST', csrfToken, idempotencyKey, body: {} }
     ),
   recoverRun: (runKey: string, csrfToken: string, idempotencyKey: string) =>
-    request<{ run: SimulationControlRun }>(
+    request<{ run: SimulationControlRun } & IdempotentResult>(
       `${ADMIN_BASE}/simulations/runs/${encodeURIComponent(runKey)}/recover`,
       { method: 'POST', csrfToken, idempotencyKey, body: {} }
     ),
