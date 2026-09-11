@@ -747,7 +747,15 @@ export interface DslSummary {
   activationHeight: number;
   epochInterval: number;
   firstCommittableBoundary: number | null;
-  enforcement: boolean;
+  /**
+   * Whether a missed-epoch verdict acts or is only recorded. Until 2026-09-11
+   * this was a bare `false`, hardcoded with a comment calling the layer a
+   * shadow; enforcement had been live on the devnet since 2026-09-05 at height
+   * 8304, so the field said the opposite of what the chain was doing. `height`
+   * is the declared gate (null when none is scheduled), `active` whether the
+   * indexed chain has reached it.
+   */
+  enforcement: { height: number | null; active: boolean };
   epochsJudged: number;
   committed: number;
   absent: number;
