@@ -15,14 +15,25 @@ export function shortHash(hash: string | null | undefined, head = 8, tail = 6): 
   return `${hash.slice(0, head)}…${hash.slice(-tail)}`;
 }
 
-export function ago(iso: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+/**
+ * The same words as `ago`, from a duration instead of a timestamp.
+ *
+ * Split out because the caller sometimes owns the clock: a freshness reading
+ * taken under a controlled clock cannot go through a function that reads
+ * `Date.now()` itself.
+ */
+export function elapsed(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+export function ago(iso: string): string {
+  return elapsed(Date.now() - new Date(iso).getTime());
 }
 
 export function utc(iso: string): string {

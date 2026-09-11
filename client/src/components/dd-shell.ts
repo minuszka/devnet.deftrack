@@ -1,6 +1,8 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { DEVNET_BANNER } from '@devnet-deftrack/shared';
 import type { HealthSnapshot } from '../lib/api.js';
+import { errorMessage, isAbortError } from '../lib/errors.js';
+import { FreshnessTracker, freshnessNote, measuredCount } from '../lib/freshness.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
 import { ROUTES, matchRoute, installLinkInterceptor, type Match } from '../lib/router.js';
@@ -36,6 +38,14 @@ export class DdShell extends LitElement {
     intervalMs: HEALTH_REFRESH_MS,
     load: (run) => this._loadHealth(run),
   });
+  /** How old the counters are, and whether the last attempt to renew them worked. */
+  private readonly _freshness = new FreshnessTracker();
+  /**
+   * Redraws the age, nothing else. Without it the header would claim "updated
+   * 2s ago" for the whole thirty seconds between polls -- a wrong number where
+   * the entire point of the line is to be right about time.
+   */
+  private _ageTimer: number | null = null;
   private _onPop = (): void => {
     this._route = matchRoute(location.pathname);
     document.title = `devnet.deftrack — ${this._route.route.label}`;
@@ -119,6 +129,56 @@ export class DdShell extends LitElement {
       }
       .monitor .ok { color: var(--accent); }
       .monitor .bad { color: var(--crit); }
+
+      /* Row one and a half: how old the row above it is.
+         Its own line rather than a chip inside the counters, because it
+         qualifies all of them at once -- and because when there are no counters
+         at all it is the only thing left to say. */
+      .datastate {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-2) var(--sp-3);
+        flex-wrap: wrap;
+        padding: var(--sp-2) 0 0;
+      }
+      .freshness {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        letter-spacing: 0.04em;
+        color: var(--ink-3);
+      }
+      .freshness.ok { color: var(--ink-2); }
+      .freshness.warn { color: var(--warn); }
+      .freshness.bad { color: var(--crit); }
+      /* The dot is a claim about freshness, so it must stop breathing when the
+         data stops arriving: a pulsing green dot beside two-minute-old numbers
+         is the exact lie this row exists to remove. */
+      .live-dot.warn { background: var(--warn); animation: none; box-shadow: none; }
+      .live-dot.bad { background: var(--crit); animation: none; box-shadow: none; }
+      .live-dot.muted { background: var(--ink-3); animation: none; box-shadow: none; }
+      .why {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: var(--crit);
+        overflow-wrap: anywhere;
+      }
+      .retry {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink);
+        background: var(--bg-raised);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .retry:hover { border-color: var(--accent); color: var(--accent); }
 
       /* Row two: who we are, and where the chain is. The telemetry is a row of
          labelled figures rather than one grey sentence, because tip, indexed
@@ -226,36 +286,82 @@ export class DdShell extends LitElement {
     super.connectedCallback();
     installLinkInterceptor();
     window.addEventListener('popstate', this._onPop);
+    this._ageTimer = window.setInterval(() => this.requestUpdate(), 1000);
     this._onPop();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('popstate', this._onPop);
+    if (this._ageTimer !== null) window.clearInterval(this._ageTimer);
+    this._ageTimer = null;
   }
 
   private async _loadHealth(run: PollRun): Promise<void> {
     try {
       const health = await run.api.health();
+      // A 503 with `success: true` is a degraded network described correctly,
+      // not a broken request: the API client decides on the envelope rather
+      // than on `response.ok`, and this page must keep it that way.
       if (run.stale) return;
       this._health = health;
-    } catch {
-      // The chain line is decoration; a page's own error surface is the one
-      // that matters, so a failed health poll stays quiet.
+      this._freshness.succeeded(Date.now());
+      this.requestUpdate();
+    } catch (error) {
+      // An abort is not a failure, and neither is an answer to a request this
+      // header has already superseded -- accepting either would let a late
+      // reply mark the page fresh.
+      if (isAbortError(error) || run.stale) return;
+      // This used to be swallowed, on the grounds that the chain line is
+      // decoration. It is not: it is the only place that says whether the
+      // numbers beside it are current.
+      this._freshness.failed(errorMessage(error), Date.now());
+      // The tracker is not a reactive property, and a failure changes nothing
+      // else on the page -- without this the reader would not see it until the
+      // next redraw a second later. "Immediately" is the requirement.
+      this.requestUpdate();
     }
   }
 
   override render(): TemplateResult {
     const h = this._health;
+    const fresh = this._freshness.read(Date.now(), HEALTH_REFRESH_MS);
+    const note = freshnessNote(fresh, HEALTH_REFRESH_MS);
     return html`
       <div class="topbar">
         <span class="devnet"><span class="live-dot" aria-hidden="true"></span>${DEVNET_BANNER}</span>
-        ${h ? this._monitor(h) : html`<span class="monitor" aria-hidden="true"><span class="skeleton" style="width:380px;height:28px"></span></span>`}
+        ${h
+          ? this._monitor(h)
+          : fresh.state === 'unavailable'
+            ? nothing
+            : html`<span class="monitor" aria-hidden="true"
+                ><span class="skeleton" style="width:380px;height:28px"></span
+              ></span>`}
+      </div>
+
+      <div class="datastate">
+        <span class="freshness ${note.tone}" role="status" title=${note.detail ?? nothing}>
+          <span class="live-dot ${note.tone}" aria-hidden="true"></span>${note.text}
+        </span>
+        ${note.detail
+          ? html`<span class="why" role="alert">${note.detail}</span>`
+          : nothing}
+        ${fresh.state === 'failing' || fresh.state === 'unavailable'
+          ? html`<button class="retry" type="button" @click=${() => this._poll.refresh()}>
+              Retry
+            </button>`
+          : nothing}
       </div>
 
       <header class="site">
         <div class="brand">devnet<span class="dim">.deftrack</span></div>
-        ${h ? this._telemetry(h) : html`<div class="telemetry" aria-hidden="true"><span class="skeleton" style="width:520px;height:36px"></span></div>`}
+        ${h
+          ? this._telemetry(h)
+          : fresh.state === 'unavailable'
+            ? nothing
+            : html`<div class="telemetry" aria-hidden="true"
+                ><span class="skeleton" style="width:520px;height:36px"></span
+              ></div>`}
       </header>
 
       <nav aria-label="Sections">
@@ -279,18 +385,23 @@ export class DdShell extends LitElement {
    * getstakinginfo speaks only for the node you ask.
    */
   private _monitor(h: HealthSnapshot): TemplateResult {
-    const allUp = h.masternodes.total > 0 && h.masternodes.enabled === h.masternodes.total;
+    // -1 is the endpoint's "could not be measured", not a count. Printed as a
+    // number it read as a network of minus one masternode; printed as an em
+    // dash it reads as what it is.
+    const total = measuredCount(h.masternodes.total);
+    const enabled = measuredCount(h.masternodes.enabled);
+    const allUp = total !== null && enabled !== null && total > 0 && enabled === total;
     return html`
       <span class="monitor" role="status" aria-label="Network counters">
         <span>wallet <b>v${h.nodeVersion}</b></span>
-        <span>mn <b>${num(h.masternodes.total)}</b></span>
+        <span>mn <b>${num(total)}</b></span>
         <span>
           active
-          <b class=${h.masternodes.total > 0 ? (allUp ? 'ok' : 'bad') : ''}>
-            ${num(h.masternodes.enabled)}
+          <b class=${total !== null && total > 0 ? (allUp ? 'ok' : 'bad') : ''}>
+            ${num(enabled)}
           </b>
         </span>
-        <span>staking <b>${num(h.stakers.active)}</b></span>
+        <span>staking <b>${num(measuredCount(h.stakers.active))}</b></span>
         ${h.failing?.length
           ? html`<span>status <b class="bad">${h.status}: ${h.failing.join(', ')}</b></span>`
           : html`<span>status <b class="ok">${h.status}</b></span>`}
@@ -299,15 +410,30 @@ export class DdShell extends LitElement {
   }
 
   private _telemetry(h: HealthSnapshot): TemplateResult {
+    // Same sentinel, same treatment. The round tally is a sum, so one
+    // unmeasured part makes the whole figure meaningless rather than smaller.
+    const parts = [h.rounds.formed, h.rounds.failed, h.rounds.pending, h.rounds.impossible].map(
+      measuredCount
+    );
+    const recorded = parts.some((p) => p === null)
+      ? null
+      : parts.reduce<number>((sum, p) => sum + (p ?? 0), 0);
     return html`
       <div class="telemetry" role="status" aria-label="Chain position">
         <span><i>chain</i><b class="dimb">${h.devnet}</b></span>
-        <span><i>tip</i><b>${num(h.chainTip)}</b></span>
+        <span><i>tip</i><b>${num(measuredCount(h.chainTip))}</b></span>
         <!-- "indexed through" and not a bare count: a height and a block count
              differ by one, and side by side that read as an off-by-one bug
              rather than as two different things. -->
-        <span><i>indexed through</i><b>${num(h.indexedHeight)}</b></span>
-        ${h.behind > 0 ? html`<span class="lag"><i>behind</i><b>${num(h.behind)}</b></span>` : nothing}
+        <span><i>indexed through</i><b>${num(measuredCount(h.indexedHeight))}</b></span>
+        <!-- The endpoint answers minus one when the tip could not be read.
+             Hiding the chip then said "not behind", which is a claim about the
+             chain; "unknown" is the truth about the reading. -->
+        ${h.behind < 0
+          ? html`<span class="lag"><i>behind</i><b class="dimb">unknown</b></span>`
+          : h.behind > 0
+            ? html`<span class="lag"><i>behind</i><b>${num(h.behind)}</b></span>`
+            : nothing}
         <!--
           A count, not a scoreboard. This figure is every profile at once --
           five interleaved schedules -- and it carried no health beside it, so
@@ -318,7 +444,7 @@ export class DdShell extends LitElement {
         -->
         <span
           ><i>DKG rounds</i
-          ><b>${num(h.rounds.formed + h.rounds.failed + h.rounds.pending + h.rounds.impossible)}
+          ><b>${num(recorded)}
             <span class="dimb">recorded, all profiles</span></b
           ></span
         >
