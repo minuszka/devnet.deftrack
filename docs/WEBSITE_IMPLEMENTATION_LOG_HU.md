@@ -11,7 +11,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 02 | Router | ELLENŐRZÖTT | `db77551`; K1 zöld (820+83 unit), K2 zöld (16 böngészőteszt); a javítás előtti viselkedés mérve |
 | 03 | Adatfrissesség | ELLENŐRZÖTT | `c5c872c`; K1 zöld (820+98 unit), K2 zöld (23 böngészőteszt); negatív kontroll: a néma catch visszatéve 3 teszt pirosra vált |
 | 04 | Presetek és módok | ELLENŐRZÖTT | `127e53d`; K1 zöld (836+98 unit), K2 zöld (31 böngészőteszt), **K3 zöld** (11 integrációs fájl, valódi MongoDB); negatív kontroll: üres `dsl-fault` sablon 3 tesztet pirosra vitt |
-| 05 | Admin kliensszerződés | TERVEZETT | — |
+| 05 | Admin kliensszerződés | ELLENŐRZÖTT | `8735d1d`; K1 zöld (836+111 unit), K2 zöld (31), K3 zöld (12 fájl, 75 teszt); negatív kontroll: a `recovery` visszatétele a projekcióba pirosra viszi a HTTP-tesztet |
 | 06 | Vezérlés visszatöltése | TERVEZETT | — |
 | 07 | Futamállapot szinkron | TERVEZETT | — |
 | 08 | Kísérletlapozás | TERVEZETT | — |
@@ -476,6 +476,109 @@ semmit arról, hogy egy valódi laborfutam végigmenne.
 
 ```text
 Commit(ok), végső SHA: 127e53d
+Végső git státusz: tiszta (a napló commitja után)
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
+## 05. nap – Futamlekérések és típusos kliensállapot
+
+```text
+Nap / dátum / implementáló: 05 / 2026-09-11 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ 4de5582
+Napi feladat és előfeltételei: az F01/F02 alapja. Nem önálló auditpont.
+Auditpontok: F01, F02 (előkészítés)
+```
+
+**Reprodukált kiinduló hiba — két hiány, mindkettő a szerződésben:**
+
+1. A `SimulationControlRun` **`recovery?` mezőt deklarált**, amit egyetlen
+   control végpont sem küld. A `MongoSimulationPersistenceRepository.findRun`
+   `runKey metadataFingerprint metadata state` mezőket választ, és a
+   `projectionFromLean` mezőnként építi újra az objektumot — a tárolt
+   recovery-eredmény külön mező a dokumentumon. A panel
+   „Recovery proof: all targets clear” sora ezért **soha nem renderelődött**:
+   megírt, átnézett, kiszállított, elérhetetlen kód.
+2. Hiányzott a `state.revision` — a szerver saját rendezési kulcsa. Enélkül két
+   egyszerre repülő válasz **érkezési sorrendben** dőlt el, tehát a lassabb
+   nyert: egy vezérlőfelületen ez azt jelenti, hogy egy már megszakított futam
+   újra futóként rajzolódik ki.
+
+**Változtatás röviden:** az `admin-api.ts` típusai a **tényleges projekcióból**
+származnak. Új tiszta modul (`simulationRunState.ts`) dönt arról, mit szabad
+elhinni: `revision` szerinti rendezés, másik futam válaszának eldobása, és
+háromértékű recovery (`yes` / `no` / **`unknown`**). A lease lejárata **nem**
+bizonyíték — épp az a pillanat, amikor a hiba a legvalószínűbben még ott van,
+és már senki nem figyeli.
+
+A panel recovery-sora helyére az került, amit a szerver tényleg mond
+(`faultMayBeActive`), plusz a kimondott korlát, hogy a célpontonkénti bizonyíték
+ezen az API-n nem érhető el. A néma törlés azt olvasta volna, hogy „nincs mitől
+tartani”.
+
+**Amit még a projekcióból olvastam vissza:** a `lastTransition` `eventId`-t és
+`eventType`-ot is visz, és a `from` **nem nullable**; az `arm` idempotens
+ismétlése **preflight nélkül** válaszol (ezért a meglévőt megtartjuk — különben
+egy hálózati időtúllépés utáni retry egy sikeres preflightot „nem futott”-tá
+írna); és minden mutáció visz `idempotentReplay` mezőt, amit a panel figyelmen
+kívül hagyott.
+
+**Új GET-ek:** `run(runKey)`, `dryRun(runKey)` (a **mentett** terv), `liveLock()`.
+Az olvasások `AbortSignal`-t fogadnak; a **mutációk szándékosan nem** — egy
+megszakított fetch semmit nem mond arról, hogy a szerver alkalmazta-e.
+
+**Érintett fájlok:** `client/src/lib/admin-api.ts`, új
+`client/src/lib/simulationRunState.ts` (+ teszt),
+`client/src/components/dd-simulation-control.ts`, új
+`server/src/integration/simulationRunProjection.integration.test.ts`.
+
+**Szerződésváltozás / kompatibilitás:** kizárólag kliensoldali típusok.
+Szerverkód **nem változott** ma.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 836 szerver + **111** kliens (98 → 111) |
+| K2 | exit 0 — 31 böngészőteszt |
+| K3 | exit 0 — **12** integrációs fájl, 75 teszt (8 skipped) |
+
+**Valós HTTP/Mongo tesztek (5 új):** hitelesítés nélkül 401; a projekció visz
+`state.revision`-t, `status`-t, `faultMayBeActive`-ot és a metaadatot; **nem
+visz recovery-t**, pedig a dokumentumon ott van `allClear: true`-val; nem
+létező futamra 404; a lock külön állapotként válaszol.
+
+**Két dolog, amit ez a nap mért, nem feltételezett:**
+
+1. Az **audit-folyam a forrás**. Az első változatban kézzel szúrtam be egy
+   teljes futamdokumentumot — `GET` 404-et adott, mert a `loadRun` az audit
+   eseményeket játssza vissza, és audit nélkül a futam nem létezik. A fixture
+   most a valódi `SimulationPersistenceService.createRun`-t használja.
+2. **Az első negatív kontrollom hibás volt.** A `recovery`-t a `.select(...)`-be
+   visszatéve a teszt **továbbra is zölden futott** — mert a `projectionFromLean`
+   mezőnként építi újra az objektumot, és a `select` nem az egyetlen szűrő.
+   A `projectionFromLean`-re célozva a teszt pirosra vált
+   (`expected { required: true, …(4) } to be undefined`). Ha az első kontrollnál
+   megállok, olyan bizonyítékot jelentettem volna, ami nincs.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Kihagyott ellenőrzés és oka:** a `/runs/:key/dry-run` **tartalmi**
+ellenőrzése kimaradt: a mentett tervet artefaktumból olvassa, amit a
+fixture nem ír meg, a HTTP create út pedig chain-identitás pineket és élő
+node-RPC-t igényel (`simulator chain identity pins are not configured`).
+A végpont létezését és típusát a kliens oldalon fedtem le; a tényleges
+terv-visszatöltés a **06. nap** bizonyítéka lesz.
+
+**Nyitott probléma / következő lépés:**
+
+- **A recovery-bizonyíték sehol nem elérhető az API-n.** Ma ez `unknown`, és ki
+  is van írva. A 06–07. napon el kell dönteni, hogy a projekció kapjon-e
+  `recovery` mezőt (visszafelé kompatibilis bővítés), vagy a panel véglegesen
+  csak a `faultMayBeActive`-ra támaszkodjon.
+
+```text
+Commit(ok), végső SHA: 8735d1d
 Végső git státusz: tiszta (a napló commitja után)
 Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
