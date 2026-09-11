@@ -953,6 +953,30 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
 
 ## 3. Tooling debts found by using the tools
 
+- **The 2026-09-11 roll produced nine operational tools, and they are in the
+  repository rather than on the hosts.** They lived only on the jump host and
+  the VPS for a few hours, which is how `defcon-enable-staking` came to exist in
+  three different versions across the estate at once. Each carries in its header
+  the lesson it encodes, because every one of them was wrong first:
+
+  | `ops/` | what it answers |
+  |---|---|
+  | `fleet-freeze-production.sh` | stop / start block production, acting only on hosts whose `mn11` has no BLS key -- "instance 11" is not a synonym for "staker" |
+  | `fleet-protocol-check.sh` | is the protocol floor in force everywhere: per host md5, advertised version, tip hash, peers below the floor, counted with `jq` |
+  | `fleet-staker-check.sh` | is each staker's minter thread alive -- by the LAST minter line, not a start/exit count the log's truncation defeats |
+  | `fleet-dsl-pool-check.sh` | do all sixteen hosts agree on the report pool: `respondedcount`, `missedreports`, and the count of distinct `poolhash` values |
+  | `fleet-dsl-logging.sh` | turn the `dsl` log category on or off at runtime, no conf change and no restart |
+  | `pos-rules-check.sh` | the PoS rules over a height range, with the stake modifier reported as NOT checkable rather than as a pass |
+  | `revive-getkeys.sh` | the operator keys of the masternodes banned right now, and nothing else; `--count` proves the extraction without revealing it |
+  | `revive-run.sh` | the seed-side wrapper: refuses empty, mis-shaped or non-64-hex input, strips CR, deletes the key file whatever happens |
+  | `binary-proto-check.sh` | what protocol version a binary really advertises, on a throwaway regtest datadir, with its predecessor as the control |
+
+  All nine pass `ops/check-shell.sh` at default severity; the three that send a
+  block to a remote shell carry a `# shellcheck disable=SC2016` with the reason
+  at the line, per this repository's convention. The deployed copies were
+  renamed to match these names, so there is one name for each.
+
+
 - ~~**The InstantSend probe races the ChainLock.**~~ It polled `getislocks`,
   and `HandleFullyConfirmedBlock` prunes the very record it polled: one of
   twenty transactions was mined four seconds after broadcast, its lock was
