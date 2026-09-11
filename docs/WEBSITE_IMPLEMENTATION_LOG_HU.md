@@ -13,7 +13,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 04 | Presetek és módok | ELLENŐRZÖTT | `127e53d`; K1 zöld (836+98 unit), K2 zöld (31 böngészőteszt), **K3 zöld** (11 integrációs fájl, valódi MongoDB); negatív kontroll: üres `dsl-fault` sablon 3 tesztet pirosra vitt |
 | 05 | Admin kliensszerződés | ELLENŐRZÖTT | `8735d1d`; K1 zöld (836+111 unit), K2 zöld (31), K3 zöld (12 fájl, 75 teszt); negatív kontroll: a `recovery` visszatétele a projekcióba pirosra viszi a HTTP-tesztet |
 | 06 | Vezérlés visszatöltése | ELLENŐRZÖTT | `5fd3307`; K1 zöld (839+121 unit), K2 zöld (40 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: a draftszerkesztés futamtörlő viselkedését visszatéve 1 teszt pirosra vált |
-| 07 | Futamállapot szinkron | TERVEZETT | — |
+| 07 | Futamállapot szinkron | ELLENŐRZÖTT | `c1e3605`; K1 zöld (839+121 unit), K2 zöld (48 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: revision-szabály nélkül az elavult poll felülírja az abortot |
 | 08 | Kísérletlapozás | TERVEZETT | — |
 | 09 | Fairness | TERVEZETT | — |
 | 10 | URL-állapot alap | TERVEZETT | — |
@@ -683,12 +683,143 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 07. nap – Frissülő futamállapot és műveletversenyek
+
+```text
+Nap / dátum / implementáló: 07 / 2026-09-11 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ f85a981
+Napi feladat és előfeltételei: F02. Előfeltétel: 05–06. nap — megvan.
+Auditpontok: F02 (és az F01 maradéka)
+```
+
+**Reprodukált kiinduló hiba:** a vezérlőpanel **saját futammásolatot** tartott,
+amit a kiválasztáskor egyszer betöltött és soha nem frissített, miközben
+mellette a dashboard 30 másodpercenként egy **másik** kérésből frissítette a
+listát. A lista mutathatott `recovery`-t, miközben a gombok még mindig egy
+befejezett futam indítását kínálták, és ezt kizárólag egy másik futam
+kiválasztása javította.
+
+**Változtatás röviden — egy tulajdonos.** A dashboard birtokolja a futamot és
+adja le property-ként. **5 s-onként** kérdezi, amíg a lap látható és a futam nem
+terminális, a publikus oldalakkal közös `PollController`-en keresztül: az
+intervallum, a láthatóságkezelés és az előző tick megszakítása egy helyről jön,
+és egy befejezett futamot nem kérdez tovább. A **tervet és a recovery-t
+kiválasztásonként egyszer** olvassa — a terv immutable, a bizonyíték csak
+recovery futásakor változik.
+
+Műveletválasz után **azonnali** egyeztetés: az a legfrissebb leírás, ami létezik,
+és öt másodpercig elavult panelt nézetni az operátorral pont az, amitől második
+kattintás lesz. Hogy elfogadjuk-e, a szerver `revision` mezője dönti el, a
+shellel közös szabályból — így egy már repülő poll nem tudja visszacsinálni a
+közben megtörtént abortot.
+
+**Az idempotency kulcs futamra ÉS műveletre van szűkítve.** Eddig csak műveletre
+volt: az „A futam abortja, majd B futam abortja ugyanabból a panelből" **A
+kulcsát használta újra** — a szerver B abortját A ismétlésének ismerte volna
+fel, B soha nem abortált volna, a panel meg azt írta volna, hogy igen. A kulcs
+csak akkor évül el, ha a saját művelete sikerült, tehát a bizonytalan kérés
+ugyanazzal a kulccsal ismételhető.
+
+**Egy hiba, ami a duplikáció mögött bujkált:** a `_loadDashboard` a **munka
+végén** törölte az üzenetét, ezzel kitörölve azt, amit a benne futó
+kiválasztás-betöltés épp jelentett. A „No run sim_… exists on this deployment"
+ugyanabban a tickben jelent meg és tűnt el; csak azért látta bárki, mert a panel
+kiírta a saját másolatát is. Most nem írja ki — és a teszt elkapta.
+
+**Érintett fájlok:** `dd-admin-shell.ts`, `dd-simulation-control.ts`,
+`e2e/harness.ts` (idempotency-fejléc rögzítése), új `e2e/run-status.spec.ts`,
+`e2e/run-selection.spec.ts`.
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerverkód ma nem változott; a
+backend állapotgépéhez a terv szerint nem nyúltam.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 839 szerver + 121 kliens |
+| K2 | exit 0 — **48** böngészőteszt (40 → 48) |
+| K3 | exit 0 — 12 integrációs fájl, 77 teszt |
+
+**UI-fixture tesztek (8 új, szabályozott órával):** a teljes állapotmenet
+`activation_pending → fault_active → observing → recovery → cooldown →
+completed` kizárólag szerverállapotból, és a `completed` után **megszűnik** a
+kérdezés; elavult revisionű poll nem csinálja vissza az abortot; két kattintás
+egy kérés; idempotency kulcs futamonként külön (a **tényleges fejlécet**
+összehasonlítva); lejárt lease **nem** recovery-bizonyíték, és a „Retry recovery
+proof" ott marad; rejtett lap nem kérdez, visszatéréskor újra kérdez; hibás
+státuszolvasás **nem** veszi el a futamot és a gombokat; a mentett terv egyszer
+olvasódik, a státusz többször.
+
+**Negatív kontroll:** az `acceptsRunUpdate`-et mindig `true`-ra állítva az
+elavult-poll teszt elbukik, a másik hét átmegy.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** a `_loadDashboard` és a
+státusz-poll még két külön ütemterv; a dashboard 30 s-os frissítése továbbra is
+`setInterval`, tehát **rejtett lapon is fut**. A futam pollja nem, mert az a
+`PollController`-en van. A dashboard átvezetése ugyanoda a 18. napi
+navigációs munkánál logikus, de ma nem tettem meg — a nap hatóköre a kiválasztott
+futam volt.
+
+```text
+Commit(ok), végső SHA: c1e3605
+Végső git státusz: tiszta, a más munkájából származó CLAUDE.md-módosítás kivételével
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
+## Checkpoint 1 (07. nap) – F01, F02, F03, F09
+
+**Összegzés:** mind a négy pont **kliensoldalon lezárva**, egyik sincs élesben
+telepítve. Az alábbi táblázat külön kezeli a kódot, az ellenőrzést és azt, amit
+**nem** bizonyítottunk.
+
+| Pont | Kód | Ellenőrzés | Amit ez NEM bizonyít |
+|---|---|---|---|
+| F01 futamvezérlés elvesztése | `5fd3307` | 10 unit + 9 E2E; negatív kontroll piros | Hogy egy valódi laborfutam vezérlése végigmegy — laborfutam nem futott |
+| F02 állapotkövetés | `c1e3605` | `simulationRunState` unit + 8 E2E szabályozott órával | Hogy a szerver állapotgépe helyes — azt nem módosítottam és nem is auditáltam |
+| F03 adatfrissesség | `c5c872c` | 15 unit + 7 E2E; negatív kontroll 3 pirosat adott | Hogy minden oldal jelez adatkort — csak a fejléc és az Overview |
+| F09 scenario-alapértékek | `127e53d` | unit (minden sablon átmegy a sémán) + HTTP + 8 E2E | Hogy a célpontok léteznek vagy a preflight átmegy — az külön kérdés, és ki is van írva |
+
+**Auth és idempotencia megőrzése — bizonyíték:**
+
+- A szerveroldali jogosultság-ellenőrzést **nem gyengítettem**: az egyetlen
+  szerverváltozás a napokban egy **új, olvasó** végpont
+  (`GET /runs/:key/recovery`), ugyanazon `requireAdminAuth` mögött; HTTP-teszt
+  igazolja, hogy hitelesítés nélkül **401**.
+- A CSRF-token továbbra is minden mutációval megy (`admin-api.ts` `request`),
+  és a mutációk **nem** kaptak `AbortSignal`-t — egy megszakított fetch nem
+  mond semmit arról, hogy a szerver alkalmazta-e.
+- Az idempotency kulcsok szűkítése **szigorítás**: a 07. napi E2E a tényleges
+  `x-idempotency-key` fejlécet hasonlítja össze.
+- Redakció: a recovery-válaszból a `privateDetail` **szerveroldalon** kimarad,
+  beültetett `198.51.100.11` címmel bizonyítva.
+
+**Feloldatlan versenyhelyzet: nincs ismert.** A terv feltétele szerint ezért a
+15–17. napi szimulátoros munka ráépülhet. Amit viszont ki kell mondani: a
+verseny-bizonyítékok **mockolt szerverválaszokkal** készültek. A szerver
+állapotgépe, a lease és a lock valódi viselkedése ebben a körben nem volt
+tesztelve, és a 20. napi labor-elfogadás nélkül nem is lesz.
+
+**Trace-ek és képernyőképek:** `client/playwright-report/` és
+`client/test-results/`, csak sikertelen futásnál keletkeznek, kizárólag kitalált
+adatból. Jelenleg nincs bukás, tehát nincs artefaktum sem.
+
+**Nyitott tételek a checkpoint idején:**
+
+1. Az integrációs suite egy flake-je (06. nap) gyökérokra nem vezetve.
+2. A dashboard 30 s-os frissítése rejtett lapon is fut.
+3. A CI böngészős lépése még **nem futott le élesben** (01. nap óta nyitva).
+4. F13 (függőségek) újramérése a 13. napon; az `npm audit` azóta 0-t jelez.
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
 | F01 | 05–06 | `8735d1d`, `5fd3307` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 9 eset (F5, hibás kulcs, 404, A→B késői válasz, 401, draftszerkesztés) | Kliensoldalon lezárva. A vezérlés URL-ből visszatölthető, a mentett tervből; a recovery-bizonyíték új, redaktált végponton érhető el |
-| F02 | 05–07 | Nyitott | — | — |
+| F02 | 05–07 | `8735d1d`, `5fd3307`, `c1e3605` | unit: `simulationRunState.test.ts`; E2E: 8 eset szabályozott órával (állapotmenet, elavult poll, dupla kattintás, idempotencia, lease, rejtett lap, hibás olvasás) | Kliensoldalon lezárva: egy tulajdonos, 5 s-os poll, revision-rendezés, futamonkénti idempotencia |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | Nyitott | — | — |
 | F05 | 09 | Nyitott | — | — |
@@ -704,7 +835,7 @@ Napi státusz: ELLENŐRZÖTT
 
 ## Review checkpointok
 
-- 07. nap: még nem készült el.
+- 07. nap: **elkészült**, lásd a checkpoint-összefoglalót a napi bejegyzések után.
 - 14. nap: még nem készült el.
 - 20. nap: még nem készült el.
 - Független végső review: még nem történt meg.
