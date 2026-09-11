@@ -2,7 +2,9 @@ import { Router } from 'express';
 import type { DslEpochRow, DslSummary } from '@devnet-deftrack/shared';
 import { z } from 'zod';
 import { config } from '../../config.js';
+import { Block } from '../../models/Block.js';
 import { ServiceEpoch } from '../../models/ServiceEpoch.js';
+import { dslEnforcementState } from '../../domain/dslEnforcement.js';
 import { firstCommittableBoundary } from '../../domain/dslSchedule.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, validateQuery } from '../../utils/http.js';
@@ -73,7 +75,7 @@ router.get(
   '/summary',
   withCachePolicy('short'),
   asyncRoute(async (_req, res) => {
-    const [committed, absent, missedAgg, latest] = await Promise.all([
+    const [committed, absent, missedAgg, latest, tip] = await Promise.all([
       ServiceEpoch.countDocuments({ status: 'committed' }),
       ServiceEpoch.countDocuments({ status: 'absent' }),
       ServiceEpoch.aggregate<{ _id: null; totalMissedBits: number }>([
@@ -81,6 +83,9 @@ router.get(
         { $group: { _id: null, totalMissedBits: { $sum: '$missedCount' } } },
       ]),
       ServiceEpoch.findOne().sort({ boundaryHeight: -1 }).lean(),
+      // The enforcement gate is answered against the indexed chain, so the
+      // field cannot claim a height the record has not reached.
+      Block.findOne().sort({ height: -1 }).select('height').lean(),
     ]);
 
     const judged = committed + absent;
@@ -93,7 +98,7 @@ router.get(
         config.dsl.activationHeight > 0
           ? firstCommittableBoundary(config.dsl.activationHeight, config.dsl.epochInterval)
           : null,
-      enforcement: false, // shadow: the chain records, nobody is penalised
+      enforcement: dslEnforcementState(config.dsl.enforcementHeight, tip?.height ?? null),
 
       epochsJudged: judged,
       committed,

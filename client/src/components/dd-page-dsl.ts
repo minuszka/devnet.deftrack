@@ -143,16 +143,24 @@ export class DdPageDsl extends LitElement {
         ></dd-stat>
         <dd-stat
           label="Mode"
-          value="shadow"
-          sub="records only — activation ${num(s.activationHeight)}, enforcement off"
+          value=${s.enforcement.active ? 'enforcing' : 'shadow'}
+          sub=${s.enforcement.active
+            ? `activation ${num(s.activationHeight)}, enforcing since ${num(s.enforcement.height as number)}`
+            : s.enforcement.height === null
+              ? `records only — activation ${num(s.activationHeight)}, no enforcement gate`
+              : `records only — activation ${num(s.activationHeight)}, enforcement at ${num(s.enforcement.height)}`}
         ></dd-stat>
       </section>
 
       <div class="note caveat">
         A commitment appears only when the quorum converged on one report set <em>and</em> the block
         producer's own pool reproduced the exact hash it signed — the design fails open, so a
-        missing commitment is a datum, never a penalty. Enforcement stays off until this page's
-        convergence number has earned it.
+        missing commitment is a datum, never a penalty.
+        ${s.enforcement.active
+          ? html`Enforcement is <strong>on</strong> from height ${num(s.enforcement.height as number)}: inside a
+              committed epoch a masternode that misses enough of them has its reward suspended and
+              is then DSL-banned, which consensus reads. An absent epoch still penalises nobody.`
+          : html`Enforcement is off, so a verdict is recorded and nobody is touched.`}
       </div>
     `;
   }

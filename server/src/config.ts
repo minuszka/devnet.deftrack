@@ -281,5 +281,12 @@ export const config = {
     // real early commitments, so it must track the on-chain value.
     activationHeight: optionalNumber('DSL_ACTIVATION_HEIGHT', 5472),
     epochInterval: optionalNumber('DSL_EPOCH_INTERVAL', 24),
+    // -dslenforcementheight, declared for the same reason and with the same
+    // force: from this height a missed-epoch verdict suspends rewards and then
+    // sets nDSLBanHeight, which IsBanned() reads. 0 means the deployment
+    // schedules none. The default is this devnet's live value, activated
+    // 2026-09-05 and measured by dsl-enforcement-outage-2026-09-05 (suspension
+    // 8496, ban 8520); DSL_ENFORCEMENT_HEIGHT overrides it per deployment.
+    enforcementHeight: optionalNumber('DSL_ENFORCEMENT_HEIGHT', 8304),
   },
 } as const;
