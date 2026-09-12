@@ -16,7 +16,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 07 | Futamállapot szinkron | ELLENŐRZÖTT | `c1e3605`; K1 zöld (839+121 unit), K2 zöld (48 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: revision-szabály nélkül az elavult poll felülírja az abortot |
 | 08 | Kísérletlapozás | ELLENŐRZÖTT | `6c6fc96`; K1 zöld (839+121 unit), K2 zöld (56 böngészőteszt), K3 zöld (13 fájl, 84 teszt); negatív kontroll: az argumentum nélküli hívást visszatéve 3 teszt pirosra vált |
 | 09 | Fairness | ELLENŐRZÖTT | `881df65`; K1 zöld (844+121 unit), K2 zöld (65 böngészőteszt), K3 zöld (14 fájl, 89 teszt); két negatív kontroll: 2 unit + 2 HTTP, illetve 4 böngészőteszt pirosra vált |
-| 10 | URL-állapot alap | TERVEZETT | — |
+| 10 | URL-állapot alap | ELLENŐRZÖTT | `700c420`; K1 zöld (844+139 unit), K2 zöld (75 böngészőteszt), K3 zöld (14 fájl, 89 teszt); negatív kontroll **másodszorra** tüzelt — az első változat nem különböztetett |
 | 11 | URL-állapot további oldalak | TERVEZETT | — |
 | 12 | Szemantika és kontraszt | TERVEZETT | — |
 | 13 | Függőségek | TERVEZETT | — |
@@ -998,6 +998,94 @@ annak a bemenetei.
 
 ```text
 Commit(ok), végső SHA: 881df65
+Végső git státusz: a saját munkám tiszta. A fában maradt, NEM az enyém:
+  CLAUDE.md módosítása és hat ops/*-dslv2*.sh fájl a flottamunkából.
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
+## 10. nap – URL-szűrők alapja
+
+```text
+Nap / dátum / implementáló: 10 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ b9c5556
+Napi feladat és előfeltételei: F11 alapja. Előfeltétel: 08–09. nap — megvan.
+Auditpontok: F11 (alap; a többi oldal a 11. nap)
+```
+
+**Reprodukált kiinduló hiba:** mindhárom szűrt oldal komponensmemóriában tartotta
+az állapotát (`_status`, `_llmq`, `_offset`, `_rounds`). Frissítés elvesztette,
+link nem vitte. Egy incidens vizsgálata közben beállított profil, státusz,
+ablak és oldalszám **nem adható át senkinek** — a hibajegybe bemásolt URL más
+képernyőt nyit meg, mint amelyik megtalálta a dolgot.
+
+**Változtatás röviden:** új `client/src/lib/queryState.ts` három szabállyal:
+
+1. **Az alapérték hiányzik, nem kiírva** — a sima útvonal a sima nézet, és két
+   különböző úton ugyanoda jutó olvasó ugyanazt a linket adja tovább.
+2. **Az URL-ben `page` 1-től, az API-ban `offset`** — egy helyen konvertálva,
+   nem három komponensben, három eséllyel elrontani.
+3. **Ami olvashatatlan, az alapértékre esik** (negatív, NaN, ismeretlen státusz,
+   a szerver `MAX_OFFSET`-jén túli oldal), és az URL **`replace`-szel** javul:
+   a javítást nem az olvasó kérte, ne kerüljön neki egy Back-be.
+
+**Egy hely reagál a szűrőváltásra.** A vezérlő az URL-t írja, a kontroller
+egyszer adja vissza az értékeket, a poll abból az egy visszahívásból tölt.
+A history-írás **nem** dob `popstate`-et — az útvonal nem változott, és a dobás
+minden kattintásnál újramountolná az oldalt.
+
+**A Fairness külön eset:** a hiányzó `llmq` nem az aggregát, hanem „amelyik a
+tipnél aláír", a láncból feloldva; az `llmq=all` a választott aggregát. A
+feloldott nevet **nem** írjuk az URL-be — az befagyasztana egy linket, aminek
+követnie kellene a tipet. Az effektív profil **minden olvasáskor** feloldódik,
+nem latch-elve: különben a profil nélküli URL-re visszalépve az utoljára
+választott név maradna a lapon.
+
+**Egy valódi hiba, amit a nap hozott elő:** a publikus linkinterceptor
+**elnyelte az `/admin` linket**. Az a külön shell, amit a `main.ts` a pathname
+alapján tölt be; az interceptor pusholta az útvonalat anélkül, hogy a shell
+betöltődött volna, és ennek a routernek nincs rá route-ja — vagyis egy link,
+ami begépelve működik, kattintva **„page not found"**-ot adott volna.
+
+**Érintett fájlok:** új `client/src/lib/queryState.ts` (+ teszt), új
+`client/e2e/query-state.spec.ts`; módosítva `router.ts` (+ teszt),
+`dd-page-rounds.ts`, `dd-page-fairness.ts`, `dd-page-experiments.ts`.
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerverkód ma nem változott.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 844 szerver + **139** kliens (121 → 139) |
+| K2 | exit 0 — **75** böngészőteszt (65 → 75) |
+| K3 | exit 0 — 14 integrációs fájl, 89 teszt |
+
+**UI-fixture tesztek (10 új):** `/rounds?llmq=…&status=failed&page=2`
+**egyetlen** kéréssel és `offset=50`-nel; szűrőkattintás URL-be kerül és
+**pontosan egy** további kérést indít; Back visszaadja az előző szűrőt;
+olvashatatlan query javul **Back nélkül**; `page=999999` a szerverkorláthoz
+vágódik (2001 / `offset=100000`); Fairness viszi a profilt és az ablakot;
+profil nélküli Fairness a tipet követi, és Back is oda tér vissza;
+Experiments viszi a státuszt és az oldalt; szűrőváltás **1. oldalra** állít az
+URL-ben és a kérésben is; gyors egymás utáni váltásnál az **utolsó** kérdés
+válasza marad a képernyőn.
+
+**Negatív kontroll — és itt megint kellett egy második kör.** A javítást
+`push`-ra váltva a suite **zölden maradt**: a felesleges history-bejegyzés
+ugyanazon a pathnamen ült, amit az állításom nézett. A tesztet átírtam úgy,
+hogy másik oldalról induljon — így a `push` **pirosra viszi**. Ez a harmadik
+alkalom ezen az ágon, hogy a negatív kontroll olyan tesztet buktatott le,
+ami semmit nem bizonyított.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** a többi oldal időablak- és
+topic-vezérlői (PoSe, ChainLocks, Staking, Vantage Points, Blocks,
+Transactions, Sentinel Layer) még nincsenek URL-hez kötve — **11. nap**.
+
+```text
+Commit(ok), végső SHA: 700c420
 Végső git státusz: a saját munkám tiszta. A fában maradt, NEM az enyém:
   CLAUDE.md módosítása és hat ops/*-dslv2*.sh fájl a flottamunkából.
 Napi státusz: ELLENŐRZÖTT
