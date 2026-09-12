@@ -111,7 +111,7 @@ export class DdPageBlocks extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Blocks</div>
+          <h1 class="page-title" tabindex="-1">Blocks</h1>
           <div class="page-sub">
             Heights up to 1000 are proof-of-work; above that the chain is proof-of-stake, so block
             spacing is not comparable across the boundary.
@@ -123,7 +123,7 @@ export class DdPageBlocks extends LitElement {
 
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Latest blocks</div>
+          <h2 class="card-title">Latest blocks</h2>
           <div class="page-sub mono">${num(this._total)} indexed</div>
         </div>
         <div class="card-body flush">
@@ -252,13 +252,13 @@ export class DdPageBlock extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Block ${num(b.height)}</div>
+          <h1 class="page-title" tabindex="-1">Block ${num(b.height)}</h1>
           <div class="page-sub mono">${b.hash}</div>
         </div>
       </div>
 
       <section class="card">
-        <div class="card-head"><div class="card-title">Header</div></div>
+        <div class="card-head"><h2 class="card-title">Header</h2></div>
         <dl>
           <dt>time</dt><dd>${utc(new Date(b.time * 1000).toISOString())}</dd>
           <dt>type</dt><dd>${b.isProofOfStake ? 'proof-of-stake' : 'proof-of-work'}${b.hasChainLock ? ' · chainlocked' : ''}</dd>
@@ -284,7 +284,7 @@ export class DdPageBlock extends LitElement {
       </section>
 
       <section class="card">
-        <div class="card-head"><div class="card-title">Transactions</div></div>
+        <div class="card-head"><h2 class="card-title">Transactions</h2></div>
         <div class="card-body flush">
           <div class="twrap">
             <table>

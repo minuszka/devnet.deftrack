@@ -527,7 +527,7 @@ export class DdPageOverview extends LitElement {
       <div class="page">
         <div class="page-head">
           <div>
-            <div class="page-title">Overview</div>
+            <h1 class="page-title" tabindex="-1">Overview</h1>
             <div class="page-sub">
               Did the last rounds form, was anybody punished, and who failed — the three questions this
               devnet exists to answer.
@@ -774,7 +774,7 @@ export class DdPageOverview extends LitElement {
       const steps = [...this._rounds].reverse();
       return html`
         <section class="card">
-          <div class="card-head"><div class="card-title">DKG rounds so far</div></div>
+          <div class="card-head"><h2 class="card-title">DKG rounds so far</h2></div>
           <div class="card-body flush">
             <div class="timeline">
               ${steps.map(
@@ -794,7 +794,7 @@ export class DdPageOverview extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Health ratio per round</div>
+          <h2 class="card-title">Health ratio per round</h2>
           <div class="page-sub mono">${num(points.length)} rounds · 7 days</div>
         </div>
         <div class="card-body flush">
@@ -900,7 +900,7 @@ export class DdPageOverview extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Latest DKG rounds</div>
+          <h2 class="card-title">Latest DKG rounds</h2>
           <div class="page-sub mono">${num(this._total)} recorded</div>
         </div>
         <div class="card-body flush">

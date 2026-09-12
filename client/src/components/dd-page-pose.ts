@@ -95,7 +95,7 @@ export class DdPagePose extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">PoSe Watch</div>
+          <h1 class="page-title" tabindex="-1">PoSe Watch</h1>
           <div class="page-sub">
             Masternode punishment over time, and how large a single episode grew against the
             ceiling the profile allows.
@@ -148,7 +148,7 @@ export class DdPagePose extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Masternode state, last 24 h</div>
+          <h2 class="card-title">Masternode state, last 24 h</h2>
         </div>
         <div class="card-body flush">
           <dd-mn-chart .points=${this._points}></dd-mn-chart>
@@ -162,7 +162,7 @@ export class DdPagePose extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Ban waves</div>
+          <h2 class="card-title">Ban waves</h2>
           <div class="page-sub mono">7 days · bans within 30 min grouped</div>
         </div>
         <div class="card-body flush">
@@ -213,7 +213,7 @@ export class DdPagePose extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Recent transitions</div>
+          <h2 class="card-title">Recent transitions</h2>
           <div class="page-sub mono">${num(this._events.length)} shown</div>
         </div>
         <div class="card-body flush">

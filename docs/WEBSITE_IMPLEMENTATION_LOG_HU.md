@@ -1204,6 +1204,123 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 12. nap – Szemantika, fókusz, kontraszt
+
+```text
+Nap / dátum / implementáló: 12 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day12-semantics-focus-contrast @ 5076718 (main, a 11. nap után)
+Napi feladat és előfeltételei: F12 + F14. Előfeltétel: nincs a 11. napon túl.
+Auditpontok: F12, F14
+```
+
+**Reprodukált kiinduló állapot.** Minden publikus oldal `<div class="page-title">`
+elemben nevezte meg magát, vagyis a dokumentumnak **egyáltalán nem volt
+címhierarchiája** — egy képernyőolvasó címlistája a site minden oldalán üres
+volt. A navigáció görgetett és dokumentumcímet állított, a **fókuszt ott hagyta,
+ahol volt**: egy billentyűzetes olvasó úgy érkezett meg egy új oldalra, hogy
+semmi nem jelezte, történt valami, és a teljes fejlécen át kellett tabbolnia,
+hogy elérje. Ugrás a tartalomra nem létezett.
+
+**Ami változott:**
+
+1. **Egy h1 oldalanként**, alatta h2 szekciók. A szimulátor vezérlőpanelje az
+   admin shellben ül, aminek a brandje már az **ő** dokumentumának h1-e, ezért
+   ott h2 a panel neve és h3 a három lépése — egy szinttel lejjebb, mert a
+   körülötte lévő dokumentum más.
+2. **A fókusz a navigáció után az új oldal címére kerül**, `tabindex="-1"`-gyel,
+   **mindkét render bevárása** után: a shellé, ami becseréli az oldalelemet, és
+   magáé az oldalé, ami a címet legyártja. Különben a cím még nem létezik, és a
+   fókusz a semmibe megy.
+3. **Az őrszem a javítás másik fele.** A Back egy szűrőváltás fölött is
+   `popstate`, de **nem navigáció**: az oldal nem változott, tehát nincs mit
+   bejelenteni, és a fókusz oda tartozik, ahol az olvasó hagyta. A pollok pedig
+   ezt a kódot egyáltalán nem hívják.
+4. **Ugrás a tartalomra**, ami tényleg működik. A `href="#content"` önmagában
+   **nem** tud működni: a fragment egy shadow rooton belüli id-t nevez meg, a
+   böngésző pedig a dokumentumban keresi. A href marad — ez az, amit a link
+   *jelent* és amit az állapotsorban látni —, a kezelő teszi igazzá.
+5. **Caption a táblázatába** (`dd-simulation-control.ts`).
+6. **A veszélygomb saját színpárja.**
+
+**F14 — miért nem a `--crit`-et sötétítettem.** Fehér a `--crit`-en sötét témában
+**3,23:1**, pontosan ahogy az audit mérte. De a `--crit` **szövegszín** 26 helyen,
+ahol 4,5:1 fölött van, és a palettateszt ezt meg is követeli — a sötétítés
+mindet magával rántaná. A gomb ezért **saját párt** kapott
+(`--btn-danger-bg` / `--btn-danger-fg`, sötét témában 7,29:1, világosban
+5,61:1), a keret pedig maradt `--crit`, hogy a gomb továbbra is **alakként**
+olvasható legyen a felület előtt (5,0–5,9:1 a felületeken). A paletta globális
+átrajzolása így elmaradt, ahogy a terv kérte.
+
+**A palettateszt eddig nem is láthatott gombot:** szövegtokeneket mért
+felületszíneken. Mostantól a **tényleges párosításokat** is méri, és rögzíti
+mérésként, hogy a régi kompozíció valóban a küszöb alatt volt.
+
+**Érintett fájlok:** 15 publikus oldalkomponens (címek), `dd-shell.ts`
+(skip link, `<main id="content" tabindex="-1">`, fókusz), `dd-simulation-control.ts`
+(címszintek, caption, gomb), `styles/global.css` (a pár), `styles/shared.ts`
+(`.card-title` margó), `styles/contrast.test.ts` (+3 eset), új
+`client/e2e/accessibility.spec.ts` (15 eset).
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerverkód nem változott.
+
+**Egy mérés, ami megjavította a saját elvárásomat.** Az audit szerint a
+táblázaton kívüli caption „nem társul" a táblázathoz. Megmértem: a HTML-elemző
+**eldobja** — a caption egyáltalán **nincs benne a DOM-ban**. Vagyis nem egy
+társítás veszett el, hanem **maga a szöveg**. Az első tesztem árva captionöket
+számolt, és a hibával együtt is **zöld maradt**, mert nem volt mit számolnia.
+A teszt most a **jelenlétet** kéri számon, és a `parentElement`-et.
+
+**Negatív kontrollok — hét, és kettő elsőre nem bukott:**
+
+| Kivett őrszem | Ami elpirult |
+|---|---|
+| fókuszmozgatás navigációkor | 3 eset (navigáció, Back, billentyűzetes útvonal) |
+| a skip link kezelője (csak href marad) | „the skip link is the first stop…" |
+| a gomb a `--crit`-re mutat vissza | „the danger button clears 4.5:1 in the dark theme" |
+| a `--btn-danger-bg` token vissza a világosra | 2 unit eset a `contrast.test.ts`-ben |
+| az Overview címe vissza `div`-be | 3 eset (egy h1, minden oldal, Back) |
+| a popstate-őrszem | „Back over a filter change does not move the focus" — **csak az új teszt megírása után** |
+| a caption vissza a táblázaton kívülre | „the target table carries its caption…" — **csak a teszt átirányítása után** |
+
+A két utólag kifeszített eset a nap érdemi tanulsága. Az őrszemet semmi nem
+mérte: a szűrőváltás nem dob `popstate`-et, tehát a „szűrő nem viszi el a
+fókuszt" teszt akkor is zöld, ha az őrszem nincs ott — az őrszem a **Back**
+esetét védi, és arra kellett külön eset. A captionnél pedig a fenti mérés
+mutatta meg, hogy rossz dolgot számoltam.
+
+**Amit a kapuk nem bizonyítanak:** ez **számított színellenőrzés és
+fókuszmérés**, nem teljes akadálymentességi tanúsítás; valódi
+képernyőolvasóval nem futott. Az `aria-pressed` most már a staking
+nézetváltóján is ott van a szegmensvezérlő mintájára? **Nincs** — a nap
+fájlköre a címekre, a fókuszra és a kontrasztra szólt, és a nézetváltó
+`.toggle` gombjai továbbra sem közölnek megnyomott állapotot. Ez marad nyitva,
+és a 20. napi regressziós körben javítandó vagy kifejezetten elfogadandó.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 844 szerver + **154** kliens unit (151 → 154), typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **119** böngészőteszt (104 → 119), **egy workerrel** (ahogy a CI futtatja) kétszer egymás után |
+
+Ellenőrizve a nap kész-feltételei szerint: billentyűzetes fő útvonal (Tab a
+navigációig, Enter, majd a fókusz a címen és onnan a szűrőkön), fókusz
+láthatóság, fókusz megmaradása poll alatt **és** szűrőváltás alatt, reduced
+motion **mindkét irányban mérve**, 200% zoom (nincs vízszintes túlcsordulás),
+és a veszélygomb tényleges szín-párja mindkét témában, a lapon számolva.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** a **13. nap** (F13: három moderate
+függőségi találat) elkezdhető; függősége nincs.
+
+```text
+Commit(ok), végső SHA: 1828831
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -1538,9 +1655,9 @@ Napi státusz: ELLENŐRZÖTT
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
 | F10 | 14 | Nyitott | — | — |
 | F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni |
-| F12 | 12 | Nyitott | — | — |
+| F12 | 12 | `1828831` | E2E: 10 eset — egy h1 oldalanként, szekciók h2-ben, fókusz navigációkor és Backnél, fókusz megmaradása poll és szűrőváltás alatt, Back a szűrő fölött nem mozdítja, skip link kezelővel és láthatóan, teljes billentyűzetes útvonal, caption a táblázatában | Kliensoldalon lezárva. Számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás; a staking nézetváltóján továbbra sincs `aria-pressed` |
 | F13 | 13 | Nyitott | — | — |
-| F14 | 12 | Nyitott | — | — |
+| F14 | 12 | `1828831` | unit: a tényleges gombpár 4,5:1 mindkét témában + a régi kompozíció mérésként rögzítve; E2E: a gomb valódi számított szín-párja a lapon, mindkét témában | Lezárva. Saját `--btn-danger-bg`/`--btn-danger-fg` pár (7,29:1 sötét, 5,61:1 világos); a `--crit` szövegszínként változatlan, a keret is az maradt |
 | R7 (nem audit) | **J2** | `4261e06` | unit: `draftIdentity.test.ts` 12 eset; E2E: változatlan retry ugyanaz a kulcs, megváltozott payload új kulcs, és egy draftszerkesztés nem nyúl a futam még tartozó kulcsához | Lezárva. A kliens kanonikus formája szándékosan azonos a szerverével, így a kettő nem tud másképp gondolkodni arról, mi „ugyanaz a kérés” |
 
 ## Review checkpointok

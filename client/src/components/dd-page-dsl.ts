@@ -120,7 +120,7 @@ export class DdPageDsl extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Sentinel Layer</div>
+          <h1 class="page-title" tabindex="-1">Sentinel Layer</h1>
           <div class="page-sub">
             Service-liveness in shadow: every epoch the masternodes probe each other, the ChainLock
             quorum signs a verdict bitfield, and the boundary block carries it — or does not. An
@@ -210,7 +210,7 @@ export class DdPageDsl extends LitElement {
       return html`
         <section class="card">
           <div class="card-head">
-            <div class="card-title">Per epoch, oldest to newest</div>
+            <h2 class="card-title">Per epoch, oldest to newest</h2>
           </div>
           <div class="card-body">
             <div class="note">
@@ -232,7 +232,7 @@ export class DdPageDsl extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Per epoch, oldest to newest</div>
+          <h2 class="card-title">Per epoch, oldest to newest</h2>
           <div class="page-sub mono">${num(pts.length)} epochs</div>
         </div>
         <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Service commitment presence per epoch">
@@ -266,7 +266,7 @@ export class DdPageDsl extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Recent epochs</div>
+          <h2 class="card-title">Recent epochs</h2>
           <div class="page-sub mono">newest first</div>
         </div>
         <div class="card-body flush">

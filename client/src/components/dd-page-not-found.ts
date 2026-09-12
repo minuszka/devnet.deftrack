@@ -61,7 +61,7 @@ export class DdPageNotFound extends LitElement {
       <div class="page">
         <div class="page-head">
           <div>
-            <div class="page-title">${malformed ? 'That link could not be read' : 'Page not found'}</div>
+            <h1 class="page-title" tabindex="-1">${malformed ? 'That link could not be read' : 'Page not found'}</h1>
             <div class="page-sub">
               ${malformed
                 ? html`The address has a damaged percent-escape, so the identifier in it cannot be
@@ -73,7 +73,7 @@ export class DdPageNotFound extends LitElement {
         </div>
 
         <section class="card">
-          <div class="card-head"><div class="card-title">What arrived</div></div>
+          <div class="card-head"><h2 class="card-title">What arrived</h2></div>
           <div class="card-body body">
             <code class="what">${this.path}</code>
             <div class="ways">

@@ -187,8 +187,11 @@ export class DdSimulationControl extends LitElement {
       .approval label { flex-direction: row; align-items: flex-start; color: var(--ink); cursor: pointer; }
       .approval input { margin-top: 4px; accent-color: var(--accent); }
       .actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-      .btn.danger { background: var(--crit); border-color: var(--crit); color: #fff; font-weight: 700; }
-      .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--crit) 85%, black); }
+      /* The background is its own token: white on --crit is 3.23:1, and --crit
+         has to stay bright because it is a text colour everywhere else. The
+         border keeps --crit, so the button still reads as a shape. */
+      .btn.danger { background: var(--btn-danger-bg); border-color: var(--crit); color: var(--btn-danger-fg); font-weight: 700; }
+      .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--btn-danger-bg) 85%, black); }
       .state-line { color: var(--ink-2); font-size: var(--fs-sm); }
       .state-line strong { color: var(--ink); }
       .countdown { color: var(--crit); font-family: var(--font-mono); font-weight: 700; }
@@ -526,7 +529,7 @@ export class DdSimulationControl extends LitElement {
       <section class="control" aria-label="Simulation control">
         <div class="page-head">
           <div>
-            <div class="page-title">Simulation control</div>
+            <h2 class="page-title">Simulation control</h2>
             <p class="intro">Prepare a bounded plan, inspect its exact targets and impact, validate preflight, then acknowledge risk and confirm the start separately. The server independently enforces every one of those gates.</p>
           </div>
         </div>
@@ -543,7 +546,7 @@ export class DdSimulationControl extends LitElement {
   private _form(descriptor: ScenarioSummary | null): TemplateResult {
     return html`
       <form class="card" @submit=${this._prepare}>
-        <div class="card-head"><div class="card-title">1. Prepare and preview</div><div class="page-sub mono">no remote action</div></div>
+        <div class="card-head"><h3 class="card-title">1. Prepare and preview</h3><div class="page-sub mono">no remote action</div></div>
         <div class="form-grid">
           <label><span>Scenario</span>
             <select .value=${this._scenarioId} @change=${this._selectScenario} ?disabled=${this._busy}>
@@ -672,7 +675,7 @@ export class DdSimulationControl extends LitElement {
     const impact = plan.impact;
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">Target preview</div><div class="page-sub mono">${plan.runKey}</div></div>
+        <div class="card-head"><h3 class="card-title">Target preview</h3><div class="page-sub mono">${plan.runKey}</div></div>
         <div class="impact">
           <div><span>Targets</span><b>${num(impact.affectedTargetCount)}</b></div>
           <div><span>Hosts</span><b>${num(impact.affectedHostCount)}</b></div>
@@ -683,8 +686,7 @@ export class DdSimulationControl extends LitElement {
         </div>
         ${impact.warnings.length ? html`<div class="alert">${impact.warnings.map((warning) => html`<div>${warning}</div>`)}</div>` : nothing}
         <div class="card-body flush">
-          <caption class="sr-only">The targets this scenario would act on.</caption>
-          <div class="twrap"><table><thead><tr><th scope="col">Target</th><th scope="col">Action</th><th scope="col" class="r">Offset</th></tr></thead><tbody>
+          <div class="twrap"><table><caption class="sr-only">The targets this scenario would act on.</caption><thead><tr><th scope="col">Target</th><th scope="col">Action</th><th scope="col" class="r">Offset</th></tr></thead><tbody>
           ${plan.actions.map((action) => html`<tr><td class="mono">${action.targetId}</td><td>${action.kind}</td><td class="r mono">${Math.round(action.notBeforeOffsetMs / 1_000)} s</td></tr>`)}
         </tbody></table></div></div>
         <div class="notice">${plan.assurances.join(' · ')}</div>
@@ -696,7 +698,7 @@ export class DdSimulationControl extends LitElement {
     const preflight = this.preflight;
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">2. Preflight</div><div class="page-sub mono">${preflight ? (preflight.passed ? 'passed' : 'blocked') : 'not run'}</div></div>
+        <div class="card-head"><h3 class="card-title">2. Preflight</h3><div class="page-sub mono">${preflight ? (preflight.passed ? 'passed' : 'blocked') : 'not run'}</div></div>
         ${preflight === null
           ? html`<div class="card-body"><p class="intro">The server verifies chain identity, data quality, target mapping and recovery readiness before this plan can be armed.</p><div class="actions" style="margin-top:var(--sp-4)"><button class="btn primary" ?disabled=${this._busy} @click=${this._validate}>Validate preflight</button></div></div>`
           : html`<ul class="check-list">${preflight.checks.map((check: SimulationPreflight['checks'][number]) => html`<li class=${check.passed ? 'passed' : 'failed'}><strong>${check.passed ? '✓' : '×'} ${check.checkId}</strong> — ${check.publicMessage}</li>`)}</ul>`}
@@ -716,7 +718,7 @@ export class DdSimulationControl extends LitElement {
     const needsRecovery = run.state.faultMayBeActive || run.state.status === 'failed';
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">3. Approval and recovery</div><div class="page-sub mono">${run.state.status}</div></div>
+        <div class="card-head"><h3 class="card-title">3. Approval and recovery</h3><div class="page-sub mono">${run.state.status}</div></div>
         <div class="approval">
           <div class="state-line run-state">Run <strong class="mono">${run.runKey}</strong> is <strong>${run.state.status}</strong>${run.state.live ? ' (live lab run)' : ' (dry-run)'}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}

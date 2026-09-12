@@ -204,7 +204,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">${this.runKey ? 'Experiment' : 'Experiments'}</div>
+          <h1 class="page-title" tabindex="-1">${this.runKey ? 'Experiment' : 'Experiments'}</h1>
           <div class="page-sub">
             What was done to the network, what was expected, and what actually happened — a result
             nobody can repeat is an anecdote.
@@ -222,7 +222,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Recorded runs</div>
+          <h2 class="card-title">Recorded runs</h2>
           <!-- What is on screen, against what exists. The heading alone used to
                say "Recorded runs" over a page of 25 out of 34. -->
           <div class="page-sub mono">
@@ -393,7 +393,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">As the v23 mainnet would count it</div>
+          <h2 class="card-title">As the v23 mainnet would count it</h2>
           <div class="page-sub mono">
             ${m.profiles.length === 0 ? 'no mainnet-forming round in the window' : m.profiles.join(' · ')}
           </div>
@@ -459,7 +459,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">What it found</div>
+          <h2 class="card-title">What it found</h2>
           <div class="page-sub mono">recorded after the numbers froze</div>
         </div>
         <div class="card-body">
@@ -483,7 +483,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">By quorum type</div>
+          <h2 class="card-title">By quorum type</h2>
           <div class="page-sub mono">${num(rows.length)} tracked</div>
         </div>
         <div class="card-body flush">
@@ -560,7 +560,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Declared before the run</div>
+          <h2 class="card-title">Declared before the run</h2>
           <div class="page-sub mono">${d.status}</div>
         </div>
         <div class="card-body flush">
@@ -648,7 +648,7 @@ export class DdPageExperiments extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Against baseline</div>
+          <h2 class="card-title">Against baseline</h2>
           <div class="page-sub mono">${c.baselineRunKey}</div>
         </div>
         <div class="card-body flush">

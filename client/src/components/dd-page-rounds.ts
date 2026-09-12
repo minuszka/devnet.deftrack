@@ -264,7 +264,7 @@ export class DdPageRounds extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">DKG Rounds</div>
+          <h1 class="page-title" tabindex="-1">DKG Rounds</h1>
           <div class="page-sub">
             Every scheduled round, including the ones that left no trace on the chain. A round with
             no commitment has no quorum hash — it is here because the schedule is reconstructed, not
@@ -311,7 +311,7 @@ export class DdPageRounds extends LitElement {
 
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Rounds</div>
+          <h2 class="card-title">Rounds</h2>
           <div class="page-sub mono">${num(this._total)} recorded</div>
         </div>
         <div class="card-body flush">

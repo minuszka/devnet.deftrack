@@ -73,7 +73,7 @@ export class DdPageChainLocks extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">ChainLocks</div>
+          <h1 class="page-title" tabindex="-1">ChainLocks</h1>
           <div class="page-sub">
             Coverage counted from the first lock ever seen, not from the start of the chain: a
             ChainLock cannot exist before a quorum does, and counting the pre-masternode era as
@@ -185,7 +185,7 @@ export class DdPageChainLocks extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Per block, oldest to newest</div>
+          <h2 class="card-title">Per block, oldest to newest</h2>
           <div class="page-sub mono">${num(pts.length)} blocks</div>
         </div>
         <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="ChainLock presence per block">
@@ -237,7 +237,7 @@ export class DdPageChainLocks extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Gaps</div>
+          <h2 class="card-title">Gaps</h2>
           <div class="page-sub mono">runs of consecutive unlocked blocks</div>
         </div>
         <div class="card-body flush">
@@ -295,7 +295,7 @@ export class DdPageChainLocks extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Block arrival at this node</div>
+          <h2 class="card-title">Block arrival at this node</h2>
           <div class="page-sub mono">
             ${a.measured === 0 ? 'nothing measured' : `p50 ${fmt(a.lagSec.p50)} · max ${fmt(a.lagSec.max)}`}
           </div>

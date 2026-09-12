@@ -40,6 +40,19 @@
   --good-wash: rgba(12, 163, 12, 0.12);
   --warn-wash: rgba(250, 178, 25, 0.12);
   --crit-wash: rgba(230, 103, 103, 0.12);
+  /*
+   * The danger button's own pair, because a button is not text on a surface.
+   *
+   * `--crit` is a TEXT colour here -- 4.5:1 against every surface, which is
+   * what the palette test holds it to -- and white on it is only 3.23:1, so
+   * the one control that inverts the relationship failed the very rule the
+   * rest of the palette passes. Kept as its own pair rather than by darkening
+   * `--crit`, which would drag 26 places where it IS the text down with it.
+   * The border stays `--crit`, so the button's boundary is still legible
+   * against the surface behind it.
+   */
+  --btn-danger-bg: #a81f1f;
+  --btn-danger-fg: #ffffff;
   --info: #3987e5;
   --info-wash: rgba(57, 135, 229, 0.12);
 
@@ -92,6 +105,10 @@
   --good-wash: rgba(10, 125, 10, 0.1);
   --warn-wash: rgba(143, 98, 0, 0.12);
   --crit-wash: rgba(194, 47, 47, 0.1);
+  /* Already 5.61:1 with white on it; named here so both themes carry the pair
+     the test measures, rather than one theme having it by accident. */
+  --btn-danger-bg: #c22f2f;
+  --btn-danger-fg: #ffffff;
   --info: #2a78d6;
   --info-wash: rgba(42, 120, 214, 0.1);
 
