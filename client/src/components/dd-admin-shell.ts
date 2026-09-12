@@ -42,6 +42,21 @@ const RUN_STATUS_MS = 5_000;
 /** Statuses a run never leaves, so there is nothing left to poll for. */
 const TERMINAL = new Set(['completed', 'aborted', 'rejected', 'expired']);
 
+/**
+ * Did this answer describe a run that has actually changed?
+ *
+ * Status and revision, because either can move without the other: a revision
+ * rises on a recovery that leaves the status where it was, and the status is
+ * what the panel reads out. An equal-revision replay is not a change.
+ */
+function hasMoved(
+  before: SimulationControlRun | null,
+  after: SimulationControlRun
+): boolean {
+  if (before === null) return true;
+  return before.state.status !== after.state.status || before.state.revision !== after.state.revision;
+}
+
 function dateTime(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—';
   const date = new Date(value);
@@ -461,6 +476,12 @@ export class DdAdminShell extends LitElement {
         // Replace, not push: neither adopting the live slot nor confirming
         // what the URL already said is a step the reader chose to take.
         this._writeUrl(this._selectedRunKey, 'replace');
+      } else {
+        // Refresh, on the selection already loaded, used to be a no-op for that
+        // selection: the five tables beside it were re-read and the run itself
+        // was not. So the one button an operator presses BECAUSE the panel
+        // looks stale was the one that could not un-stale it.
+        void this._refreshSelectionDetail(decision.runKey, this._selectionGeneration);
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -509,10 +530,26 @@ export class DdAdminShell extends LitElement {
     const held = this._selectedRun;
     if (runKey === null || this._session === null) return;
     if (held !== null && TERMINAL.has(held.state.status)) return;
+    const generation = this._selectionGeneration;
     try {
       const run = await adminApi.run(runKey, poll.signal);
       if (poll.stale || this._selectedRunKey !== runKey) return;
-      this._acceptRun(run);
+      const before = this._selectedRun;
+      if (!this._acceptRun(run)) return;
+      /*
+       * The poll reads the run and nothing else, and that was the whole of it:
+       * the recovery evidence loaded once, on the initial read. So a run that
+       * moved to `cooldown` by itself -- a lease expiring, the server's own
+       * recovery finishing -- showed the new status beside "No recovery proof
+       * has been recorded for this run yet", which is the one thing an
+       * operator watching a fault must not be told wrongly.
+       *
+       * Only when the run actually moved. The saved plan is immutable and is
+       * deliberately NOT re-read; this is the part that changes. A run
+       * arriving at a terminal status moves too, so the last tick before the
+       * poll stops is also the final reconciliation.
+       */
+      if (hasMoved(before, run)) void this._refreshSelectionDetail(runKey, generation);
     } catch (error) {
       if (isAbortError(error) || poll.stale) return;
       if (error instanceof ApiError && error.status === 401) {
@@ -554,18 +591,35 @@ export class DdAdminShell extends LitElement {
     // actually produced is stored, and an idempotent replay that carries none
     // leaves the previous one alone.
     if (preflight !== undefined) this._selectedPreflight = preflight;
-    void this._loadHistoryOnly(run.runKey);
+    // Unconditionally, not only when the run moved: the operator has just acted,
+    // and an abort or a recover is exactly the action that produces the evidence
+    // the panel is about to be read for.
+    void this._refreshSelectionDetail(run.runKey, this._selectionGeneration);
   }
 
-  /** The audit trail alone, after an action that will have added to it. */
-  private async _loadHistoryOnly(runKey: string): Promise<void> {
-    try {
-      const history = await adminApi.history(runKey);
-      if (this._selectedRunKey === runKey) this._history = history;
-    } catch {
-      // The timeline is a record, not a control. A failure to refresh it must
-      // not disturb the run on screen.
-    }
+  /**
+   * The parts of a selection that move: its timeline and its recovery evidence.
+   *
+   * Not the saved plan, which is immutable -- re-reading it on every transition
+   * would be load with no information. Guarded by both the key and the
+   * generation, like every other read, so a refresh for a run the operator has
+   * left writes nothing.
+   */
+  private async _refreshSelectionDetail(runKey: string, generation: number): Promise<void> {
+    const [history, recovery] = await Promise.all([
+      adminApi.history(runKey).catch(() => null),
+      /*
+       * `undefined` is "this refresh failed"; `null` is "the server says there
+       * is no proof". Collapsing the two would let a timed-out request report
+       * that a recovery which HAS been proven was never recorded -- the same
+       * class of mistake as reading unavailable evidence as "all clear", in the
+       * other direction.
+       */
+      adminApi.recovery(runKey).then((r) => r.recovery).catch(() => undefined),
+    ]);
+    if (generation !== this._selectionGeneration || this._selectedRunKey !== runKey) return;
+    if (history !== null) this._history = history;
+    if (recovery !== undefined) this._selectedRecovery = recovery;
   }
 
   private _clearSelection(): void {

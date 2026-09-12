@@ -11,6 +11,7 @@ import {
 } from '../lib/admin-api.js';
 
 import { num } from '../lib/format.js';
+import { draftScope } from '../lib/draftIdentity.js';
 import { acceptsRunUpdate, runSafety } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
@@ -373,20 +374,40 @@ export class DdSimulationControl extends LitElement {
       this._message = errorMessage(error);
       return;
     }
+    /*
+     * A draft has no run key yet, so its own identity scopes the retry -- and
+     * that identity is the whole request, not the seed it happens to carry.
+     *
+     * Scoped to the seed, an uncertain Prepare followed by an edit sent a
+     * different body under the same key, which the server binds to the payload
+     * it first saw and refuses for any other. The corrected draft could then
+     * not be created at all until the page was reloaded. Repeating the same
+     * draft is still the same request, which is the whole point of a retry.
+     *
+     * Taken from the snapshot that is about to be sent, and the same snapshot
+     * retires the key on the answer: nothing between the two can move.
+     */
+    const request = {
+      network: this._network,
+      mode: this._mode,
+      scenario: {
+        scenarioId: descriptor.scenarioId,
+        scenarioVersion: descriptor.version,
+        seed: this._seed,
+        parameters,
+      },
+    };
+    const scope = draftScope(request);
     this._busy = true;
     this._message = '';
     try {
       const result = await adminApi.createRun({
         csrfToken: session.csrfToken,
-        // A draft has no run key yet, so the seed scopes it: repeating the
-        // same draft is the same request, a new seed is a new one.
-        idempotencyKey: this._idempotency(`draft:${this._seed}`, 'create'),
-        network: this._network,
-        mode: this._mode,
-        scenario: { scenarioId: descriptor.scenarioId, scenarioVersion: descriptor.version, seed: this._seed, parameters },
+        idempotencyKey: this._idempotency(scope, 'create'),
+        ...request,
       });
       this._report(result.run);
-      this._completedOperation(`draft:${this._seed}`, 'create');
+      this._completedOperation(scope, 'create');
       // The acknowledgements are not cleared here any more. They are cleared
       // wherever the selected run changes, which covers this case and the one
       // this line missed: moving between two runs that already exist.
