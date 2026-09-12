@@ -208,15 +208,24 @@ export function selectionFairness(
    * not from the sample. A host whose nodes were all passed over still has
    * them, and the table has to be able to say so.
    *
-   * Only nodes the window could have reached are counted, for the same reason
-   * eligibility exists at all: a masternode registered after every round in the
-   * window was not passed over, it was not there, and counting it would
-   * manufacture a starved host out of a new one.
+   * The whole active registry, with no eligibility filter -- which is a
+   * correction. This used to drop any node with no eligible round in the
+   * window, on the argument that counting it would manufacture a starved host
+   * out of a new one. That argument belongs to a different number: it is what
+   * `neverSelected` and `roundsEligible` are for, and both still apply it. What
+   * it did here was make "registered now" depend on which window and which
+   * profile were being asked about, so a masternode registered yesterday was
+   * missing from the count of what exists today -- against this field's own
+   * contract, which says the registry rather than the sample.
+   *
+   * The two columns are deliberately different questions, which is why they are
+   * two columns: `currentRegisteredNodes` is the registry today, `nodes` is what
+   * this window drew. A host showing 2 and 1 is not starving; it is being
+   * described.
    */
   const registeredPerHost = new Map<string, number>();
-  for (const [proTxHash, known] of knownNodes) {
+  for (const known of knownNodes.values()) {
     if (!known.host) continue;
-    if (eligibleRoundsFor(proTxHash) <= 0) continue;
     registeredPerHost.set(known.host, (registeredPerHost.get(known.host) ?? 0) + 1);
   }
 

@@ -262,4 +262,214 @@ test.describe('run status', () => {
     expect(app.callsTo(`/api/v1/admin/simulations/runs/${RUN_A}/dry-run`)).toHaveLength(1);
     expect(seen).toBeGreaterThan(2);
   });
+
+  /**
+   * The rest of this file is the independent review of days 1-10, reproduced
+   * here so it runs in the gate rather than beside the report.
+   */
+
+  const CLEAR = {
+    required: true,
+    allClear: true,
+    targets: [
+      {
+        targetId: 'lab-mn-1',
+        faultStateClear: true,
+        expectedServiceRunning: true,
+        observerFresh: true,
+        checkedAtMs: 2_000,
+      },
+    ],
+  };
+
+  /**
+   * R3. The poll read the run and only the run.
+   *
+   * Recovery evidence loaded once, on the initial read, so a run that reached
+   * `cooldown` by itself -- a lease expiring, the server's own recovery
+   * finishing -- showed the new status beside "No recovery proof has been
+   * recorded for this run yet". That is the one thing an operator watching a
+   * fault must not be told wrongly.
+   */
+  test('an automatic transition brings the evidence and the timeline with it', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', live: true, faultMayBeActive: true }),
+    });
+    await page.clock.install({ time: START });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator('.approval')).toContainText('No recovery proof has been recorded');
+
+    // The server finishes its own recovery: a new status, a new revision,
+    // evidence that did not exist a moment ago, and an audit event to match.
+    const recovered = controlRun({ runKey: RUN_A, status: 'cooldown', revision: 9, live: true });
+    app.stub({
+      ...runStubs({ runKey: RUN_A, status: 'cooldown', revision: 9, live: true, recovery: CLEAR }),
+      [`/api/v1/admin/simulations/runs/${RUN_A}/history`]: {
+        body: ok({
+          run: recovered,
+          audit: [
+            { sequence: 1, stream: 'run', eventType: 'dry_run_completed', atMs: 2_000, fromStatus: 'draft', toStatus: 'armed' },
+            { sequence: 2, stream: 'run', eventType: 'recovery_proven', atMs: 3_000, fromStatus: 'recovery', toStatus: 'cooldown' },
+          ],
+          artifacts: [],
+        }),
+      },
+    });
+    await page.clock.fastForward(5_000);
+
+    await expect(page.locator(STATUS)).toContainText('cooldown');
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+    await expect(page.locator('.timeline')).toContainText('recovery_proven');
+  });
+
+  /**
+   * R3, the half that must not be fixed by refreshing harder.
+   *
+   * A refresh that fails is not an answer. Replacing what is held with "none
+   * recorded" would report a recovery that HAS been proven as absent -- the
+   * same class of mistake as reading unavailable evidence as "all clear", in
+   * the other direction.
+   */
+  test('a failed evidence refresh keeps what was proven', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'cooldown', live: true, recovery: CLEAR }),
+    });
+    await page.clock.install({ time: START });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+
+    app.stub({
+      [`/api/v1/admin/simulations/runs/${RUN_A}/recovery`]: {
+        status: 503,
+        body: fail('the evidence store did not answer'),
+      },
+      [`/api/v1/admin/simulations/runs/${RUN_A}`]: {
+        body: ok(controlRun({ runKey: RUN_A, status: 'cooldown', revision: 11, live: true })),
+      },
+    });
+    await page.clock.fastForward(5_000);
+
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+    await expect(page.locator('.approval')).not.toContainText('No recovery proof has been recorded');
+  });
+
+  /** R3, after an action the operator took rather than one the server took. */
+  test('a recovery the operator asks for shows the proof it produced', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'failed', live: true, faultMayBeActive: true }),
+      [`/api/v1/admin/simulations/runs/${RUN_A}/recover`]: {
+        body: ok({ run: controlRun({ runKey: RUN_A, status: 'cooldown', revision: 12, live: true }) }),
+      },
+    });
+    await page.clock.install({ time: START });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator('.approval')).toContainText('No recovery proof has been recorded');
+
+    // The proof exists from the moment the recovery runs -- and the panel used
+    // to keep reading the copy it had loaded before it.
+    //
+    // The dashboard's own five tables are taken away at the same time, on
+    // purpose. A first version of this test passed with the fix removed,
+    // because the full dashboard reload that follows a mutation happened to
+    // refresh the evidence on its way past -- so it was measuring the wrong
+    // path. The run's endpoints still answer; the list beside them does not.
+    app.stub({
+      ...runStubs({ runKey: RUN_A, status: 'cooldown', revision: 12, live: true, recovery: CLEAR }),
+      '/api/v1/admin/simulations/runs': { status: 503, body: fail('the run list did not answer') },
+    });
+    await page.getByRole('button', { name: 'Retry recovery proof' }).click();
+
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+  });
+
+  /**
+   * R3's third case: Refresh, pressed on the selection already on screen.
+   *
+   * It re-read the five dashboard tables and not the run beside them, so the
+   * one control an operator presses BECAUSE the panel looks stale was the one
+   * that could not un-stale it.
+   *
+   * Isolated from the status poll deliberately: the run's own status and
+   * revision do not move here, so the poll has nothing to notice and only
+   * Refresh can bring the evidence in.
+   */
+  test('Refresh re-reads the selection that is already on screen', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'cooldown', live: true }),
+    });
+    await page.clock.install({ time: START });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator('.approval')).toContainText('No recovery proof has been recorded');
+
+    app.stub(runStubs({ runKey: RUN_A, status: 'cooldown', live: true, recovery: CLEAR }));
+    await page.getByRole('button', { name: 'Refresh' }).click();
+
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+  });
+
+  /**
+   * R7. The create key was scoped to the draft's seed and nothing else.
+   *
+   * After a Prepare whose outcome was uncertain, editing any other field sent a
+   * different body under the same key -- and the server binds a key to the
+   * payload it first saw, so the corrected draft could not be created at all
+   * until the page was reloaded.
+   */
+  test('an edited draft is a new create request, on the same seed', async ({ app, page }) => {
+    app.stub(adminSessionStubs());
+    await app.goto('/admin');
+    const prepare = page.getByRole('button', { name: 'Prepare dry-run plan', exact: true });
+    await expect(prepare).toBeEnabled();
+
+    // Uncertain: it may or may not have been applied, which is the only reason
+    // a retry has to carry the key the first attempt used.
+    app.stub({
+      '/api/v1/admin/simulations/runs': { status: 503, body: fail('the run store did not answer') },
+    });
+    await prepare.click();
+    await expect(page.locator('.alert[role="alert"]').first()).toBeVisible();
+    await prepare.click();
+    await expect.poll(() => app.requestsTo('/api/v1/admin/simulations/runs', 'POST').length).toBe(2);
+
+    // Now one field moves, and nothing else -- not the seed.
+    await page.locator('textarea').fill('{"count":2,"durationSeconds":60}');
+    await prepare.click();
+    await expect.poll(() => app.requestsTo('/api/v1/admin/simulations/runs', 'POST').length).toBe(3);
+
+    const posts = app.requestsTo('/api/v1/admin/simulations/runs', 'POST');
+    expect(posts[0]?.body).toEqual(posts[1]?.body);
+    expect(posts[0]?.idempotencyKey).toBe(posts[1]?.idempotencyKey);
+    expect(posts[1]?.body).not.toEqual(posts[2]?.body);
+    expect(posts[1]?.idempotencyKey).not.toBe(posts[2]?.idempotencyKey);
+  });
+
+  /** And the other half: a draft edit owes nothing to a run's owed keys. */
+  test('editing the draft leaves an owed abort key exactly where it was', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', live: true, faultMayBeActive: true }),
+      [`/api/v1/admin/simulations/runs/${RUN_A}/abort`]: {
+        status: 503,
+        body: fail('the lab executor did not answer'),
+      },
+    });
+    await app.goto(`/admin?run=${RUN_A}`);
+    const abort = page.getByRole('button', { name: 'Abort & recover' });
+    await abort.click();
+    await expect(page.locator('.alert[role="alert"]').first()).toBeVisible();
+
+    await page.locator('textarea').fill('{"count":3,"durationSeconds":120}');
+    await abort.click();
+
+    const calls = app.requestsTo(`/api/v1/admin/simulations/runs/${RUN_A}/abort`, 'POST');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.idempotencyKey).toBe(calls[1]?.idempotencyKey);
+  });
 });

@@ -1,5 +1,6 @@
 import { expect, fail, ok, test, type ApiStubs } from './harness.js';
 import {
+  ACTIVATION_HEIGHT,
   chainLockReport,
   healthSnapshot,
   llmqProfile,
@@ -79,10 +80,14 @@ test.describe('selection fairness', () => {
     await app.goto('/fairness');
     await expect(page.locator('.tiles')).toContainText(V2_PROFILE);
 
+    const before = app.callsTo(FAIRNESS).length;
     await page.getByRole('button', { name: 'All profiles · aggregate' }).click();
 
-    const last = app.callsTo(FAIRNESS).at(-1) ?? '';
-    expect(last).not.toContain('llmqName');
+    // Wait for the request the click causes. Reading the list straight after
+    // the click passed only because it happened to be quick, and it stopped
+    // being quick the moment anything was added ahead of it.
+    await expect.poll(() => app.callsTo(FAIRNESS).length).toBeGreaterThan(before);
+    expect(app.callsTo(FAIRNESS).at(-1) ?? '').not.toContain('llmqName');
     await expect(page.locator('.tiles')).toContainText('all profiles');
   });
 
@@ -206,5 +211,115 @@ test.describe('selection fairness', () => {
     const tile = page.locator('dd-stat[label="Invalid members"]');
     await expect(tile).toHaveAttribute('value', '—');
     await expect(tile).toHaveAttribute('sub', 'not reported by this server');
+  });
+  /**
+   * The three below are the independent review of days 1-10, reproduced here so
+   * they run in the gate rather than beside the report.
+   *
+   * The chain tip and the ChainLock report were read once per page load, under
+   * a `=== null` guard -- and "cannot be resolved" is not null either, so BOTH
+   * answers latched for the life of the page.
+   */
+
+  /** R5a. A link with no profile exists to follow the tip. It has to follow it. */
+  test('the resolved profile follows a tip that crosses the activation height', async ({
+    app,
+    page,
+  }) => {
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00.000Z') });
+    app.stub(
+      fairnessStubs({
+        '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT - 1 })) },
+      })
+    );
+    await app.goto('/fairness');
+    await expect(page.locator('.tiles')).toContainText(V1_PROFILE);
+
+    // The chain crosses the gate. The switchover is height-gated and one-way,
+    // so from here V2 is what signs.
+    app.stub({ '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT + 1 })) } });
+    await page.clock.fastForward(60_000);
+
+    await expect.poll(() => app.callsTo(FAIRNESS).length).toBeGreaterThan(1);
+    expect(app.callsTo(FAIRNESS).at(-1) ?? '').toContain(`llmqName=${V2_PROFILE}`);
+    await expect(page.locator('.tiles')).toContainText(V2_PROFILE);
+  });
+
+  /**
+   * R5b. A resolution that failed once must be retried.
+   *
+   * With the latch, one 503 on the ChainLock report meant the page asked for no
+   * fairness figure ever again -- a full reload or a manual choice was the only
+   * way out, and neither is something the reader knows to do.
+   */
+  test('a profile that could not be resolved once is resolved on the next tick', async ({
+    app,
+    page,
+  }) => {
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00.000Z') });
+    app.stub(
+      fairnessStubs({
+        '/api/v1/chainlocks': { status: 503, body: fail('chainlock report unavailable') },
+      })
+    );
+    await app.goto('/fairness');
+    /*
+     * Wait for the FAILED resolution to have landed, not merely for the note to
+     * be on screen: the note also shows while the answer is still in flight,
+     * and the reason it gives is what tells the two apart. A first version of
+     * this test restored the endpoint before the 503 had been handled at all,
+     * so it passed with the fix removed -- it was measuring the first read, not
+     * the retry.
+     */
+    await expect(page.locator('.note[role="status"]')).toContainText('no ChainLock report');
+    expect(app.callsTo(FAIRNESS)).toHaveLength(0);
+
+    app.stub({ '/api/v1/chainlocks': { body: ok(chainLockReport()) } });
+    await page.clock.fastForward(60_000);
+
+    await expect.poll(() => app.callsTo(FAIRNESS).length).toBeGreaterThan(0);
+    expect(app.callsTo(FAIRNESS).at(-1) ?? '').toContain(`llmqName=${V2_PROFILE}`);
+    await expect(page.locator('.tiles')).toBeVisible();
+  });
+
+  /**
+   * The other half of the same rule, and the one a careless fix breaks: an
+   * explicit choice is not a guess to be corrected. `llmq=<name>` and
+   * `llmq=all` are what somebody decided, and the tip moving is not an argument
+   * against their decision.
+   */
+  test('a chosen profile is not moved by the tip', async ({ app, page }) => {
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00.000Z') });
+    app.stub(
+      fairnessStubs({
+        '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT - 1 })) },
+      })
+    );
+    await app.goto(`/fairness?llmq=${V2_PROFILE}`);
+    await expect(page.locator('.tiles')).toContainText(V2_PROFILE);
+
+    app.stub({ '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT + 1 })) } });
+    await page.clock.fastForward(60_000);
+    await expect.poll(() => app.callsTo(FAIRNESS).length).toBeGreaterThan(1);
+
+    // Every request, before and after, asked about the profile in the URL.
+    expect(app.callsTo(FAIRNESS).every((call) => call.includes(`llmqName=${V2_PROFILE}`))).toBe(true);
+    expect(new URL(page.url()).searchParams.get('llmq')).toBe(V2_PROFILE);
+  });
+
+  test('the explicit aggregate is not moved by the tip either', async ({ app, page }) => {
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00.000Z') });
+    app.stub(fairnessStubs());
+    await app.goto('/fairness?llmq=all');
+    await expect(page.locator('.tiles')).toBeVisible();
+
+    app.stub({ '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT + 1 })) } });
+    await page.clock.fastForward(60_000);
+    await expect.poll(() => app.callsTo(FAIRNESS).length).toBeGreaterThan(1);
+
+    // `all` is the one value that means "do not filter", and it stays that way:
+    // no request may quietly acquire a profile the reader did not ask for.
+    expect(app.callsTo(FAIRNESS).every((call) => !call.includes('llmqName='))).toBe(true);
+    expect(new URL(page.url()).searchParams.get('llmq')).toBe('all');
   });
 });

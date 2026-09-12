@@ -219,6 +219,162 @@ test.describe('run selection', () => {
     await expect(page.getByRole('button', { name: ABORT })).toHaveCount(0);
   });
 
+  /**
+   * Everything below was found by an independent review of days 1-10, which
+   * reproduced each one before it was reported. They are here rather than in
+   * the review's own folder because a test that is not in the gate is not a
+   * gate: these run with `npm run test:e2e -w client`, on every CI push.
+   */
+
+  /**
+   * R1. Choosing another run while the first is still on screen.
+   *
+   * The key moved to the new run at once and the run object did not, so for as
+   * long as the load took, the panel showed the OLD run's Abort button under
+   * the NEW run's key -- and pressing it sent a real abort to a live fault
+   * nobody was looking at any more.
+   */
+  test('a selection that is still loading offers no controls for the one before it', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', faultMayBeActive: true }),
+      ...runStubs({ runKey: RUN_B }),
+      // B takes its time. That window is the whole defect.
+      [`/api/v1/admin/simulations/runs/${RUN_B}/dry-run`]: {
+        body: ok({ run: controlRun({ runKey: RUN_B }), plan: savedPlan(RUN_B) }),
+        delayMs: 1_500,
+      },
+      [`/api/v1/admin/simulations/runs/${RUN_A}/abort`]: {
+        body: ok({ run: controlRun({ runKey: RUN_A, status: 'cooldown', revision: 4 }) }),
+      },
+    });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator('.run-state')).toContainText(RUN_A);
+
+    await page.evaluate((key) => {
+      history.pushState(null, '', `/admin?run=${key}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, RUN_B);
+    await expect.poll(() => app.callsTo(`/api/v1/admin/simulations/runs/${RUN_B}/dry-run`).length).toBe(1);
+
+    // The whole selection goes, not only the controls: the timeline beside them
+    // must not still be reading out the previous run's audit trail under the
+    // new run's key.
+    await expect(page.getByText('Select a recorded run to view its')).toBeVisible();
+
+    // Press it if it is there at all -- so a failure records the request that
+    // would really have gone out, rather than only the button's existence.
+    const abort = page.getByRole('button', { name: ABORT });
+    if ((await abort.count()) > 0 && (await abort.isEnabled())) await abort.click();
+    expect(app.requestsTo(`/api/v1/admin/simulations/runs/${RUN_A}/abort`, 'POST')).toHaveLength(0);
+  });
+
+  /**
+   * R2. The same race, losing.
+   *
+   * The success branch checked which run it belonged to; the failure branch did
+   * not. So run A's slow 503 arriving after the operator had moved on cleared
+   * run B's run, plan, evidence and timeline, and put A's error in their place.
+   * A test above covers the same race on the success path -- it was green while
+   * this was broken, which is what an untested branch looks like.
+   */
+  test('a late failure for the previous run does not erase the current one', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A }),
+      ...runStubs({ runKey: RUN_B }),
+      [`/api/v1/admin/simulations/runs/${RUN_A}/dry-run`]: {
+        status: 503,
+        body: fail('the run store is unavailable'),
+        delayMs: 1_200,
+      },
+    });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect.poll(() => app.callsTo(`/api/v1/admin/simulations/runs/${RUN_A}/dry-run`).length).toBe(1);
+
+    await page.evaluate((key) => {
+      history.pushState(null, '', `/admin?run=${key}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, RUN_B);
+    await expect(page.locator('.run-state')).toContainText(RUN_B);
+
+    // Long enough for A's failure to have arrived.
+    await page.waitForTimeout(1_600);
+
+    expect(new URL(page.url()).searchParams.get('run')).toBe(RUN_B);
+    await expect(page.locator('.run-state')).toContainText(RUN_B);
+  });
+
+  /**
+   * R4. A confirmation is about one run.
+   *
+   * The two acknowledgement boxes were cleared when a new plan was prepared and
+   * at no other time, so confirming the start of run A left run B's "Confirm
+   * and start" enabled with nobody having confirmed anything about B.
+   */
+  test('a start confirmation does not travel to the next run', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A }),
+      ...runStubs({ runKey: RUN_B }),
+    });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator('.run-state')).toContainText(RUN_A);
+
+    await page.getByRole('checkbox', { name: /I confirm/ }).check();
+    const start = page.getByRole('button', { name: 'Confirm and start', exact: true });
+    await expect(start).toBeEnabled();
+
+    await page.evaluate((key) => {
+      history.pushState(null, '', `/admin?run=${key}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, RUN_B);
+
+    await expect(page.locator('.run-state')).toContainText(RUN_B);
+    await expect(start).toBeDisabled();
+  });
+
+  /**
+   * The second half of R1, on its own.
+   *
+   * White-box on purpose. The dashboard drops the previous run before loading
+   * the next, so a panel whose run and selection disagree should now be
+   * unreachable through the interface -- which is an argument for the guard,
+   * not evidence that it works. This forces the disagreement and asks the panel
+   * what it does with it. Every button in that card sends a command naming
+   * `run.runKey`; a card whose run is not the selected one must not exist.
+   */
+  test('a panel whose run is not the selected one offers nothing to press', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', faultMayBeActive: true }),
+    });
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
+
+    await page.evaluate((key) => {
+      const panel = document
+        .querySelector('dd-admin-shell')
+        ?.shadowRoot?.querySelector('dd-simulation-control') as
+        | (HTMLElement & { selectedRunKey: string | null })
+        | null
+        | undefined;
+      if (panel) panel.selectedRunKey = key;
+    }, RUN_B);
+
+    await expect(page.getByRole('button', { name: ABORT })).toHaveCount(0);
+    await expect(page.locator('.run-state')).toHaveCount(0);
+  });
+
   test('signing out clears the run from the address bar', async ({ app, page }) => {
     app.stub({
       ...adminSessionStubs(),

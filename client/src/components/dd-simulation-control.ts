@@ -11,6 +11,7 @@ import {
 } from '../lib/admin-api.js';
 
 import { num } from '../lib/format.js';
+import { draftScope } from '../lib/draftIdentity.js';
 import { acceptsRunUpdate, runSafety } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
@@ -134,6 +135,18 @@ export class DdSimulationControl extends LitElement {
 
   private _riskAcknowledged = false;
   private _startAcknowledged = false;
+  /**
+   * Which run the two acknowledgements below were given for.
+   *
+   * They were reset when a new plan was prepared and at no other time, so an
+   * acknowledgement survived a change of selection: tick "I confirm this will
+   * execute the approved fault" for run A, switch to run B, and B's start
+   * button was already enabled with nobody having confirmed anything about B.
+   * Keyed by run key rather than by the run object, because the status poll
+   * replaces that object every few seconds and would otherwise clear the box
+   * under the operator's hand.
+   */
+  private _acknowledgedRunKey: string | null = null;
   private _busy = false;
   private _message = '';
   private _now = Date.now();
@@ -219,10 +232,35 @@ export class DdSimulationControl extends LitElement {
    * and again whenever the selection changes. One rule covers both.
    */
   override willUpdate(): void {
+    // An acknowledgement is given about one run, and it does not travel.
+    const runKey = this.run?.runKey ?? null;
+    if (runKey !== this._acknowledgedRunKey) {
+      this._acknowledgedRunKey = runKey;
+      this._riskAcknowledged = false;
+      this._startAcknowledged = false;
+    }
+
     const descriptor = this._descriptor;
     if (descriptor === null || this._seededScenarioId === descriptor.scenarioId) return;
     this._seededScenarioId = descriptor.scenarioId;
     this._parameters = templateJson(descriptor);
+  }
+
+  /**
+   * The run these controls may act on: the one held, and only while it is the
+   * one the address bar names.
+   *
+   * Every button below sends a command naming `run.runKey`, so a control whose
+   * target is not the selected run must not act and must not be on the screen.
+   * The dashboard now drops the previous run the moment the selection moves, so
+   * this should never disagree — which is exactly why it is checked here as
+   * well. The cost of being wrong is an abort delivered to a live run that
+   * nobody is looking at.
+   */
+  private _actionRun(): SimulationControlRun | null {
+    const run = this.run;
+    if (run === null) return null;
+    return run.runKey === this.selectedRunKey ? run : null;
   }
 
   /**
@@ -286,7 +324,7 @@ export class DdSimulationControl extends LitElement {
 
   /** The descriptor for the SELECTED run, which need not be the drafted one. */
   private _runDescriptor(): ScenarioSummary | null {
-    const run = this.run;
+    const run = this._actionRun();
     if (run === null) return null;
     return (
       this.scenarios.find((item) => item.scenarioId === run.metadata.scenarioId) ?? this._descriptor
@@ -336,22 +374,43 @@ export class DdSimulationControl extends LitElement {
       this._message = errorMessage(error);
       return;
     }
+    /*
+     * A draft has no run key yet, so its own identity scopes the retry -- and
+     * that identity is the whole request, not the seed it happens to carry.
+     *
+     * Scoped to the seed, an uncertain Prepare followed by an edit sent a
+     * different body under the same key, which the server binds to the payload
+     * it first saw and refuses for any other. The corrected draft could then
+     * not be created at all until the page was reloaded. Repeating the same
+     * draft is still the same request, which is the whole point of a retry.
+     *
+     * Taken from the snapshot that is about to be sent, and the same snapshot
+     * retires the key on the answer: nothing between the two can move.
+     */
+    const request = {
+      network: this._network,
+      mode: this._mode,
+      scenario: {
+        scenarioId: descriptor.scenarioId,
+        scenarioVersion: descriptor.version,
+        seed: this._seed,
+        parameters,
+      },
+    };
+    const scope = draftScope(request);
     this._busy = true;
     this._message = '';
     try {
       const result = await adminApi.createRun({
         csrfToken: session.csrfToken,
-        // A draft has no run key yet, so the seed scopes it: repeating the
-        // same draft is the same request, a new seed is a new one.
-        idempotencyKey: this._idempotency(`draft:${this._seed}`, 'create'),
-        network: this._network,
-        mode: this._mode,
-        scenario: { scenarioId: descriptor.scenarioId, scenarioVersion: descriptor.version, seed: this._seed, parameters },
+        idempotencyKey: this._idempotency(scope, 'create'),
+        ...request,
       });
       this._report(result.run);
-      this._completedOperation(`draft:${this._seed}`, 'create');
-      this._riskAcknowledged = false;
-      this._startAcknowledged = false;
+      this._completedOperation(scope, 'create');
+      // The acknowledgements are not cleared here any more. They are cleared
+      // wherever the selected run changes, which covers this case and the one
+      // this line missed: moving between two runs that already exist.
       // The dashboard owns the address bar; it puts this key in it, so a reload
       // comes back to the run that was just created rather than to nothing.
       this.dispatchEvent(
@@ -369,7 +428,7 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _validate(): Promise<void> {
-    const run = this.run;
+    const run = this._actionRun();
     const session = this.session;
     if (run === null || session === null) return;
     this._busy = true;
@@ -386,7 +445,7 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _arm(): Promise<void> {
-    const run = this.run;
+    const run = this._actionRun();
     const session = this.session;
     const descriptor = this._runDescriptor();
     if (run === null || session === null || descriptor === null || !this._riskAcknowledged) return;
@@ -411,7 +470,7 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _start(): Promise<void> {
-    const run = this.run;
+    const run = this._actionRun();
     const session = this.session;
     if (run === null || session === null || !this._startAcknowledged) return;
     this._busy = true;
@@ -428,7 +487,7 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _abort(): Promise<void> {
-    const run = this.run;
+    const run = this._actionRun();
     const session = this.session;
     if (run === null || session === null) return;
     this._busy = true;
@@ -445,7 +504,7 @@ export class DdSimulationControl extends LitElement {
   }
 
   private async _recover(): Promise<void> {
-    const run = this.run;
+    const run = this._actionRun();
     const session = this.session;
     if (run === null || session === null) return;
     this._busy = true;
@@ -473,7 +532,10 @@ export class DdSimulationControl extends LitElement {
         </div>
         ${this._message ? html`<div class="alert" role="alert">${this._message}</div>` : nothing}
         ${this._form(descriptor)}
-        ${this.run !== null && this.plan !== null ? this._selectedView(this.run, this.plan) : nothing}
+        ${(() => {
+          const run = this._actionRun();
+          return run !== null && this.plan !== null ? this._selectedView(run, this.plan) : nothing;
+        })()}
       </section>
     `;
   }
