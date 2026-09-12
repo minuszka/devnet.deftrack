@@ -125,6 +125,15 @@ jobs:
       - name: Browser tests (client)
         run: npm run test:e2e -w client
 
+      # The Content-Security-Policy nginx serves, applied by a real browser to
+      # the BUILT client -- not the dev server, which rewrites modules and runs
+      # Lit in dev mode, so a pass there would say nothing about the bundle that
+      # is deployed. The policy text is read from ops/nginx/csp-enforce.conf, so
+      # a header edited on the server and a client that can no longer live under
+      # it cannot pass each other unnoticed.
+      - name: CSP against the built client
+        run: npm run test:csp -w client
+
       # Traces and failure screenshots, kept only when there is a failure to
       # explain. They contain synthetic fixture data by construction.
       - name: Upload browser-test artefacts

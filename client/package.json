@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run src",
     "test:e2e": "playwright test",
-    "test:e2e:browser": "playwright install chromium"
+    "test:e2e:browser": "playwright install chromium",
+    "test:csp": "playwright test --config playwright.csp.config.ts"
   },
   "dependencies": {
     "@devnet-deftrack/shared": "*",
