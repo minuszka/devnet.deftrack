@@ -1162,6 +1162,20 @@ visszaállítása után a reload-teszt zöld maradt, mert a `connectedCallback` 
 mindig olvasta az URL-t. A teszt most a reload után **tovább is lapoz**, így
 mindkét irány bizonyított.
 
+**Egy hibaosztály, amit a CI hozott elő, nem a gépem.** A PR első CI-futása
+megbuktatta a **10. napi** „a page past the server offset cap is clamped"
+tesztet. A teszt megvárja, amíg az **URL** beáll, aztán **egyszer** kiolvassa a
+kéréslistát — csakhogy az URL előbb áll be, mint ahogy az általa kiváltott kérés
+elindul. A gépemen két napig zöld volt, a CI lassabb gépén elsőre elbukott: az
+állítás időzítésről szólt, nem arról a viselkedésről, amit megnevez.
+
+Öt állítás volt ilyen alakú — **három a 10. napról, kettő a maiból** —, és mind
+az öt `expect.poll`-ra váltott. A megkülönböztető kérdés az, hogy az előtte lévő
+várakozás **mit bizonyít**: a válaszból származó, kirajzolt adatra várni elég;
+az URL-re vagy egy custom element létezésére várni **nem**, mert egyik sem
+jelenti azt, hogy a kérés megtörtént. Ugyanez a hiba jött elő két commit-tal
+korábban a Fairness-tesztben is — a második előfordulás teszi osztállyá.
+
 **Amit ma szándékosan NEM csináltam:** a staking nézetváltó gombjain nincs
 `aria-pressed`, az ablakválasztón van. Ez valódi hiány, de a **12. nap**
 (szemantika, fókusz, kontraszt) dolga; nem kezdek bele egy másik nap
@@ -1172,7 +1186,7 @@ feladatába azért, mert útközben láttam.
 | Kapu | Eredmény |
 |---|---|
 | K1 | mind exit 0 — 844 szerver + 151 kliens unit, typecheck, build, `git diff --check` tiszta |
-| K2 | exit 0 — **104** böngészőteszt (92 → 104); a query-state suite négyszer egymás után zöld |
+| K2 | exit 0 — **104** böngészőteszt (92 → 104); a query-state suite négyszer egymás után zöld, a teljes suite **egy workerrel** (ahogy a CI futtatja) kétszer |
 
 A 10. napi három oldal (Rounds, Fairness, Experiments) regressziótesztjei
 változatlanul zöldek.
@@ -1184,7 +1198,7 @@ változatlanul zöldek.
 elkezdhető; függősége nincs a mai munkán túl.
 
 ```text
-Commit(ok), végső SHA: b954e9b
+Commit(ok), végső SHA: b954e9b (kötések + tesztek), 1a0d7d3 (a versenyhelyzetes állítások)
 Végső git státusz: a saját munkám tiszta
 Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
