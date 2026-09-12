@@ -144,21 +144,19 @@ export class DdPageFairness extends LitElement {
       }
 
       /*
-       * Which profile is signing ChainLocks at the tip -- the same rule the
-       * front page uses, from the same two reads. If it cannot be resolved the
-       * page asks for an explicit choice rather than quietly aggregating: a
-       * number covering five schedules looks like an answer without being one.
+       * If the profile cannot be resolved the page asks for an explicit choice
+       * rather than quietly aggregating: a number covering five schedules looks
+       * like an answer without being one.
        */
-      if (this._resolved === null) {
-        const [clocks, health] = await Promise.all([
-          run.api.chainlocks(50).catch(() => null),
-          run.api.health().catch(() => null),
-        ]);
+      const resolving = this._resolveProfile(run);
+      if (this._llmq === null) {
+        // Awaited only when its answer decides what to ask for.
+        await resolving;
         if (run.stale) return;
-        this._resolved = primaryProfile({
-          signers: clocks?.signers,
-          tipHeight: health?.chainTip,
-        });
+      } else {
+        // Under an explicit choice it decides nothing but the "at the tip"
+        // marker, so the figures do not wait two more round trips for it.
+        void resolving;
       }
 
       if (this._effective() === null) {
@@ -177,6 +175,34 @@ export class DdPageFairness extends LitElement {
       if (run.stale || isAbortError(error)) return;
       this._error = errorMessage(error);
     }
+  }
+
+  /**
+   * Which profile is signing ChainLocks at the tip -- the same rule the front
+   * page uses, from the same two reads.
+   *
+   * Read on every tick, not once. It used to be guarded by
+   * `_resolved === null`, and `{ known: false }` is not null either, so BOTH
+   * answers latched for the life of the component: one 503 on the ChainLock
+   * report meant no fairness figure was ever requested again, and a tip
+   * crossing the activation height latched the other way -- the link that
+   * exists to follow the tip went on asking about the profile that had stopped
+   * signing. A full reload or a manual choice was the only way out of either.
+   *
+   * The profile registry is still read once, and that cache is the justified
+   * one: profiles change with the binary, not with the tip. This pair IS the
+   * tip.
+   */
+  private async _resolveProfile(run: PollRun): Promise<void> {
+    const [clocks, health] = await Promise.all([
+      run.api.chainlocks(50).catch(() => null),
+      run.api.health().catch(() => null),
+    ]);
+    if (run.stale) return;
+    this._resolved = primaryProfile({
+      signers: clocks?.signers,
+      tipHeight: health?.chainTip,
+    });
   }
 
   /**
