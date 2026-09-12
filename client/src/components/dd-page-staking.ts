@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { StakingHealth } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
+import { QueryStateController, type ParamSpec } from '../lib/queryState.js';
 import { num, ratio } from '../lib/format.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -13,6 +14,21 @@ const WINDOWS = [200, 500, 1000, 5000];
 const STALL_SEC = 600;
 
 type LeaderView = 'machines' | 'keys';
+const VIEWS: readonly LeaderView[] = ['machines', 'keys'];
+
+/**
+ * The window and the leaderboard view, in the address bar.
+ *
+ * Both lived in component memory. The window matters most: "one machine
+ * produced 40% of the blocks" is a claim about a sample, and a link that drops
+ * the sample hands on the claim without it. The view matters because machines
+ * and keys are two different questions -- two daemons on one box are one
+ * machine -- and which one somebody was looking at is part of what they found.
+ */
+const QUERY: Record<string, ParamSpec> = {
+  blocks: { kind: 'choice', values: WINDOWS, fallback: 500 },
+  view: { kind: 'enum', values: VIEWS, fallback: 'machines' },
+};
 
 export class DdPageStaking extends LitElement {
   static override properties = {
@@ -31,6 +47,32 @@ export class DdPageStaking extends LitElement {
     intervalMs: REFRESH_MS,
     load: (run) => this._load(run),
   });
+  /** The address bar; the only thing that reacts to either control. */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    const before = this._blocks;
+    this._applyQuery(values);
+    /*
+     * Only the window changes what is asked for. The view is a way of reading
+     * the answer already on screen -- machines against keys -- so switching it
+     * must not re-ask the server, which is what it did not do before either.
+     */
+    if (this._blocks !== before) this._poll.refresh();
+  });
+
+  override connectedCallback(): void {
+    // Before the first fetch, so a link's window is in the first request rather
+    // than in a correction to it.
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  /** URL -> component state. One direction; the URL is the source. */
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const blocks = values['blocks'];
+    if (typeof blocks === 'number') this._blocks = blocks;
+    const view = values['view'];
+    this._view = VIEWS.includes(view as LeaderView) ? (view as LeaderView) : 'machines';
+  }
 
   static override styles = [
     baseStyles,
@@ -269,12 +311,11 @@ export class DdPageStaking extends LitElement {
   }
 
   private _setWindow(n: number): void {
-    this._blocks = n;
-    this._poll.refresh();
+    this._query.set({ blocks: n });
   }
 
   private _setView(v: LeaderView): void {
-    this._view = v;
+    this._query.set({ view: v });
   }
 
   override render(): TemplateResult {

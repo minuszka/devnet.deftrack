@@ -15,6 +15,8 @@
  * browser suite worthless.
  */
 import type {
+  BlockArrivalReport,
+  BlockRow,
   ChainLockReport,
   ExperimentRow,
   HealthSnapshot,
@@ -22,9 +24,12 @@ import type {
   LlmqProfileView,
   MasternodeTimelinePoint,
   Page as PageEnvelope,
+  PeerPropagation,
   QuorumRoundDetail,
   QuorumRoundListItem,
   SelectionFairness,
+  StakingHealth,
+  TxRow,
 } from '@devnet-deftrack/shared';
 
 /** A fixed instant, so nothing in a fixture depends on the wall clock. */
@@ -300,4 +305,146 @@ export function selectionFairness(
     totals: { nodesCounted: 5, timesSelected: 90, timesInvalid: 2, worstInvalidRate: 0.1 },
     ...overrides,
   };
+}
+
+/* ── day 11: the remaining pages that carry a control ─────────────────────── */
+
+export function blockArrivalReport(
+  overrides: Partial<BlockArrivalReport> = {}
+): BlockArrivalReport {
+  return {
+    blocksConsidered: 500,
+    measured: 480,
+    unmeasured: 20,
+    firstMeasuredHeight: TIP_HEIGHT - 499,
+    lastMeasuredHeight: TIP_HEIGHT,
+    lagSec: { min: 0, p50: 2, p90: 7, p99: 82, max: 448 },
+    late: [{ thresholdSec: 120, blocks: 7, share: 0.0146 }],
+    slowest: [{ height: TIP_HEIGHT - 12, time: 1_757_000_000, lagSec: 448 }],
+    points: [{ height: TIP_HEIGHT, time: 1_757_000_100, lagSec: 2 }],
+    zmqEnabled: true,
+    ...overrides,
+  };
+}
+
+export function peerPropagation(overrides: Partial<PeerPropagation> = {}): PeerPropagation {
+  return {
+    topic: 'block',
+    hostsReporting: ['host-a', 'host-b'],
+    events: [
+      {
+        hash: 'f'.repeat(64),
+        height: TIP_HEIGHT,
+        hosts: 2,
+        firstHost: 'host-a',
+        lastHost: 'host-b',
+        spreadMs: 420,
+        medianDelayMs: 210,
+        uncertaintyMs: 50,
+        uncertaintyIsLowerBound: false,
+        clockUnknownHosts: [],
+        withinNoise: false,
+        missingHosts: [],
+        delays: [
+          { host: 'host-a', delayMs: 0 },
+          { host: 'host-b', delayMs: 420 },
+        ],
+      },
+    ],
+    laggards: [{ host: 'host-b', samples: 12, meanDelayMs: 380, lastPlaceShare: 0.75 }],
+    hosts: [
+      {
+        host: 'host-a',
+        peers: 9,
+        inbound: 3,
+        verifiedMasternodes: 2,
+        medianPingMs: 18,
+        height: TIP_HEIGHT,
+        clockOffsetMs: 4,
+        agentVersion: '/DeFCoN:22.1.5/',
+        nodeBuild: 'd067c3dd6ba9a29eb86797db75816a47',
+        reportedAt: FIXED_NOW_ISO,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function stakingHealth(overrides: Partial<StakingHealth> = {}): StakingHealth {
+  const windowBlocks = overrides.windowBlocks ?? 500;
+  return {
+    blocks: windowBlocks,
+    windowBlocks,
+    fromHeight: TIP_HEIGHT - windowBlocks + 1,
+    toHeight: TIP_HEIGHT,
+    medianIntervalSec: 112,
+    meanIntervalSec: 161,
+    longestGapSec: 454,
+    stallCount: 0,
+    distinctStakers: 9,
+    hhi: 0.1179,
+    gini: 0.21,
+    topStakerShare: 0.16,
+    stakers: [
+      { payee: 'PfixtureStaker1', blocks: 80, share: 0.16, host: 'fullnode-1' },
+      { payee: 'PfixtureStaker2', blocks: 60, share: 0.12, host: 'fullnode-2' },
+    ],
+    byHost: {
+      distinctHosts: 9,
+      hhi: 0.1179,
+      topHostShare: 0.16,
+      unattributedBlocks: 0,
+      hosts: [
+        { host: 'fullnode-1', blocks: 80, share: 0.16 },
+        { host: 'fullnode-2', blocks: 60, share: 0.12 },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+export function blockRow(overrides: Partial<BlockRow> = {}): BlockRow {
+  const height = overrides.height ?? TIP_HEIGHT;
+  return {
+    height,
+    hash: `${String(height).padStart(8, '0')}${'b'.repeat(56)}`,
+    time: Date.parse(FIXED_NOW_ISO) / 1_000 - (TIP_HEIGHT - height) * 150,
+    nTx: 2,
+    size: 1_024,
+    isProofOfStake: true,
+    hasChainLock: true,
+    totalOutSat: '50000000000',
+    masternodePaidSat: '25000000000',
+    burnedSat: '0',
+    stakePaidSat: '50000000000',
+    payee: 'PfixturePayee1',
+    ...overrides,
+  };
+}
+
+export function blockRun(count: number, topHeight = TIP_HEIGHT): BlockRow[] {
+  return Array.from({ length: count }, (_unused, i) => blockRow({ height: topHeight - i }));
+}
+
+export function txRow(overrides: Partial<TxRow> = {}): TxRow {
+  const height = overrides.height ?? TIP_HEIGHT;
+  return {
+    txid: `${String(height).padStart(8, '0')}${'d'.repeat(56)}`,
+    height,
+    time: Date.parse(FIXED_NOW_ISO) / 1_000,
+    size: 226,
+    type: 0,
+    isCoinbase: false,
+    isCoinstake: false,
+    hasChainLock: true,
+    valueOutSat: '1000000000',
+    stakePaidSat: null,
+    voutCount: 2,
+    vinCount: 1,
+    ...overrides,
+  };
+}
+
+export function txRun(count: number, topHeight = TIP_HEIGHT): TxRow[] {
+  return Array.from({ length: count }, (_unused, i) => txRow({ height: topHeight - i }));
 }

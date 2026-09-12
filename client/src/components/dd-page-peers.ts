@@ -2,11 +2,27 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { PeerPropagation } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
+import { QueryStateController, type ParamSpec } from '../lib/queryState.js';
 import { ago, num } from '../lib/format.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
 const REFRESH_MS = 30_000;
+
+type Topic = 'block' | 'chainlock';
+const TOPICS: readonly Topic[] = ['block', 'chainlock'];
+
+/**
+ * The topic this view is showing, in the address bar.
+ *
+ * It lived in component memory, so a reload dropped back to blocks and a link
+ * carried nothing: somebody who had found a host that is slow on ChainLocks but
+ * not on blocks -- which is the distinction this page exists to make -- could
+ * not hand that screen to anybody else.
+ */
+const QUERY: Record<string, ParamSpec> = {
+  topic: { kind: 'enum', values: TOPICS, fallback: 'block' },
+};
 
 const ms = (v: number | null): string => (v === null ? '—' : `${Math.round(v)} ms`);
 
@@ -18,13 +34,31 @@ export class DdPagePeers extends LitElement {
   };
 
   private _d: PeerPropagation | null = null;
-  private _topic: 'block' | 'chainlock' = 'block';
+  private _topic: Topic = 'block';
   private _error = '';
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
     intervalMs: REFRESH_MS,
     load: (run) => this._load(run),
   });
+  /** The address bar; the only thing that reacts to a topic change. */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    this._applyQuery(values);
+    this._poll.refresh();
+  });
+
+  override connectedCallback(): void {
+    // Before the first fetch, so the first request already carries the topic
+    // the link asked for rather than the default followed by a correction.
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  /** URL -> component state. One direction; the URL is the source. */
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const topic = values['topic'];
+    this._topic = TOPICS.includes(topic as Topic) ? (topic as Topic) : 'block';
+  }
 
   static override styles = [
     baseStyles,
@@ -70,9 +104,13 @@ export class DdPagePeers extends LitElement {
     }
   }
 
-  private _setTopic(t: 'block' | 'chainlock'): void {
-    this._topic = t;
-    this._poll.refresh();
+  /**
+   * The control writes the URL; the URL hands the value back once and the poll
+   * reloads from that one callback. Setting the field here as well would fetch
+   * twice for every click.
+   */
+  private _setTopic(t: Topic): void {
+    this._query.set({ topic: t });
   }
 
   /** The build most hosts agree on; anything else is drift worth seeing. */
