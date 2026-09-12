@@ -794,6 +794,19 @@ export interface DslSummary {
   absent: number;
   convergenceRate: number | null;
   totalMissedBits: number;
+  /**
+   * Masternode-epochs the pool reached no verdict on, either way.
+   *
+   * The counterpart of `totalMissedBits`, and the number format version 1
+   * could not express: there, a masternode nobody heard from and one everybody
+   * vouched for shared a single clear bit. Summed only over rows that actually
+   * carry the observed side -- a row the explorer has not read it back for is
+   * left out rather than counted as a zero, which would assert the very thing
+   * the second bitfield exists to stop asserting.
+   */
+  totalUnobservedBits: number;
+  /** Rows counted in `totalUnobservedBits`, so the number is never read alone. */
+  unobservedBitsFromEpochs: number;
   latest: {
     epoch: number;
     boundaryHeight: number;

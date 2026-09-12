@@ -549,9 +549,18 @@ Two corrections to what this entry said before, both verified at
   had already sent contributions. The three penalised were all on the host
   restarted **13 s before the base block**: a roll punishes the node that is
   down around the base, not the one restarting mid-session. To the sentinels a
-  fleet-wide restart is an outage, and that epoch went absent. Time a roll to
-  start right after a cycle's Commit stage (base + 8..10 blocks) and finish
-  before the next base; declare the absent epoch as expected. The explorer
+  fleet-wide restart is an outage, and that epoch went absent. Time a roll from
+  the phase schedule in `llmq/params.h`, never from when messages happened to be
+  seen: `llmq_defcon` sets `dkgPhaseBlocks = 2` over five phases, so the session
+  runs base+0..+10 and **Commit occupies +8..+10** --
+  `.dkgMiningWindowStart = 10` carries the comment `dkgPhaseBlocks * 5 = after
+  finalization`. A roll therefore starts at **base+10**, not +8; this line said
+  "+8..10 blocks" until 2026-09-12, which reads as "after Commit" and is one
+  phase early. It must also end before the Sentinel report pool freezes at +20,
+  which leaves +10..+19 -- a span that unavoidably overlaps the commitment
+  **mining** window (+10..+18, `dkgMiningWindowEnd`). So if the covered cycle
+  mines no commitment, that is the reason, and it is declared before the roll
+  rather than explained after it; likewise the absent epoch. The explorer
   now names the covering run on such a round ("Explained"), and every failed
   round since the first masternode existed has one -- 20 of 20.
 
