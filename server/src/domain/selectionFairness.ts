@@ -62,10 +62,36 @@ export interface NodeFairness {
 
 export interface HostFairness {
   host: string;
+  /**
+   * Masternodes of this host the window SELECTED at least once.
+   *
+   * Not the host's size, and the name is kept only because the wire field is.
+   * The page called this column "Masternodes", so a host with seven registered
+   * nodes of which five were drawn read as a host with five -- the other two
+   * looked as though they had left, when what had actually happened is that
+   * the selection never reached them, which is the finding.
+   */
   nodes: number;
+  /**
+   * Masternodes this host has registered and active NOW, from the pool rather
+   * than from the sample. Null when the host is not in the current registry:
+   * a size that is no longer known is not a size to invent.
+   */
+  currentRegisteredNodes: number | null;
   timesSelected: number;
   timesInvalid: number;
   invalidRate: number | null;
+}
+
+/**
+ * Totals over every node in the window, so a caller that truncates its node
+ * list for display still has a figure that describes the whole of it.
+ */
+export interface FairnessTotals {
+  nodesCounted: number;
+  timesSelected: number;
+  timesInvalid: number;
+  worstInvalidRate: number | null;
 }
 
 export interface SelectionFairness {
@@ -81,6 +107,8 @@ export interface SelectionFairness {
 
   nodes: NodeFairness[];
   hosts: HostFairness[];
+  /** Computed over every node, before any caller truncates the list. */
+  totals: FairnessTotals;
   /** Known masternodes eligible in the window that no round ever selected. */
   neverSelected: string[];
   /** Selections below which no failure rate is reported. */
@@ -175,6 +203,23 @@ export function selectionFairness(
     })
     .sort((a, b) => b.timesInvalid - a.timesInvalid || b.timesSelected - a.timesSelected);
 
+  /*
+   * How many nodes each host has in the CURRENT pool, counted from the pool and
+   * not from the sample. A host whose nodes were all passed over still has
+   * them, and the table has to be able to say so.
+   *
+   * Only nodes the window could have reached are counted, for the same reason
+   * eligibility exists at all: a masternode registered after every round in the
+   * window was not passed over, it was not there, and counting it would
+   * manufacture a starved host out of a new one.
+   */
+  const registeredPerHost = new Map<string, number>();
+  for (const [proTxHash, known] of knownNodes) {
+    if (!known.host) continue;
+    if (eligibleRoundsFor(proTxHash) <= 0) continue;
+    registeredPerHost.set(known.host, (registeredPerHost.get(known.host) ?? 0) + 1);
+  }
+
   const perHost = new Map<string, { nodes: Set<string>; picked: number; invalid: number }>();
   for (const n of nodes) {
     if (!n.host) continue;
@@ -184,16 +229,34 @@ export function selectionFairness(
     h.invalid += n.timesInvalid;
     perHost.set(n.host, h);
   }
+  // A currently-registered host the window never drew from belongs in the table
+  // at zero, not missing from it: absence of a row reads as absence of a host.
+  for (const host of registeredPerHost.keys()) {
+    if (!perHost.has(host)) {
+      perHost.set(host, { nodes: new Set<string>(), picked: 0, invalid: 0 });
+    }
+  }
 
   const hosts: HostFairness[] = [...perHost.entries()]
     .map(([host, h]) => ({
       host,
       nodes: h.nodes.size,
+      currentRegisteredNodes: registeredPerHost.get(host) ?? null,
       timesSelected: h.picked,
       timesInvalid: h.invalid,
       invalidRate: h.picked >= minSamples ? h.invalid / h.picked : null,
     }))
     .sort((a, b) => b.timesInvalid - a.timesInvalid || b.timesSelected - a.timesSelected);
+
+  const totals: FairnessTotals = {
+    nodesCounted: nodes.length,
+    timesSelected: nodes.reduce((sum, n) => sum + n.timesSelected, 0),
+    timesInvalid: nodes.reduce((sum, n) => sum + n.timesInvalid, 0),
+    worstInvalidRate: nodes.reduce<number | null>(
+      (worst, n) => (n.invalidRate === null ? worst : Math.max(worst ?? 0, n.invalidRate)),
+      null
+    ),
+  };
 
   // Silence is a finding: a masternode the selection never reached is invisible
   // in any table built only from members. But only for nodes the window could
@@ -208,6 +271,7 @@ export function selectionFairness(
     expectedSelectionRate,
     nodes,
     hosts,
+    totals,
     neverSelected,
     minSamples,
   };

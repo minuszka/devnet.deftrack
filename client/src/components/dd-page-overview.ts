@@ -6,6 +6,7 @@ import type {
 } from '@devnet-deftrack/shared';
 import type { ChainLockReport, ExperimentRow, HealthSnapshot } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
+import { FreshnessTracker, freshnessNote } from '../lib/freshness.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
@@ -51,6 +52,21 @@ export class DdPageOverview extends LitElement {
     intervalMs: REFRESH_MS,
     load: (run) => this._load(run),
   });
+  /** How old these figures are, and whether the last attempt to renew them worked. */
+  private readonly _freshness = new FreshnessTracker();
+  /** Redraws the age between polls; see the same field on dd-shell. */
+  private _ageTimer: number | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._ageTimer = window.setInterval(() => this.requestUpdate(), 1000);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (this._ageTimer !== null) window.clearInterval(this._ageTimer);
+    this._ageTimer = null;
+  }
 
   static override styles = [
     baseStyles,
@@ -65,11 +81,32 @@ export class DdPageOverview extends LitElement {
         display: inline-flex;
         align-items: center;
         gap: var(--sp-2);
+        flex-wrap: wrap;
         font-family: var(--font-mono);
         font-size: var(--fs-xs);
         color: var(--ink-3);
         letter-spacing: 0.06em;
       }
+      /* The chip said "live" whatever had happened. It is a claim about these
+         figures, so it has to be able to withdraw the claim. */
+      .refresh.warn { color: var(--warn); }
+      .refresh.bad { color: var(--crit); }
+      .refresh .live-dot.warn { background: var(--warn); animation: none; box-shadow: none; }
+      .refresh .live-dot.bad { background: var(--crit); animation: none; box-shadow: none; }
+      .refresh .live-dot.muted { background: var(--ink-3); animation: none; box-shadow: none; }
+      .refresh button {
+        font: inherit;
+        letter-spacing: inherit;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: var(--ink);
+        background: var(--bg-raised);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        padding: 3px 9px;
+        cursor: pointer;
+      }
+      .refresh button:hover { border-color: var(--accent); color: var(--accent); }
 
       /* The operational summary: one alert, then the strips that qualify it.
          Stacked tight, because together they are one reading; the tiles below
@@ -419,9 +456,14 @@ export class DdPageOverview extends LitElement {
       this._clocks = clocks;
       this._running = running?.items ?? [];
       this._error = '';
+      this._freshness.succeeded(Date.now());
     } catch (error) {
+      // Neither an abort nor a superseded run is a failure, and accepting
+      // either would let a late answer mark this page fresh again.
       if (run.stale || isAbortError(error)) return;
       this._error = errorMessage(error);
+      this._freshness.failed(errorMessage(error), Date.now());
+      this.requestUpdate();
     } finally {
       if (!run.stale) this._loading = false;
     }
@@ -447,6 +489,22 @@ export class DdPageOverview extends LitElement {
    * schedules invents streaks no type ever had. Saying which one is part of the
    * fix, not decoration.
    */
+  /**
+   * How old these figures are. It used to read "live - refreshes every 30 s"
+   * unconditionally, which is a promise rather than a reading: after the
+   * endpoint went away it went on saying "live" beside numbers that were an
+   * hour old, with a green dot breathing next to them.
+   */
+  private _freshnessChip(): TemplateResult {
+    const note = freshnessNote(this._freshness.read(Date.now(), REFRESH_MS), REFRESH_MS);
+    return html`<span class="refresh ${note.tone}" role="status" title=${note.detail ?? nothing}>
+      <span class="live-dot ${note.tone}" aria-hidden="true"></span>${note.text}
+      ${note.tone === 'bad'
+        ? html`<button type="button" @click=${() => this._poll.refresh()}>Retry</button>`
+        : nothing}
+    </span>`;
+  }
+
   private _profileNote(): TemplateResult {
     if (!this._profile.known) {
       return html`<div class="note" role="status">
@@ -476,7 +534,7 @@ export class DdPageOverview extends LitElement {
             </div>
             ${this._profileNote()}
           </div>
-          <span class="refresh"><span class="live-dot" aria-hidden="true"></span>live · refreshes every 30 s</span>
+          ${this._freshnessChip()}
         </div>
 
         ${this._error ? html`<div class="err" role="alert">${this._error}</div>` : nothing}

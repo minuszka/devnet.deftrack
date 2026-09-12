@@ -2,22 +2,56 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { ExperimentDetail, ExperimentOutcome, ExperimentRow } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
+import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, num, ratio } from '../lib/format.js';
-import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
+import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
 const REFRESH_MS = 60_000;
+/**
+ * One page, and the same number the server defaults to.
+ *
+ * The page used to ask for the list with no arguments at all and render
+ * whatever came back -- which was the server's default page, 25 rows, under a
+ * heading that said "Recorded runs". At 34 records that is nine experiments
+ * this project has no other index of, absent from the only screen that lists
+ * them, with nothing on the page suggesting there were more.
+ */
+const PAGE_SIZE = 25;
+
+type StatusFilter = '' | 'running' | 'closed';
+
+/** What this view's URL carries. Defaults are absent, so `/experiments` is plain. */
+const QUERY: Record<string, ParamSpec> = {
+  status: { kind: 'enum', values: ['', 'running', 'closed'], fallback: '' },
+  page: { kind: 'page', limit: PAGE_SIZE },
+};
 
 export class DdPageExperiments extends LitElement {
   static override properties = {
     runKey: { type: String },
     _rows: { state: true },
+    _total: { state: true },
+    _offset: { state: true },
+    _status: { state: true },
+    _loading: { state: true },
     _detail: { state: true },
     _error: { state: true },
   };
 
   runKey: string | null = null;
   private _rows: ExperimentRow[] = [];
+  /** The true match count, not the size of the page on screen. */
+  private _total = 0;
+  private _offset = 0;
+  private _status: StatusFilter = '';
+  /** Loading is not empty: the two look identical and mean opposite things. */
+  private _loading = true;
+  /** The address bar; the only thing that reacts to a filter change. */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    this._applyQuery(values);
+    this._poll.refresh();
+  });
   private _detail: ExperimentDetail | null = null;
   private _error = '';
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
@@ -31,6 +65,7 @@ export class DdPageExperiments extends LitElement {
     cardStyles,
     tableStyles,
     pageStyles,
+    pagerStyles,
     css`
       .kv {
         display: grid;
@@ -97,25 +132,72 @@ export class DdPageExperiments extends LitElement {
     // Only a real change. On the first update every initialised property is
     // in the map, and the controller has already loaded once on connect --
     // reloading here made every detail page fetch itself twice.
-    if (changed.has('runKey') && changed.get('runKey') !== undefined) this._poll.refresh();
+    if (changed.has('runKey') && changed.get('runKey') !== undefined) {
+      // Whatever is held belongs to the run that was on screen a moment ago.
+      // Leaving it there means one run's result is rendered under another
+      // run's URL until the new answer lands -- briefly, and wrongly.
+      this._detail = null;
+      this._rows = [];
+      this._total = 0;
+      this._error = '';
+      this._poll.refresh();
+    }
+  }
+
+  /** See dd-page-rounds: the URL is read before the first fetch goes out. */
+  override connectedCallback(): void {
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const status = values['status'];
+    this._status = status === 'running' || status === 'closed' ? status : '';
+    const page = typeof values['page'] === 'number' ? values['page'] : 1;
+    this._offset = pageToOffset(page, PAGE_SIZE);
+  }
+
+  private _page(): number {
+    const page = this._query.values['page'];
+    return typeof page === 'number' ? page : 1;
   }
 
   private async _load(run: PollRun): Promise<void> {
+    this._loading = true;
     try {
       if (this.runKey) {
         const detail = await run.api.experiment(this.runKey);
         if (run.stale) return;
         this._detail = detail;
       } else {
-        const rows = (await run.api.experiments()).items;
+        const result = await run.api.experiments({
+          limit: PAGE_SIZE,
+          offset: this._offset,
+          status: this._status === '' ? undefined : this._status,
+        });
         if (run.stale) return;
-        this._rows = rows;
+        this._rows = result.items;
+        // The count of everything that matches, which is the number the pager
+        // and the "of N" both need. The page on screen is a sample of it.
+        this._total = result.total;
       }
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
       this._error = errorMessage(error);
+    } finally {
+      if (!run.stale) this._loading = false;
     }
+  }
+
+  private _setStatus(value: StatusFilter): void {
+    // A filter change makes the old page number meaningless: page 2 of the
+    // closed runs is not page 2 of all runs.
+    this._query.set({ status: value, page: 1 });
+  }
+
+  private _move(delta: number): void {
+    this._query.set({ page: Math.max(1, this._page() + delta) });
   }
 
   override render(): TemplateResult {
@@ -135,9 +217,32 @@ export class DdPageExperiments extends LitElement {
   }
 
   private _list(): TemplateResult {
+    const from = this._total === 0 ? 0 : this._offset + 1;
+    const to = Math.min(this._offset + PAGE_SIZE, this._total);
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">Recorded runs</div></div>
+        <div class="card-head">
+          <div class="card-title">Recorded runs</div>
+          <!-- What is on screen, against what exists. The heading alone used to
+               say "Recorded runs" over a page of 25 out of 34. -->
+          <div class="page-sub mono">
+            ${this._total === 0 ? 'none' : `${num(from)}–${num(to)} of ${num(this._total)}`}
+          </div>
+        </div>
+        <div class="filters">
+          <div class="group">
+            ${(['', 'running', 'closed'] as StatusFilter[]).map(
+              (value) => html`
+                <button
+                  aria-pressed=${this._status === value ? 'true' : 'false'}
+                  @click=${() => this._setStatus(value)}
+                >
+                  ${value === '' ? 'All runs' : value}
+                </button>
+              `
+            )}
+          </div>
+        </div>
         <div class="card-body flush">
           <div class="twrap">
             <table>
@@ -156,10 +261,7 @@ export class DdPageExperiments extends LitElement {
               <tbody>
                 ${this._rows.length === 0
                   ? html`<tr>
-                      <td class="empty" colspan="7">
-                        No experiment recorded yet. Open one through the admin API before changing
-                        anything on the network.
-                      </td>
+                      <td class="empty" colspan="7">${this._emptyReason()}</td>
                     </tr>`
                   : this._rows.map(
                       (r) => html`
@@ -180,8 +282,32 @@ export class DdPageExperiments extends LitElement {
             </table>
           </div>
         </div>
+        <div class="pager">
+          <button ?disabled=${this._offset === 0 || this._loading} @click=${() => this._move(-1)}>
+            Newer
+          </button>
+          <button ?disabled=${to >= this._total || this._loading} @click=${() => this._move(1)}>
+            Older
+          </button>
+          <span>${this._total === 0 ? 'nothing to page through' : `${num(from)}–${num(to)} of ${num(this._total)}`}</span>
+        </div>
       </section>
     `;
+  }
+
+  /**
+   * Why the table is empty, which is three different things.
+   *
+   * "No experiment recorded yet" was printed for all of them, including while
+   * the first request was still in flight and including when a request had
+   * just failed. On a page whose subject is the record of what was done to the
+   * network, "nothing was done" is the one answer that must never be guessed.
+   */
+  private _emptyReason(): string {
+    if (this._loading) return 'Loading…';
+    if (this._error !== '') return 'The list could not be loaded, so what exists is unknown.';
+    if (this._status !== '') return `No ${this._status} run matches. Other runs may exist.`;
+    return 'No experiment recorded yet. Open one through the admin API before changing anything on the network.';
   }
 
   private _detailView(): TemplateResult {

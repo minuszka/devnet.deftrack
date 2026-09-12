@@ -2,6 +2,14 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { LlmqProfileView, QuorumRoundListItem } from '@devnet-deftrack/shared';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
+import {
+  LLMQ_ALL,
+  LLMQ_PATTERN,
+  QueryStateController,
+  llmqApiName,
+  pageToOffset,
+  type ParamSpec,
+} from '../lib/queryState.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { interventionsFor, type InterventionRun } from '../lib/interventions.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
@@ -9,6 +17,24 @@ import { roundHref } from '../lib/router.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 50;
+
+/**
+ * What this view's URL carries.
+ *
+ * `llmq` rather than `llmqName`: the reader types the first, the API takes the
+ * second, and the translation lives in one place. Absent means every profile,
+ * which on this page has always been the default -- unlike Fairness, where
+ * absent means "resolve the one signing at the tip".
+ */
+const QUERY: Record<string, ParamSpec> = {
+  status: {
+    kind: 'enum',
+    values: ['', 'formed', 'failed', 'pending', 'impossible'],
+    fallback: '',
+  },
+  llmq: { kind: 'optional', pattern: LLMQ_PATTERN },
+  page: { kind: 'page', limit: PAGE_SIZE },
+};
 const REFRESH_MS = 60_000;
 
 export class DdPageRounds extends LitElement {
@@ -31,6 +57,17 @@ export class DdPageRounds extends LitElement {
   private _offset = 0;
   private _status = '';
   private _llmq = '';
+  /**
+   * The address bar, and the only thing that reacts to a filter change.
+   *
+   * The controls write here; this hands the values back once; the poll reloads
+   * from that one callback. A control that also refreshed by itself would fetch
+   * twice for every click.
+   */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    this._applyQuery(values);
+    this._poll.refresh();
+  });
   /**
    * Quorum types discovered in the data rather than listed here, so the filter
    * cannot fall out of step with the profiles the collector tracks. Names are
@@ -132,6 +169,29 @@ export class DdPageRounds extends LitElement {
     `,
   ];
 
+  /**
+   * The URL is read before anything loads.
+   *
+   * Controllers run their `hostConnected` in the order they were registered,
+   * and the poll registers first -- so without this the first fetch would go
+   * out with the defaults and a second would follow with the URL's values. One
+   * fetch, with what the address bar actually says.
+   */
+  override connectedCallback(): void {
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  /** URL -> component state. One direction; the URL is the source. */
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const llmq = values['llmq'];
+    this._llmq = typeof llmq === 'string' && llmq !== LLMQ_ALL ? llmq : '';
+    const status = values['status'];
+    this._status = typeof status === 'string' ? status : '';
+    const page = typeof values['page'] === 'number' ? values['page'] : 1;
+    this._offset = pageToOffset(page, PAGE_SIZE);
+  }
+
   private async _load(run: PollRun): Promise<void> {
     try {
       const params: { limit: number; offset: number; status?: string; llmqName?: string } = {
@@ -173,21 +233,28 @@ export class DdPageRounds extends LitElement {
     }
   }
 
+  private _page(): number {
+    const page = this._query.values['page'];
+    return typeof page === 'number' ? page : 1;
+  }
+
+  /*
+   * Every control writes the URL and nothing else. The controller hands the new
+   * values back, `_applyQuery` sets the fields and the poll refreshes -- once.
+   * A filter change also returns to page 1: page 2 of the failed rounds is not
+   * page 2 of all of them, and keeping the number lands the reader past the end
+   * of a different set.
+   */
   private _setStatus(value: string): void {
-    this._status = value;
-    this._offset = 0;
-    this._poll.refresh();
+    this._query.set({ status: value, page: 1 });
   }
 
   private _setLlmq(value: string): void {
-    this._llmq = value;
-    this._offset = 0;
-    this._poll.refresh();
+    this._query.set({ llmq: value === '' ? null : value, page: 1 });
   }
 
   private _move(delta: number): void {
-    this._offset = Math.max(0, this._offset + delta * PAGE_SIZE);
-    this._poll.refresh();
+    this._query.set({ page: Math.max(1, this._page() + delta) });
   }
 
   override render(): TemplateResult {

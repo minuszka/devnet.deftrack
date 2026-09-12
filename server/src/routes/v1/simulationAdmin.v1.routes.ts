@@ -36,6 +36,10 @@ import {
   UnsupportedLiveFaultError,
 } from '../../simulator/liveExecutorPlan.js';
 import { fileCommandQueue, fileOutcomeStore } from '../../simulator/netemWrapperHost.js';
+import {
+  LIVE_NETWORKS,
+  simulationCapabilitiesFrom,
+} from '../../simulator/simulationCapabilities.js';
 import { SimulationRun } from '../../models/SimulationRun.js';
 import { rpc } from '../../services/rpc.service.js';
 import { MongoSimulationActionRepository } from '../../services/simulationAction.repository.js';
@@ -67,7 +71,9 @@ const createSchema = z.object({
   mode: z.enum(['dry-run', 'live']).default('dry-run'),
   scenario: z.unknown(),
 }).strict().refine(
-  (value) => value.mode !== 'live' || value.network === 'regtest',
+  // The same list the capabilities answer names, so the refusal here and the
+  // option the panel offers cannot drift apart.
+  (value) => value.mode !== 'live' || (LIVE_NETWORKS as readonly string[]).includes(value.network),
   { message: 'a live run is only possible on regtest; the executor reaches no other network' }
 );
 const armSchema = z.object({
@@ -209,8 +215,20 @@ export function createSimulationAdminRouter(
   router.use(requireAdminAuth);
   router.use(withCachePolicy('no-store'));
 
+  /**
+   * The allowlist, each entry carrying a parameter object that satisfies its
+   * own schema, plus what this deployment can actually be asked to do.
+   *
+   * Both are additive. A panel built before them sees the fields it always saw;
+   * a panel built after them, talking to a server without them, reads the
+   * template as absent -- which is the honest answer, and not the same as an
+   * empty object that would look runnable.
+   */
   router.get('/scenarios', controlRoute(async (_req, res) => {
-    sendData(res, { items: service.scenarios() });
+    sendData(res, {
+      items: service.scenarios(),
+      capabilities: simulationCapabilitiesFrom(labExecutorConfigured()),
+    });
   }));
 
   /**
@@ -420,6 +438,19 @@ export function createSimulationAdminRouter(
   router.get('/runs/:runKey', controlRoute(async (req, res) => {
     sendData(res, await service.status(runKey(req)));
   }));
+  /**
+   * Whether the lab was proven clean for this run, per target.
+   *
+   * Its own endpoint rather than a wider run projection: the projection is
+   * built field by field and is compared against an audit replay on every read,
+   * so widening it changes six responses and one equality check. The answer is
+   * redacted -- the prober's `privateDetail` is where a host address ends up,
+   * and no operator decision needs it.
+   */
+  router.get('/runs/:runKey/recovery', controlRoute(async (req, res) => {
+    sendData(res, await service.recovery(runKey(req)));
+  }));
+
   router.get('/runs/:runKey/history', controlRoute(async (req, res) => {
     sendData(res, await service.history(runKey(req)));
   }));
@@ -434,11 +465,16 @@ export function createSimulationAdminRouter(
  * this is the second lock -- an unconfigured deployment has no executor at all,
  * not a misconfigured one that could reach a host.
  */
-function buildLabExecutor(): DockerLiveExecutor | undefined {
-  if (!config.simulator.labExecutorEnabled) return undefined;
+function labExecutorConfigured(): boolean {
+  if (!config.simulator.labExecutorEnabled) return false;
   if (config.simulator.labWrapperCommandDir === '') {
     throw new Error('SIMULATION_LAB_EXECUTOR_ENABLED needs SIMULATION_LAB_WRAPPER_COMMANDS');
   }
+  return true;
+}
+
+function buildLabExecutor(): DockerLiveExecutor | undefined {
+  if (!labExecutorConfigured()) return undefined;
   return new DockerLiveExecutor(
     fileCommandQueue(config.simulator.labWrapperCommandDir),
     dockerLabProbes(config.simulator.labDockerBin),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchRoute, roundHref, ROUTES } from './router.js';
+import { isSeparateShell, matchRoute, roundHref, ROUTES } from './router.js';
 
 describe('matchRoute', () => {
   it('matches the sections', () => {
@@ -12,8 +12,45 @@ describe('matchRoute', () => {
     expect(matchRoute('/rounds/').route.tag).toBe('dd-page-rounds');
   });
 
-  it('falls back to the overview rather than rendering nothing', () => {
-    expect(matchRoute('/nowhere').route.tag).toBe('dd-page-overview');
+  /*
+   * This used to assert the opposite -- that an unknown path fell back to the
+   * overview -- and that fallback was the bug. The reader followed a stale link
+   * and landed on the front page with nothing saying why, so a dead link was
+   * indistinguishable from a working one. The expectation is replaced because
+   * the contract changed, not to make a red test go away.
+   */
+  it('names an unknown path instead of substituting the overview', () => {
+    const match = matchRoute('/nowhere');
+    expect(match.status).toBe('not-found');
+    expect(match.route.tag).toBe('dd-page-not-found');
+    expect(match.param).toBeNull();
+    expect(match.path).toBe('/nowhere');
+  });
+
+  it('never claims a section is the current one while reporting not found', () => {
+    const match = matchRoute('/nowhere');
+    expect(ROUTES.map((r) => r.path)).not.toContain(match.route.path);
+  });
+
+  /*
+   * `decodeURIComponent` throws a URIError on a truncated escape, and the shell
+   * calls matchRoute while constructing itself: the throw meant the custom
+   * element never upgraded and the whole page was blank.
+   */
+  it('reports a malformed escape rather than throwing', () => {
+    for (const path of ['/round/%', '/tx/%E0%A4%A', '/block/%zz', '/experiments/%']) {
+      const match = matchRoute(path);
+      expect(match.status).toBe('malformed');
+      expect(match.route.tag).toBe('dd-page-not-found');
+      expect(match.param).toBeNull();
+      expect(match.path).toBe(path);
+    }
+  });
+
+  it('does not mistake a valid escape for a malformed one', () => {
+    expect(matchRoute('/round/7%3A7416%3A0').status).toBe('matched');
+    expect(matchRoute('/').status).toBe('matched');
+    expect(matchRoute('/rounds/').status).toBe('matched');
   });
 
   // The one that could plausibly break: a round key is `<type>:<height>:<index>`,
@@ -51,5 +88,26 @@ describe('matchRoute', () => {
 describe('roundHref', () => {
   it('encodes the colons a round key is built from', () => {
     expect(roundHref('7:7416:0')).toBe('/round/7%3A7416%3A0');
+  });
+});
+
+describe('separate shells', () => {
+  /*
+   * `/admin` is chosen by main.ts from the pathname at load time, so the link
+   * interceptor must leave it to the browser. Pushing the path instead would
+   * change the address without ever loading that shell, and this router has no
+   * route for it -- so a link that works when typed would answer "page not
+   * found" when clicked.
+   */
+  it('names the paths this router must not intercept', () => {
+    expect(isSeparateShell('/admin')).toBe(true);
+    expect(isSeparateShell('/admin/')).toBe(true);
+    expect(isSeparateShell('/admin/runs')).toBe(false);
+    expect(isSeparateShell('/rounds')).toBe(false);
+    expect(isSeparateShell('/')).toBe(false);
+  });
+
+  it('has no route of its own for it, which is why the rule is needed', () => {
+    expect(matchRoute('/admin').status).toBe('not-found');
   });
 });

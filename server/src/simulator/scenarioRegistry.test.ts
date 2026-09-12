@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PLACEHOLDER_TARGET_ID,
   SCENARIO_LIMITS,
+  SCENARIO_PARAMETER_TEMPLATES,
   parseScenarioRequest,
   scenarioDescriptors,
   scenarioRequestFromPreset,
 } from './scenarioRegistry.js';
+import { SIMULATION_SCENARIO_IDS } from './scenarioTypes.js';
 
 describe('simulation scenario registry', () => {
   it('exposes the closed set of nine scenarios', () => {
@@ -125,5 +128,80 @@ describe('simulation scenario registry', () => {
     expect(
       scenarioRequestFromPreset('host-10-masternodes', 'x', { anchorTargetId: 'mn-1' }).parameters
     ).toMatchObject({ anchorTargetId: 'mn-1', expectedMasternodes: 10 });
+  });
+});
+
+/**
+ * The claim the panel's parameter templates rest on, and the only one they make.
+ *
+ * The panel used to keep its own table of defaults, maintained separately from
+ * this schema, and it drifted exactly as such a table does: there was no entry
+ * for `dsl-fault` at all, so choosing it put `{}` in the field -- three required
+ * fields short, refused by the server, with nothing in the panel saying why.
+ * Moving the table next to the validator only helps if something checks that
+ * they agree, which is this.
+ */
+describe('scenario parameter templates', () => {
+  it('has one for every scenario in the registry', () => {
+    expect(Object.keys(SCENARIO_PARAMETER_TEMPLATES).sort()).toEqual([...SIMULATION_SCENARIO_IDS].sort());
+  });
+
+  it.each([...SIMULATION_SCENARIO_IDS])('%s: the template satisfies its own schema', (scenarioId) => {
+    const request = parseScenarioRequest({
+      scenarioId,
+      scenarioVersion: 1,
+      seed: 'template-check',
+      parameters: SCENARIO_PARAMETER_TEMPLATES[scenarioId],
+    });
+    expect(request.scenarioId).toBe(scenarioId);
+  });
+
+  /*
+   * Satisfying the schema and naming a registered target are different
+   * questions, answered in different places. A template may do the first and
+   * must never look as if it has done the second.
+   */
+  it('marks the templates whose target ids are placeholders', () => {
+    const byId = new Map(scenarioDescriptors().map((entry) => [entry.scenarioId, entry]));
+    expect(byId.get('host-outage')?.templateNeedsTargetId).toBe(true);
+    expect(byId.get('clear-recover')?.templateNeedsTargetId).toBe(true);
+    expect(byId.get('mn-stop')?.templateNeedsTargetId).toBe(false);
+    expect(byId.get('dsl-fault')?.templateNeedsTargetId).toBe(false);
+    expect(JSON.stringify(byId.get('host-outage')?.parameterTemplate)).toContain(
+      PLACEHOLDER_TARGET_ID
+    );
+  });
+
+  it('hands out copies, so a caller cannot edit the registry', () => {
+    const first = scenarioDescriptors().find((entry) => entry.scenarioId === 'mn-stop');
+    (first?.parameterTemplate as Record<string, unknown>)['count'] = 99;
+    const second = scenarioDescriptors().find((entry) => entry.scenarioId === 'mn-stop');
+    expect(second?.parameterTemplate).toMatchObject({ count: 1 });
+  });
+
+  /*
+   * The dsl-fault template is the one the panel got wrong, so it is checked
+   * against the node's own rule too: a delay kind needs its delay, and a
+   * non-delay kind must not carry one.
+   */
+  it('keeps the dsl-fault cross-field rules reachable from the template', () => {
+    const template = SCENARIO_PARAMETER_TEMPLATES['dsl-fault'];
+    expect(template).toMatchObject({ faultKind: 'response-drop', count: 1, epochs: 1 });
+    expect(() =>
+      parseScenarioRequest({
+        scenarioId: 'dsl-fault',
+        scenarioVersion: 1,
+        seed: 's',
+        parameters: { ...template, faultKind: 'response-delay' },
+      })
+    ).toThrow(/needs param/);
+    expect(() =>
+      parseScenarioRequest({
+        scenarioId: 'dsl-fault',
+        scenarioVersion: 1,
+        seed: 's',
+        parameters: { ...template, param: 3 },
+      })
+    ).toThrow(/takes no param/);
   });
 });

@@ -110,7 +110,22 @@ router.get(
 
     const [runs, total] = await Promise.all([
       ExperimentRun.find(filter)
-        .sort({ startedAt: -1 })
+        /*
+         * `runKey` breaks the tie. Insurance, and named as such.
+         *
+         * Two runs declared in the same second -- a rollout closes one and
+         * opens the next -- are ordered by nothing at all under `startedAt`
+         * alone, and a paged reader makes two queries. Measured on this
+         * MongoDB: with the sort NOT backed by an index, paging 8 equal-keyed
+         * documents in pages of 4 returned two of them twice and two not at
+         * all. With the `startedAt` index in place, as this collection has, the
+         * order is deterministic and the tie-breaker changes nothing.
+         *
+         * So this is not the fix for an observed defect -- F04 was entirely
+         * client-side. It is what stops the correctness of paging from resting
+         * on an index continuing to exist and continuing to be chosen.
+         */
+        .sort({ startedAt: -1, runKey: -1 })
         .skip(q.offset)
         .limit(q.limit)
         .select(EXPERIMENT_VIEW_FIELDS)

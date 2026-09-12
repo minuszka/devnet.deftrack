@@ -5,15 +5,42 @@ import {
   type ActiveSimulationRun,
   type AdminSession,
   type PublicSimulationRun,
+  type DryRunPlan,
+  type RecoveryReportView,
   type ScenarioSummary,
+  type SimulationCapabilities,
+  type SimulationControlRun,
+  type SimulationPreflight,
   type SimulationHistory,
   type SimulationTarget,
 } from '../lib/admin-api.js';
 import { num } from '../lib/format.js';
+import { isAbortError } from '../lib/errors.js';
+import { PollController, type PollRun } from '../lib/poll.js';
+import { acceptsRunUpdate } from '../lib/simulationRunState.js';
+import {
+  adminHref,
+  decideSelection,
+  isRunKey,
+  runKeyFromSearch,
+} from '../lib/adminRunSelection.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-simulation-control.js';
 
+/** The dashboard's own tables: targets, the run list, the allowlist. */
 const REFRESH_MS = 30_000;
+/**
+ * The selected run's status, while it is still going.
+ *
+ * Faster than the dashboard because it is the thing an operator is watching,
+ * and cheap because it asks for one run rather than five collections. Stops on
+ * a terminal status: a completed run does not change again, and polling it for
+ * ever is load with no reader.
+ */
+const RUN_STATUS_MS = 5_000;
+
+/** Statuses a run never leaves, so there is nothing left to poll for. */
+const TERMINAL = new Set(['completed', 'aborted', 'rejected', 'expired']);
 
 function dateTime(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—';
@@ -43,8 +70,14 @@ export class DdAdminShell extends LitElement {
     _activeRuns: { state: true },
     _runs: { state: true },
     _scenarios: { state: true },
+    _capabilities: { state: true },
     _history: { state: true },
     _selectedRunKey: { state: true },
+    _badRunKey: { state: true },
+    _selectedRun: { state: true },
+    _selectedPlan: { state: true },
+    _selectedRecovery: { state: true },
+    _selectedPreflight: { state: true },
     _loading: { state: true },
     _message: { state: true },
   };
@@ -56,8 +89,38 @@ export class DdAdminShell extends LitElement {
   private _activeRuns: ActiveSimulationRun[] = [];
   private _runs: PublicSimulationRun[] = [];
   private _scenarios: ScenarioSummary[] = [];
+  /** Undefined until the server has answered; absent from an older server. */
+  private _capabilities: SimulationCapabilities | undefined = undefined;
+  /** The selected run's status: interval, visibility and cancellation in one. */
+  private readonly _runPoll = new PollController(this, {
+    intervalMs: RUN_STATUS_MS,
+    load: (poll) => this._pollSelectedRun(poll),
+  });
   private _history: SimulationHistory | null = null;
   private _selectedRunKey: string | null = null;
+  /**
+   * The one copy of the selected run, and the only thing allowed to refresh it.
+   *
+   * The control panel used to hold its own, loaded once and never renewed, so
+   * the run list could show `recovery` while the panel beside it still offered
+   * to start a run that had finished. One owner; the list, the controls and the
+   * timeline all read from here.
+   */
+  private _selectedRun: SimulationControlRun | null = null;
+  private _selectedPlan: DryRunPlan | null = null;
+  private _selectedRecovery: RecoveryReportView | null = null;
+  private _selectedPreflight: SimulationPreflight | null = null;
+  /**
+   * A run key in the URL that is not a run key.
+   *
+   * Held rather than swallowed: the alternative is falling through to another
+   * run, which puts an Abort button for something the operator never asked for
+   * on their screen.
+   */
+  private _badRunKey: string | null = null;
+  private _onPopState = (): void => {
+    void this._applyUrlSelection();
+  };
   private _loading = false;
   private _message = '';
   private _timer: number | null = null;
@@ -211,12 +274,45 @@ export class DdAdminShell extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     document.title = 'devnet.deftrack — Admin';
+    window.addEventListener('popstate', this._onPopState);
     void this._restoreSession();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    window.removeEventListener('popstate', this._onPopState);
     if (this._timer !== null) clearInterval(this._timer);
+  }
+
+  /**
+   * Put the selection in the address bar, so a reload, a second tab and a
+   * pasted link all reach the same run.
+   *
+   * `replace` for a correction the reader did not ask for -- adopting the live
+   * slot, or clearing a key that turned out not to exist -- and `push` for a
+   * choice they made, so Back returns to what they were looking at.
+   */
+  private _writeUrl(runKey: string | null, mode: 'push' | 'replace'): void {
+    const href = adminHref(runKey);
+    if (href === `${location.pathname}${location.search}`) return;
+    if (mode === 'push') history.pushState(null, '', href);
+    else history.replaceState(null, '', href);
+  }
+
+  /** Read the URL and act on it. The one place a selection is decided. */
+  private async _applyUrlSelection(): Promise<void> {
+    const decision = decideSelection({
+      urlRunKey: runKeyFromSearch(location.search),
+      heldRunKey: null,
+      activeRunKeys: this._activeRuns.map((entry) => entry.runKey),
+    });
+    this._badRunKey = decision.malformedRunKey;
+    if (decision.runKey === null) {
+      this._clearSelection();
+      return;
+    }
+    if (decision.runKey === this._selectedRunKey && this._history !== null) return;
+    await this._loadSelectedRun(decision.runKey);
   }
 
   private async _restoreSession(): Promise<void> {
@@ -279,8 +375,17 @@ export class DdAdminShell extends LitElement {
       this._activeRuns = [];
       this._runs = [];
       this._scenarios = [];
+      this._capabilities = undefined;
       this._history = null;
+      this._selectedRun = null;
+      this._selectedPlan = null;
+      this._selectedRecovery = null;
+      this._selectedPreflight = null;
       this._selectedRunKey = null;
+      this._badRunKey = null;
+      // The key is not a secret, but leaving it in the address bar of a
+      // signed-out browser invites the next person to reload into it.
+      this._writeUrl(null, 'replace');
       this._screen = 'signed-out';
       this._loading = false;
       if (this._timer !== null) clearInterval(this._timer);
@@ -291,6 +396,15 @@ export class DdAdminShell extends LitElement {
   private async _loadDashboard(): Promise<void> {
     if (this._session === null || this._loading) return;
     this._loading = true;
+    // Cleared here, before the work, and not after it.
+    //
+    // It used to be cleared at the end, which wiped whatever the selection load
+    // inside this same function had just reported -- so "no run sim_… exists on
+    // this deployment" appeared and vanished in the same tick, and the only
+    // reason anyone saw it at all was that the control panel happened to print
+    // its own copy. It does not any more, and the message stayed invisible
+    // until a test caught it.
+    this._message = '';
     try {
       const [health, targets, activeRuns, runs, scenarios] = await Promise.all([
         api.health(),
@@ -304,16 +418,35 @@ export class DdAdminShell extends LitElement {
       this._activeRuns = activeRuns.items;
       this._runs = runs.items;
       this._scenarios = scenarios.items;
+      this._capabilities = scenarios.capabilities;
 
-      const nextRunKey = this._activeRuns[0]?.runKey ?? this._selectedRunKey;
-      if (nextRunKey !== null && nextRunKey !== undefined) await this._loadHistory(nextRunKey);
-      else this._history = null;
-      this._message = '';
+      /*
+       * The selection is decided, not recomputed.
+       *
+       * This used to read `activeRuns[0]?.runKey ?? selected`, so every refresh
+       * moved the panel to the first active run: choose run B, wait thirty
+       * seconds, and the Abort button on screen belonged to run A. The held
+       * selection now wins over the live slot, and the live slot is adopted
+       * only when nothing is selected at all.
+       */
+      const decision = decideSelection({
+        urlRunKey: runKeyFromSearch(location.search),
+        heldRunKey: this._selectedRunKey,
+        activeRunKeys: this._activeRuns.map((entry) => entry.runKey),
+      });
+      this._badRunKey = decision.malformedRunKey;
+      if (decision.runKey === null) {
+        this._clearSelection();
+      } else if (decision.runKey !== this._selectedRunKey || this._history === null) {
+        await this._loadSelectedRun(decision.runKey);
+        // A run adopted rather than asked for is a correction, not a choice.
+        // Replace, not push: neither adopting the live slot nor confirming
+        // what the URL already said is a step the reader chose to take.
+        this._writeUrl(this._selectedRunKey, 'replace');
+      }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        this._session = null;
-        this._screen = 'signed-out';
-        this._message = 'Your session ended. Sign in again to view the private dashboard.';
+        this._endSession('Your session ended. Sign in again to view the private dashboard.');
       } else {
         this._message = messageOf(error);
       }
@@ -322,23 +455,160 @@ export class DdAdminShell extends LitElement {
     }
   }
 
+  /**
+   * Everything about one run, fetched together.
+   *
+   * The plan and the recovery evidence are read here and not on every tick:
+   * the plan is immutable and the evidence changes only when a recovery runs,
+   * so re-reading them five times a minute would be load without information.
+   * The status poll below renews the part that moves.
+   */
   private async _loadHistory(runKey: string): Promise<void> {
     this._selectedRunKey = runKey;
-    this._history = await adminApi.history(runKey);
+    const [detail, history, recovery] = await Promise.all([
+      adminApi.dryRun(runKey),
+      adminApi.history(runKey),
+      // Evidence that is merely unavailable must never read as "clear".
+      adminApi.recovery(runKey).then((r) => r.recovery).catch(() => null),
+    ]);
+    if (this._selectedRunKey !== runKey) return;
+    this._selectedRun = detail.run;
+    this._selectedPlan = detail.plan;
+    this._selectedRecovery = recovery;
+    this._selectedPreflight = null;
+    this._history = history;
+  }
+
+  /**
+   * One status request at a time, for the run on screen, while it is still
+   * moving and the tab is being looked at.
+   *
+   * The controller supplies all three: the interval, the visibility handling
+   * and the abort of whatever the previous tick left in flight. A late answer
+   * is refused on the server's own revision rather than on arrival order.
+   */
+  private async _pollSelectedRun(poll: PollRun): Promise<void> {
+    const runKey = this._selectedRunKey;
+    const held = this._selectedRun;
+    if (runKey === null || this._session === null) return;
+    if (held !== null && TERMINAL.has(held.state.status)) return;
+    try {
+      const run = await adminApi.run(runKey, poll.signal);
+      if (poll.stale || this._selectedRunKey !== runKey) return;
+      this._acceptRun(run);
+    } catch (error) {
+      if (isAbortError(error) || poll.stale) return;
+      if (error instanceof ApiError && error.status === 401) {
+        this._endSession('Your session ended. Sign in again to view the private dashboard.');
+        return;
+      }
+      // A failed status read leaves the selection and the last good run alone.
+      // Clearing either would take the controls away from a live fault because
+      // one request timed out.
+      this._message = messageOf(error);
+    }
+  }
+
+  /**
+   * Take a run update if it is newer than what is held, and say nothing
+   * otherwise.
+   *
+   * The rule is the server's revision, shared with the control panel so the two
+   * cannot disagree about which answer is the current one.
+   */
+  private _acceptRun(run: SimulationControlRun): boolean {
+    if (run.runKey !== this._selectedRunKey) return false;
+    if (!acceptsRunUpdate(this._selectedRun, run)) return false;
+    this._selectedRun = run;
+    return true;
+  }
+
+  /**
+   * A mutation answered. Reconcile at once rather than waiting for the tick.
+   *
+   * The response is the freshest description of the run there is, and the
+   * operator has just acted: making them watch a stale panel for five seconds
+   * is how a second click happens.
+   */
+  private _onRunUpdated(event: CustomEvent<{ run: SimulationControlRun; preflight?: SimulationPreflight }>): void {
+    const { run, preflight } = event.detail;
+    if (!this._acceptRun(run)) return;
+    // "not run" and "passed" are different answers: only a preflight the server
+    // actually produced is stored, and an idempotent replay that carries none
+    // leaves the previous one alone.
+    if (preflight !== undefined) this._selectedPreflight = preflight;
+    void this._loadHistoryOnly(run.runKey);
+  }
+
+  /** The audit trail alone, after an action that will have added to it. */
+  private async _loadHistoryOnly(runKey: string): Promise<void> {
+    try {
+      const history = await adminApi.history(runKey);
+      if (this._selectedRunKey === runKey) this._history = history;
+    } catch {
+      // The timeline is a record, not a control. A failure to refresh it must
+      // not disturb the run on screen.
+    }
+  }
+
+  private _clearSelection(): void {
+    this._selectedRunKey = null;
+    this._selectedRun = null;
+    this._selectedPlan = null;
+    this._selectedRecovery = null;
+    this._selectedPreflight = null;
+    this._history = null;
+  }
+
+  /** One place to drop everything private, whatever ended the session. */
+  private _endSession(message: string): void {
+    this._session = null;
+    this._screen = 'signed-out';
+    this._message = message;
+    this._selectedRun = null;
+    this._selectedPlan = null;
+    this._selectedRecovery = null;
+    this._selectedPreflight = null;
+    this._history = null;
   }
 
   private _selectRun(runKey: string): void {
     if (this._selectedRunKey === runKey && this._history !== null) return;
     this._message = '';
+    this._badRunKey = null;
+    // The address bar first: a choice the operator made is one Back should
+    // return from, and one a reload must reproduce.
+    this._writeUrl(runKey, 'push');
     void this._loadSelectedRun(runKey);
   }
 
+  /**
+   * Load one run, and fail visibly rather than falling back.
+   *
+   * A key that does not resolve is an error about that key. Silently selecting
+   * something else would leave the operator looking at -- and able to abort --
+   * a run they never named.
+   */
   private async _loadSelectedRun(runKey: string): Promise<void> {
     this._loading = true;
+    // Held while the request is in flight, so the panel shows which run it is
+    // waiting for rather than the previous one.
+    this._selectedRunKey = runKey;
     try {
       await this._loadHistory(runKey);
+      this._message = '';
     } catch (error) {
-      this._message = messageOf(error);
+      this._history = null;
+      this._selectedRun = null;
+      this._selectedPlan = null;
+      this._selectedRecovery = null;
+      if (error instanceof ApiError && error.status === 404) {
+        this._message = `No run ${runKey} exists on this deployment.`;
+      } else if (error instanceof ApiError && error.status === 401) {
+        this._endSession('Your session ended. Sign in again to view the private dashboard.');
+      } else {
+        this._message = messageOf(error);
+      }
     } finally {
       this._loading = false;
     }
@@ -426,6 +696,12 @@ export class DdAdminShell extends LitElement {
         <div class="head-actions"><button class="btn" ?disabled=${this._loading} @click=${this._loadDashboard}>Refresh</button></div>
       </header>
 
+      ${this._badRunKey !== null
+        ? html`<div class="alert" role="alert">
+            The address asked for a run called <b class="mono">${this._badRunKey}</b>, which is not
+            a run key. Nothing was selected — choose a run below rather than assuming this one.
+          </div>`
+        : nothing}
       ${this._message ? html`<div class="alert" role="alert">${this._message}</div>` : nothing}
       <section class="metrics" aria-label="Orchestrator summary">
         ${this._metric('Explorer', this._health?.status ?? 'unknown', this._health ? `tip ${num(this._health.chainTip)}` : 'health unavailable', this._health?.status === 'ok' ? '' : 'warn')}
@@ -435,7 +711,20 @@ export class DdAdminShell extends LitElement {
       </section>
 
       <div class="grid">
-        <dd-simulation-control class="wide" .session=${session} .scenarios=${this._scenarios} @simulation-changed=${this._loadDashboard}></dd-simulation-control>
+        <dd-simulation-control
+          class="wide"
+          .session=${session}
+          .scenarios=${this._scenarios}
+          .capabilities=${this._capabilities}
+          .selectedRunKey=${this._selectedRunKey}
+          .run=${this._selectedRun}
+          .plan=${this._selectedPlan}
+          .recovery=${this._selectedRecovery}
+          .preflight=${this._selectedPreflight}
+          @simulation-changed=${this._loadDashboard}
+          @run-selected=${(event: CustomEvent<{ runKey: string }>) => this._selectRun(event.detail.runKey)}
+          @run-updated=${this._onRunUpdated}
+        ></dd-simulation-control>
         ${this._runsCard()}
         ${this._timelineCard()}
         ${this._targetsCard()}

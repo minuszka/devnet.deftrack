@@ -20,6 +20,7 @@ import { scheduledActionRowsFor } from './simulationDispatcher.service.js';
 import type { SimulationActionRepository } from './simulationAction.repository.js';
 import { authorizeSimulationApproval } from '../simulator/simulationApproval.js';
 import { parseScenarioRequest, scenarioDescriptors } from '../simulator/scenarioRegistry.js';
+import { recoveryView } from '../simulator/recoveryView.js';
 import type { DryRunPlan } from '../simulator/scenarioTypes.js';
 import { deriveSimulationRunTiming, faultLeaseExpiresAtForStart } from '../simulator/simulationTiming.js';
 import type { SimulationEvidenceProvider } from './simulationEvidence.service.js';
@@ -974,6 +975,17 @@ export class SimulationControlService {
 
   async status(runKey: string) {
     return this.runs.loadRun(runKey);
+  }
+
+  /**
+   * The recovery evidence for a run, redacted.
+   *
+   * `loadRun` first, deliberately: a run that does not exist must answer 404
+   * rather than "no recovery", which reads as "nothing to clean up".
+   */
+  async recovery(runKey: string) {
+    await this.runs.loadRun(runKey);
+    return { recovery: recoveryView(await this.runs.recoveryFor(runKey)) };
   }
 
   async history(runKey: string) {

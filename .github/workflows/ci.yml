@@ -99,6 +99,34 @@ jobs:
       - name: Test
         run: npm test
 
+      # The unit tests above never render anything. These do: they start a local
+      # Vite server, load the real dd-shell and dd-admin-shell, and answer every
+      # API call from a synthetic stub -- a request that is not stubbed is
+      # refused and fails the test, so the suite cannot quietly start testing
+      # whatever server happens to be reachable. A green run here is evidence
+      # about the client alone: not the API, not MongoDB, not the devnet.
+      #
+      # The browser is chosen by the exact @playwright/test version in the
+      # lockfile, so this installs whatever that pin asks for and nothing else.
+      - name: Install the browser for the client tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests (client)
+        run: npm run test:e2e -w client
+
+      # Traces and failure screenshots, kept only when there is a failure to
+      # explain. They contain synthetic fixture data by construction.
+      - name: Upload browser-test artefacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: client-browser-tests
+          path: |
+            client/playwright-report
+            client/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
       # The build is the release artefact, and the reason the deploy script
       # exists at all -- a green typecheck that does not actually bundle is not
       # a green deploy.

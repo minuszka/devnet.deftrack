@@ -88,6 +88,11 @@ router.get(
         ? { from: rounds[rounds.length - 1]!.expectedHeight, to: rounds[0]!.expectedHeight }
         : null,
       // Truncated for display; the identifier is not the point of the table.
+      //
+      // `totals` above it is computed over ALL of them, before this slice. The
+      // page used to sum the rows it received and print the result as the
+      // network's figure, which on a network larger than 200 nodes described a
+      // slice and called it everything.
       nodes: result.nodes.slice(0, 200).map((n) => ({ ...n, proTxHash: n.proTxHash.slice(0, 16) })),
       neverSelected: result.neverSelected.slice(0, 200).map((h) => h.slice(0, 16)),
       neverSelectedCount: result.neverSelected.length,
