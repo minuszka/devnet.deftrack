@@ -82,12 +82,26 @@ router.get(
   '/summary',
   withCachePolicy('short'),
   asyncRoute(async (_req, res) => {
-    const [committed, absent, missedAgg, latest, tip] = await Promise.all([
+    const [committed, absent, missedAgg, unobservedAgg, latest, tip] = await Promise.all([
       ServiceEpoch.countDocuments({ status: 'committed' }),
       ServiceEpoch.countDocuments({ status: 'absent' }),
       ServiceEpoch.aggregate<{ _id: null; totalMissedBits: number }>([
         { $match: { status: 'committed' } },
         { $group: { _id: null, totalMissedBits: { $sum: '$missedCount' } } },
+      ]),
+      // Only rows that carry the observed side. A row the explorer has not read
+      // it back for contributes nothing and is counted in `epochs` either -- the
+      // denominator travels with the number, so "0 unjudged" can never be read
+      // off a record that simply has not looked.
+      ServiceEpoch.aggregate<{ _id: null; bits: number; epochs: number }>([
+        { $match: { status: 'committed', observedCount: { $ne: null }, listSize: { $ne: null } } },
+        {
+          $group: {
+            _id: null,
+            bits: { $sum: { $subtract: ['$listSize', '$observedCount'] } },
+            epochs: { $sum: 1 },
+          },
+        },
       ]),
       ServiceEpoch.findOne().sort({ boundaryHeight: -1 }).lean(),
       // The enforcement gate is answered against the indexed chain, so the
@@ -113,6 +127,8 @@ router.get(
       /** committed / judged; null until the first boundary is judged at all. */
       convergenceRate: judged > 0 ? committed / judged : null,
       totalMissedBits: missedAgg[0]?.totalMissedBits ?? 0,
+      totalUnobservedBits: unobservedAgg[0]?.bits ?? 0,
+      unobservedBitsFromEpochs: unobservedAgg[0]?.epochs ?? 0,
 
       latest: latest
         ? {

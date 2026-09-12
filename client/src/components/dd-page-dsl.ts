@@ -8,6 +8,30 @@ import './dd-stat.js';
 
 const REFRESH_MS = 30_000;
 
+/** How many of an epoch's list the pool reached no verdict on; null when unread. */
+function unobserved(row: DslEpochRow): number | null {
+  if (row.status !== 'committed') return null;
+  if (row.observedCount === null || row.observedCount === undefined) return null;
+  return Math.max(0, (row.listSize ?? 0) - row.observedCount);
+}
+
+/**
+ * The colour an epoch gets, in the order the reader needs to be warned.
+ *
+ * "Some masternodes were judged by nobody" is its own state, not a shade of
+ * healthy, and the strip is the only part of this page read at a glance. An
+ * epoch with unjudged members painted the same green as one everybody vouched
+ * for would make, in colour, exactly the claim format version 2 exists to stop
+ * making in numbers. A row whose observed side has not been read back is drawn
+ * the same way: unknown belongs with unknown, never with fine.
+ */
+function epochFill(row: DslEpochRow): string {
+  if (row.status !== 'committed') return 'var(--crit)';
+  const none = unobserved(row);
+  if (none === null || none > 0) return 'var(--info)';
+  return row.missedCount ? 'var(--warn)' : 'var(--accent)';
+}
+
 /**
  * The Sentinel Layer's shadow phase, watched.
  *
@@ -142,6 +166,11 @@ export class DdPageDsl extends LitElement {
           tone=${s.totalMissedBits === 0 && judged > 0 ? 'good' : ''}
         ></dd-stat>
         <dd-stat
+          label="No verdict"
+          value=${num(s.totalUnobservedBits)}
+          sub="masternode-epochs nobody judged, over ${num(s.unobservedBitsFromEpochs)} epochs read"
+        ></dd-stat>
+        <dd-stat
           label="Mode"
           value=${s.enforcement.active ? 'enforcing' : 'shadow'}
           sub=${s.enforcement.active
@@ -151,6 +180,16 @@ export class DdPageDsl extends LitElement {
               : `records only — activation ${num(s.activationHeight)}, enforcement at ${num(s.enforcement.height)}`}
         ></dd-stat>
       </section>
+
+      <div class="note caveat">
+        <strong>Missed</strong> and <strong>no verdict</strong> are different answers, and the
+        second one is newer than this network. Until the commitment format carried a second
+        bitfield, a masternode nobody reported on was stored exactly like one everybody reported
+        healthy — silence read as a clean bill of health. Now the two are separate, so an epoch can
+        say “three were missing, and about two we heard nothing either way”. Neither is a penalty
+        on its own, and an epoch whose second bitfield has not been read back says “not read”
+        rather than a number: the answer is on the chain, not in this record yet.
+      </div>
 
       <div class="note caveat">
         A commitment appears only when the quorum converged on one report set <em>and</em> the block
@@ -200,7 +239,7 @@ export class DdPageDsl extends LitElement {
           ${pts.map((p, i) =>
             svg`<rect
               x=${(i * w).toFixed(2)} y="10" width=${Math.max(1, w - 0.6).toFixed(2)} height="34"
-              fill=${p.status === 'committed' ? (p.missedCount ? 'var(--warn)' : 'var(--accent)') : 'var(--crit)'}
+              fill=${epochFill(p)}
             ><title>epoch ${p.epoch} · block ${p.boundaryHeight}${
               p.status === 'committed'
                 ? ` · committed · ${p.missedCount ?? 0} of ${p.listSize ?? '?'} missed${
@@ -215,6 +254,7 @@ export class DdPageDsl extends LitElement {
         <div class="legend">
           <span><i class="swatch" style="background: var(--accent)"></i>committed, nobody missed</span>
           <span><i class="swatch" style="background: var(--warn)"></i>committed, bits set</span>
+          <span><i class="swatch" style="background: var(--info)"></i>committed, some with no verdict</span>
           <span><i class="swatch" style="background: var(--crit)"></i>absent — did not converge</span>
         </div>
       </section>
