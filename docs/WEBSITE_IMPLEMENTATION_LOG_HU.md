@@ -1884,6 +1884,166 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 17. nap – Publikus szimulációs eredmények
+
+```text
+Nap / dátum / implementáló: 17 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day17-public-simulations @ 61a78cc (main, a 16. nap után)
+Napi feladat és előfeltételei: /simulations lista és /simulations/:runKey részlet
+  a már létező publikus API-kra, JSON-exporttal.
+  Előfeltétel: a három publikus végpont — megvan, nem kellett hozzá új szerverút.
+Auditpontok: nincs önálló F-pont; a szimulátor-termékfolyamat publikus vége
+```
+
+**Kiinduló állapot.** A szerver három publikus végpontot kínált
+(`/api/v1/simulations`, `/:runKey`, `/:runKey/report`), allowlist DTO-kkal és
+unit tesztekkel. A kliens egyiket sem használta, és — ez lett a nap fontosabb
+lelete — **a route és a DTO együtt, HTTP-n, valódi MongoDB-vel soha nem futott.**
+
+### A lap dolga, hogy ne lehessen félreolvasni
+
+Egy eredményt megmutatni könnyű; a nehéz az, hogy ne olvasódjon annak, ami nem.
+Az olvasatok a döntés sorrendjében:
+
+- ami még fut, az **folyamatban**, soha nem eredmény;
+- a megszakított, a sikertelen és az elutasított futam **se nem eredmény, se nem
+  siker**;
+- a befejezett, de riport nélküli futam **mérésre vár** — és szavakkal kimondja,
+  hogy ez nem sikeres futam;
+- egy **nem olvasható** riport külön van a **nem létező** riporttól;
+- az érvénytelen mérés **nem értékelhető**, akkor is, ha egyezést állít;
+- a száraz futás **száraz futás**, akármi lett az eredménye: semmi nem történt
+  egy hálózattal, tehát egy zöld egyezés ugyanolyan hamisan nyugtatna meg, mint
+  amennyire egy piros eltérés hamisan riasztana;
+- **zöld csak egy élő futam érvényes, sikeres mérése.**
+
+Az utolsó sor nem egy eset, hanem tulajdonság: egy unit teszt végigjárja
+az összes státusz × élő/száraz × riportállapot kombinációt, és elbukik, ha bármi
+más valaha a „good" tónust kapja.
+
+### Két 404, amit a riport-végpont egyedül nem tud szétválasztani
+
+A `/:runKey/report` 404-et ad arra is, ha a futam nem létezik, és arra is, ha
+létezik, csak még nincs mérése — a szerver ezt nem tudja másképp mondani, és ezt
+az integrációs teszt most rögzíti is. A lap ezért **előbb a futamot kéri**: ha az
+404, „nincs ilyen futam"; ha a futam megvan és a riport 404, „mérésre vár"; ha a
+riport bármi más hibát ad, a futam látszik tovább, és a riport „nem olvasható".
+A formailag hibás kulcsot a lap a kérés előtt utasítja el.
+
+### Az export
+
+A két publikus válasz, változatlanul, egy borítékban: `schemaVersion`, lekérési
+idő, és a két URL, ahonnan jött. Semmi más — admin history és artifact soha,
+mert az export kizárólag abból épül, amit a publikus végpontok visszaadtak.
+Riport nélkül `report: null`, nem kitalált riport. `data:` link, ezért a CSP-kapu
+mostantól ezt a lapot és az exportját is lefuttatja az enforce házirend alatt.
+
+A Core-adapter hivatkozása **nem jelenik meg**: a publikus DTO nem hordozza, és
+egy mért eredmény mellé tett modellanyag előrejelzésnek olvasódna.
+
+### Három valódi szivárgás a publikus route-okon — külön commitban
+
+Egy új integrációs teszt a futam- és riportdokumentumokat **nyersen**, a
+driveren át, a Mongoose-validációt megkerülve szúrja be, és egy sentinel
+sztringet ültet **minden olyan mélységbe**, ahol publikus mező privát mellett
+ül: a futam tetejére, az `actorId`-ba, a célpont `hostRef`/`unitRef`/`operatorId`
+mezőibe, a `lastTransition`-be, a `state`-be, a preflight privát részletébe,
+a `dataQuality`-be, a riport `anchor`-jába és a riportrekord tetejére. Egyetlen
+választörzs sem tartalmazhatja.
+
+**Három úton kijött:**
+
+| Út | Miért |
+|---|---|
+| `state.lastTransition` | a futam-DTO egészben továbbadta |
+| `dataQuality` | a projekció egészben kiválasztotta, a DTO egészben továbbadta |
+| `anchor` | a riport-DTO spreadelte, és a fingerprintelt riporton **kívül** ül, így semmi nem ellenőrizte |
+
+Mindhárom mostantól **név szerint** másolódik. Ami eddig publikus volt, az is
+maradt; új mező nem tud velük együtt kiutazni. Minden más beültetett érték már
+eddig is kiesett, és a fingerprintelt riporton **belülre** ültetett mező a riportot
+**zárva buktatja** (≥500), nem publikálja.
+
+**Nem kihasznált, hanem lappangó hiba:** ezeket az al-objektumokat ma a szerver
+rögzített alakkal állítja elő. De egy publikus szerződés, amely közzéteszi, amit
+egy tárolt objektum tartalmaz, a következő, oda felvett mezőt is közzéteszi —
+anélkül, hogy bárki úgy döntött volna. Pontosan ezt kell egy allowlistnek
+megakadályoznia.
+
+**Két kisebb lelet ugyanebből a tesztből.** A riport-DTO egysoros állítása
+(„future unknown fields cannot escape") a riporton belüli aggregát al-objektumokra
+nem igaz — azok még spreadelve vannak; a komment most pontosan azt mondja, mi
+garantált és mi maradék. És a javítás **első változata** — a `missingHeights`
+név szerinti másolása — egy olyan régi dokumentumon, amely e mező előtt íródott,
+az **egész listát 500-ra** vitte. A main ezt nem csinálta (ott a mező egyszerűen
+kimaradt a válaszból); a hibát én vezettem be, és a teszt fogta meg a commit
+előtt. Most `null` — „nincs rögzítve", nem üres tömb, ami azt állítaná, hogy
+semmi nem hiányzott —, saját tesztesettel.
+
+### Érintett fájlok
+
+Szerver: `simulator/simulationPublicDto.ts`, `simulator/simulationMeasurementPublicDto.ts`,
+új `integration/publicSimulations.integration.test.ts` (7 eset).
+Kliens: új `lib/simulations.ts` (+ 13 unit eset), `lib/api.ts`, `lib/router.ts`
+(a látható `/simulations` és a rejtett részlet-minta), `components/dd-shell.ts`,
+új `components/dd-page-simulations.ts`, új `e2e/fixtures/simulations.ts`, új
+`e2e/public-simulations.spec.ts` (17 eset), `e2e/csp.spec.ts` (+1 eset).
+
+**Szerződésváltozás / kompatibilitás:** a publikus válaszok mezőkészlete a
+fixtúrákban szereplő, rendesen tárolt dokumentumokra **változatlan**. Eltérés
+kettő: egy tárolt al-objektumba ültetett ismeretlen mező többé nem jelenik meg,
+és egy `missingHeights` nélküli régi `dataQuality`-ben a mező `null`, ahol eddig
+hiányzott a válaszból.
+Szerveroldali validáció nem változott.
+
+### Negatív kontrollok
+
+Kliens (4), egyszerre egy őr eltávolítva:
+
+| Kontroll | Eredmény |
+|---|---|
+| a riport nélküli befejezett futam egyezésnek olvasódik | unit 2/13 bukott, E2E 1/17 bukott |
+| a száraz futás nincs száraz futásnak jelölve | unit 2/13 bukott, E2E 1/17 bukott |
+| a riport 404 a futam nemlétezésének olvasódik | E2E 1/17 bukott (a unit zöld: ez a lap őre, nem a könyvtáré) |
+| a nem értékelhető mérés egyezésnek olvasódhat | **unit** 1/13 bukott; az E2E 17/17 zöld maradt, mert a tartalék ág ezen a fixtúrán is biztonságosan „nem értékelhető"-t ad — ezt a unit teszt fedi, nem a böngésző |
+
+A kontrollokat a commit után, a véglegesített fán újrafuttattam; a számok ebből
+a futásból vannak, és utána minden őr visszaállt.
+
+Szerver: a két DTO visszaállítva a javítás előtti (`61a78cc`) állapotra, csak a
+sentinel-fájl: **4/7 bukott** — a lista és a futam kiadta a `lastTransition` és a
+`dataQuality` sentineljét, a riport az `anchor`-ét, a régi futamnál a
+`missingHeights` hiányzott. A fingerprinten belüli manipuláció, a két 404 és a
+400 a régi kóddal is zöld volt — azok a már meglévő viselkedést rögzítik.
+Visszaállítva **7/7 zöld**.
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **855** szerver (változatlan) + **176** kliens (163 → 176) unit, typecheck, build, `git diff --check` tiszta; a véglegesített fán |
+| K2 | exit 0 — **162** böngészőteszt (145 → 162), egy workerrel |
+| K3 | exit 0 — **15** fájl (14 → 15), **98** teszt (91 → 98), szekvenciálisan; a 8 kihagyott a fájlok „needs a database" párdarabja, ami épp adatbázis mellett hagyódik ki |
+| CSP-kapu | exit 0 — **4** eset (3 → 4), a szimulációs lap és exportja az enforce házirend alatt |
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:**
+
+- a **18. nap** (navigáció és mobil) elkezdhető;
+- a riport-DTO-ban a riporton **belüli** aggregát al-objektumok még spreadelve
+  vannak: tárolt adatba ültetett mező ellen a fingerprint véd, a generátorba
+  jövőben felvett mező ellen nem — 20. nap, elfogadni vagy név szerint másolni;
+- a VPS kliensbundle-je továbbra is a 11. nap előtti, tehát ez a lap élesen még
+  nem látszik — átadás előtt deploy kell (20. nap).
+
+```text
+Commit(ok), végső SHA: 2a2e791 (publikus DTO-szivárgás), 6cc471f (17. nap)
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
