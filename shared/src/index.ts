@@ -781,5 +781,19 @@ export interface DslEpochRow {
   missedIndices: number[];
   /** Resolved from the indices against the list the epoch was judged on. */
   missedProTxHashes: string[];
+  /** The commitment's format version; null on absent rows and on rows written
+   * before the explorer read it. */
+  commitmentVersion: number | null;
+  /**
+   * How many masternodes the pool reached a verdict on at all. Under format
+   * version 2 this can be below `listSize`, and the difference is the set the
+   * epoch says nothing about -- which is not the same as "seen online", and is
+   * the distinction the format was changed to make.
+   */
+  observedCount: number | null;
+  /** Canonical indices with no verdict either way; empty under version 1. */
+  unobservedIndices: number[];
+  /** Those indices resolved the same way, and left empty if unresolvable. */
+  unobservedProTxHashes: string[];
   detectedAt: string;
 }

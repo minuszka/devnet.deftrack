@@ -50,6 +50,33 @@ export interface ServiceEpochDocument extends Document {
    */
   missedProTxHashes: string[];
 
+  /**
+   * The commitment's own format version. Null on absent rows, and null on rows
+   * written before this field existed; `ops/backfill-epoch-observed.cjs` fills
+   * those from the chain rather than assuming them.
+   */
+  commitmentVersion: number | null;
+  /**
+   * How many of the epoch's masternodes the pool reached a verdict on at all.
+   *
+   * This is the distinction format version 2 exists to make, and storing only
+   * `missedCount` collapses it: a masternode nobody reported on is not a
+   * masternode seen online, and until this field existed the explorer showed
+   * the two identically -- the "no evidence heals" reading the format was
+   * changed to end. The node emits it for version 1 as well, in the same shape
+   * (everyone observed, nobody unobserved), so nothing here branches on the
+   * version -- `CPoSeServiceCommitment::ToJson`, evo/pose_service.h.
+   */
+  observedCount: number | null;
+  /** Canonical indices the commitment reached no verdict on; empty under v1. */
+  unobservedIndices: number[];
+  /**
+   * Those indices resolved against the same epoch-base list as
+   * `missedProTxHashes`, by the same resolver and with the same refusal: an
+   * unresolvable list stays empty rather than naming the wrong masternodes.
+   */
+  unobservedProTxHashes: string[];
+
   detectedAt: Date;
 }
 
@@ -69,6 +96,11 @@ const serviceEpochSchema = new Schema<ServiceEpochDocument>({
   listSize: { type: Number, default: null },
   missedIndices: { type: [Number], default: [] },
   missedProTxHashes: { type: [String], default: [] },
+
+  commitmentVersion: { type: Number, default: null },
+  observedCount: { type: Number, default: null },
+  unobservedIndices: { type: [Number], default: [] },
+  unobservedProTxHashes: { type: [String], default: [] },
 
   detectedAt: { type: Date, default: () => new Date() },
 });

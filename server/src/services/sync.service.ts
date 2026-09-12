@@ -870,28 +870,36 @@ export class SyncService {
       // cannot be fetched or does not match keeps an empty list and says so.
       // Naming the wrong masternodes as having failed would be worse than
       // naming none.
+      // Both index lists resolve against the SAME base list, so it is fetched
+      // once for the two of them. `unobservedIndices` names the masternodes the
+      // pool reached no verdict on -- empty under format version 1, and the
+      // whole point of version 2: without it a member nobody reported on is
+      // stored exactly like one reported online.
       let missedProTxHashes: string[] = [];
+      let unobservedProTxHashes: string[] = [];
       const missedIndices = c?.missedIndices ?? [];
-      if (c?.epochBlockHash && missedIndices.length > 0) {
+      const unobservedIndices = c?.unobservedIndices ?? [];
+      if (c?.epochBlockHash && (missedIndices.length > 0 || unobservedIndices.length > 0)) {
         try {
           const base = await rpc.getBlock(c.epochBlockHash);
           const registered = await rpc.protxListRegistered(base.height);
-          const resolved = resolveMissedMembers(
-            canonicalDslOrder(registered),
-            missedIndices,
-            c.size ?? -1
-          );
-          if (resolved === null) {
+          const order = canonicalDslOrder(registered);
+          // resolveMissedMembers resolves any canonical index list; the name is
+          // where it was first needed, not a limit on what it answers.
+          const resolvedMissed = resolveMissedMembers(order, missedIndices, c.size ?? -1);
+          const resolvedUnobserved = resolveMissedMembers(order, unobservedIndices, c.size ?? -1);
+          if (resolvedMissed === null || resolvedUnobserved === null) {
             logger.warn(
-              `DSL epoch ${epoch}: missed indices unresolved ` +
+              `DSL epoch ${epoch}: indices unresolved ` +
                 `(commitment size ${c.size ?? 'absent'}, epoch-base list ${registered.length})`
             );
           } else {
-            missedProTxHashes = resolved;
+            missedProTxHashes = resolvedMissed;
+            unobservedProTxHashes = resolvedUnobserved;
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          logger.warn(`DSL epoch ${epoch}: epoch-base list unavailable, missed members unresolved: ${message}`);
+          logger.warn(`DSL epoch ${epoch}: epoch-base list unavailable, members unresolved: ${message}`);
         }
       }
       await ServiceEpoch.updateOne(
@@ -913,6 +921,10 @@ export class SyncService {
             listSize: c?.size ?? null,
             missedIndices: c?.missedIndices ?? [],
             missedProTxHashes,
+            commitmentVersion: c?.version ?? null,
+            observedCount: c?.observedCount ?? null,
+            unobservedIndices,
+            unobservedProTxHashes,
             detectedAt: new Date(),
           },
         },

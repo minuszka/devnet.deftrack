@@ -54,6 +54,13 @@ router.get(
       listSize: e.listSize,
       missedIndices: e.missedIndices,
       missedProTxHashes: e.missedProTxHashes ?? [],
+      // Nullish-coalesced, not defaulted: a row written before these fields
+      // existed must read as "not recorded", never as "nobody unobserved".
+      // Inventing the second would be the same error the fields exist to fix.
+      commitmentVersion: e.commitmentVersion ?? null,
+      observedCount: e.observedCount ?? null,
+      unobservedIndices: e.unobservedIndices ?? [],
+      unobservedProTxHashes: e.unobservedProTxHashes ?? [],
       // ISO on the wire, like every other timestamp this API sends: a Date here
       // only looks right because JSON.stringify quietly converts it.
       detectedAt: e.detectedAt.toISOString(),
