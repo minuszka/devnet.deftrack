@@ -226,6 +226,9 @@ export const cardStyles = css`
     border-bottom: 1px solid var(--line-soft);
   }
   .card-title {
+    /* Carried by an h2 or h3 now, so the browser's own heading margin has to
+       go: the class decides the size, the element decides the outline. */
+    margin: 0;
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
     font-weight: 700;

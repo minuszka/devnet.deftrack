@@ -46,7 +46,7 @@ export class DdPageOperators extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Operator reliability</div>
+          <h1 class="page-title" tabindex="-1">Operator reliability</h1>
           <div class="page-sub">
             What separates a protocol problem from an infrastructure one. Computed over formed
             rounds only: a round that never formed has no member list, so nobody can be held to
@@ -59,7 +59,7 @@ export class DdPageOperators extends LitElement {
 
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Operators</div>
+          <h2 class="card-title">Operators</h2>
           <div class="page-sub mono">7 days · ${num(this._rounds)} formed rounds</div>
         </div>
         <div class="card-body flush">

@@ -107,7 +107,7 @@ export class DdPageMasternodes extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Masternodes</div>
+          <h1 class="page-title" tabindex="-1">Masternodes</h1>
           <div class="page-sub">
             Current state per masternode. Sorted so anything banned or carrying a penalty is at the
             top, because that is what the page is for.
@@ -143,7 +143,7 @@ export class DdPageMasternodes extends LitElement {
     const hosts = this._byHost();
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">By host</div></div>
+        <div class="card-head"><h2 class="card-title">By host</h2></div>
         <div class="card-body flush">
           <div class="twrap">
             <table>
@@ -181,7 +181,7 @@ export class DdPageMasternodes extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">All masternodes</div>
+          <h2 class="card-title">All masternodes</h2>
           <div class="page-sub mono">${num(this._total)} registered</div>
         </div>
         <div class="card-body flush">

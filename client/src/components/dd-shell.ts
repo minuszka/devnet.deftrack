@@ -47,14 +47,101 @@ export class DdShell extends LitElement {
    */
   private _ageTimer: number | null = null;
   private _onPop = (): void => {
+    const before = this._pageIdentity();
     this._route = matchRoute(location.pathname);
     document.title = `devnet.deftrack — ${this._route.route.label}`;
     this.scrollIntoView();
+    /*
+     * Focus moves only when the page actually changed.
+     *
+     * The shell scrolled and retitled on navigation and left the focus where it
+     * was -- on the link in the nav, or nowhere at all after a browser Back --
+     * so a keyboard or screen-reader user arrived at a new page with no signal
+     * that anything had happened, and had to tab through the whole header again
+     * to reach it.
+     *
+     * The guard matters as much as the move. This is the only place focus is
+     * touched, and it runs on a real navigation: the polls never call it, and a
+     * filter writing the query string deliberately does not dispatch popstate,
+     * so neither can take the focus out from under somebody mid-sentence.
+     */
+    if (this._pageIdentity() !== before) void this._focusPage();
   };
+
+  /** What counts as "a different page" for the purpose of moving focus. */
+  private _pageIdentity(): string {
+    return `${this._route.route.tag}:${this._route.param ?? ''}:${this._route.status}`;
+  }
+
+  /**
+   * Put the focus on the new page's own heading.
+   *
+   * Both renders have to finish first -- this element's, which swaps the page
+   * element in, and the page's own, which produces the heading -- or the
+   * heading does not exist yet and the focus lands nowhere. `<main>` is the
+   * fallback and the skip link's target, so a page whose heading has not
+   * arrived still hands the reader the content region rather than the header.
+   */
+  private async _focusPage(): Promise<void> {
+    await this.updateComplete;
+    const main = this.renderRoot.querySelector('main');
+    const page = main?.firstElementChild;
+    if (page instanceof LitElement) await page.updateComplete;
+    const heading = page?.shadowRoot?.querySelector('h1');
+    (heading ?? main)?.focus();
+  }
+
+  /**
+   * Skip to the content, across a shadow boundary.
+   *
+   * `href="#content"` cannot work on its own here: the fragment names an id
+   * inside this shadow root and the browser looks for it in the document, so
+   * the link would move nothing. The href stays because it is what the link
+   * means and what a reader sees in the status bar; the handler is what makes
+   * it true. It also has to preventDefault before the router's own link
+   * interceptor sees the click, which is why this is handled on the anchor.
+   */
+  private _skipToContent(event: Event): void {
+    event.preventDefault();
+    const main = this.renderRoot.querySelector('main');
+    main?.focus();
+    main?.scrollIntoView();
+  }
 
   static override styles = [
     baseStyles,
     css`
+      /*
+       * Off screen until it is focused, which is the only time it is for
+       * anybody. Not display:none and not visibility:hidden -- either would take
+       * it out of the tab order, which is the one thing it needs to be in.
+       * (No backticks in here: this is inside a css template literal, and one
+       * of them ends it. That cost a build on day 2 as well.)
+       */
+      .skip {
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        z-index: 10;
+        padding: 10px 14px;
+        background: var(--surface);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius);
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        text-decoration: none;
+      }
+      .skip:focus {
+        left: var(--gutter);
+        top: var(--sp-2);
+      }
+      main:focus {
+        /* Focused by script, to move a reader rather than to mark a control.
+           The heading inside it is what was asked for; a ring around the whole
+           page would say something else. */
+        outline: none;
+      }
       :host {
         display: block;
         max-width: var(--content-max);
@@ -328,6 +415,7 @@ export class DdShell extends LitElement {
     const fresh = this._freshness.read(Date.now(), HEALTH_REFRESH_MS);
     const note = freshnessNote(fresh, HEALTH_REFRESH_MS);
     return html`
+      <a class="skip" href="#content" @click=${this._skipToContent}>Skip to content</a>
       <div class="topbar">
         <span class="devnet"><span class="live-dot" aria-hidden="true"></span>${DEVNET_BANNER}</span>
         ${h
@@ -374,7 +462,7 @@ export class DdShell extends LitElement {
         )}
       </nav>
 
-      <main>${this._page()}</main>
+      <main id="content" tabindex="-1">${this._page()}</main>
     `;
   }
 

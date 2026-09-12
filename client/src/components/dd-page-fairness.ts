@@ -232,7 +232,7 @@ export class DdPageFairness extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Selection fairness</div>
+          <h1 class="page-title" tabindex="-1">Selection fairness</h1>
           <div class="page-sub">
             Who the selection reaches, and who fails once reached — two different questions, and only
             the second is a fault.
@@ -364,7 +364,7 @@ export class DdPageFairness extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">By host</div>
+          <h2 class="card-title">By host</h2>
           <div class="page-sub mono">${num(d.hosts.length)} hosts</div>
         </div>
         <div class="card-body flush">
@@ -433,7 +433,7 @@ export class DdPageFairness extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">By masternode</div>
+          <h2 class="card-title">By masternode</h2>
           <div class="page-sub mono">worst first · ${num(d.nodes.length)} shown</div>
         </div>
         <div class="card-body flush">
@@ -492,7 +492,7 @@ export class DdPageFairness extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Never selected</div>
+          <h2 class="card-title">Never selected</h2>
           <div class="page-sub mono">${num(d.neverSelectedCount)}</div>
         </div>
         <div class="card-body">

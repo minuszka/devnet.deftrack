@@ -30,6 +30,17 @@ const SURFACES = ['bg', 'bg-raised', 'surface', 'surface-2', 'surface-3'];
 const TEXT_TOKENS = ['ink', 'ink-2', 'ink-3', 'good', 'warn', 'crit', 'accent'];
 /** Marks, not text: the 3:1 floor for non-text contrast. */
 const MARK_TOKENS = ['s1', 's2', 's3', 's4', 's5', 's6', 'serious', 'info'];
+/**
+ * Actual button pairings: a foreground against the background it really sits
+ * on, rather than a token against a surface.
+ *
+ * F14 is exactly the gap this closes. Every text token passed 4.5:1 on every
+ * surface, and the one control that inverts the relationship -- white text on
+ * a `--crit` fill -- was 3.23:1 in the dark theme, because nothing here ever
+ * measured a pair in that direction. A palette test that only checks text on
+ * surfaces cannot see a button.
+ */
+const BUTTON_PAIRS: Array<[string, string]> = [['btn-danger-fg', 'btn-danger-bg']];
 
 function block(selector: string): Record<string, string> {
   const start = CSS.indexOf(selector);
@@ -70,7 +81,8 @@ describe('palette contrast', () => {
   it('reads both themes out of the stylesheet', () => {
     for (const [, selector] of THEMES) {
       const tokens = block(selector);
-      for (const name of [...SURFACES, ...TEXT_TOKENS, ...MARK_TOKENS]) {
+      const pairTokens = BUTTON_PAIRS.flat();
+      for (const name of [...SURFACES, ...TEXT_TOKENS, ...MARK_TOKENS, ...pairTokens]) {
         expect(tokens[name], `${selector} is missing --${name}`).toBeDefined();
       }
     }
@@ -89,6 +101,16 @@ describe('palette contrast', () => {
       expect(failures).toEqual([]);
     });
 
+    it(`keeps every button's own pair at 4.5:1 in the ${theme} theme`, () => {
+      const tokens = block(selector);
+      const failures: string[] = [];
+      for (const [fg, bg] of BUTTON_PAIRS) {
+        const value = contrast(tokens[fg]!, tokens[bg]!);
+        if (value < 4.5) failures.push(`--${fg} on --${bg}: ${value.toFixed(2)}:1`);
+      }
+      expect(failures).toEqual([]);
+    });
+
     it(`keeps every chart mark at 3:1 in the ${theme} theme`, () => {
       const tokens = block(selector);
       const failures: string[] = [];
@@ -101,6 +123,21 @@ describe('palette contrast', () => {
       expect(failures).toEqual([]);
     });
   }
+
+  /*
+   * The composition F14 found, kept as a measurement.
+   *
+   * Not a regression guard on the old value -- a record of why the pair is a
+   * pair. If somebody points the danger button back at `--crit` this says what
+   * that costs, in the theme where it costs something.
+   */
+  it('records why the danger button does not simply use --crit', () => {
+    const dark = block(THEMES[0]![1]);
+    expect(contrast('#ffffff', dark['crit']!)).toBeLessThan(4.5);
+    expect(contrast(dark['btn-danger-fg']!, dark['btn-danger-bg']!)).toBeGreaterThanOrEqual(4.5);
+    // And --crit stays a legible text colour, which is why it was not darkened.
+    expect(contrast(dark['crit']!, dark['surface']!)).toBeGreaterThanOrEqual(4.5);
+  });
 
   // The measurement itself, checked against a value computed by hand: white on
   // black is 21:1, and a colour against itself is 1:1. A contrast function that

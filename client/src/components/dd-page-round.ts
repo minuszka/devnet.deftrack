@@ -156,7 +156,7 @@ export class DdPageRound extends LitElement {
   override render(): TemplateResult {
     if (this._error) {
       return html`
-        <div class="page-head"><div class="page-title">Round</div></div>
+        <div class="page-head"><h1 class="page-title" tabindex="-1">Round</h1></div>
         <div class="err">${this._error}</div>
         <p class="back"><a href="/rounds">&larr; All rounds</a></p>
       `;
@@ -170,9 +170,9 @@ export class DdPageRound extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">
+          <h1 class="page-title" tabindex="-1">
             Round ${num(r.expectedHeight)} <span class="dim">${r.llmqName}</span>${this._devnetTag(r)}
-          </div>
+          </h1>
           <div class="page-sub mono">${r.roundKey}</div>
         </div>
         <span class="pill ${verdict.tone}">${verdict.label}</span>
@@ -241,7 +241,7 @@ export class DdPageRound extends LitElement {
   private _identity(r: QuorumRoundDetail): TemplateResult {
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">Round</div></div>
+        <div class="card-head"><h2 class="card-title">Round</h2></div>
         <div class="card-body flush">
           <dl>
             <dt>type</dt>
@@ -291,7 +291,7 @@ export class DdPageRound extends LitElement {
   private _profile(r: QuorumRoundDetail): TemplateResult {
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">Profile at this round</div></div>
+        <div class="card-head"><h2 class="card-title">Profile at this round</h2></div>
         <div class="card-body flush">
           <dl>
             <dt>size</dt>
@@ -331,7 +331,7 @@ export class DdPageRound extends LitElement {
     return html`
       <section class="card stack">
         <div class="card-head">
-          <div class="card-title">Membership since the round before</div>
+          <h2 class="card-title">Membership since the round before</h2>
           <div class="page-sub mono">
             <a href=${roundHref(previousKey)}>round ${num(c.previousExpectedHeight)} &rarr;</a>
           </div>
@@ -376,7 +376,7 @@ export class DdPageRound extends LitElement {
     if (r.members.length === 0) {
       return html`
         <section class="card stack">
-          <div class="card-head"><div class="card-title">Members</div></div>
+          <div class="card-head"><h2 class="card-title">Members</h2></div>
           <div class="card-body">
             <p class="page-sub">
               This round has no member list. Membership is read from the mined commitment, and a
@@ -392,7 +392,7 @@ export class DdPageRound extends LitElement {
     return html`
       <section class="card stack">
         <div class="card-head">
-          <div class="card-title">Members by operator</div>
+          <h2 class="card-title">Members by operator</h2>
           <div class="page-sub mono">
             ${num(r.members.length)} members · ${num(groups.length)} operators
           </div>

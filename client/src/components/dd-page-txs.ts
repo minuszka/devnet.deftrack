@@ -115,7 +115,7 @@ export class DdPageTxs extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Transactions</div>
+          <h1 class="page-title" tabindex="-1">Transactions</h1>
           <div class="page-sub">
             A coinstake mints its reward, so its outputs exceed its inputs — it has no fee, and none
             is shown for it.
@@ -127,7 +127,7 @@ export class DdPageTxs extends LitElement {
 
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Latest transactions</div>
+          <h2 class="card-title">Latest transactions</h2>
           <div class="page-sub mono">${num(this._total)} indexed</div>
         </div>
         <div class="card-body flush">
@@ -258,13 +258,13 @@ export class DdPageTx extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Transaction</div>
+          <h1 class="page-title" tabindex="-1">Transaction</h1>
           <div class="page-sub mono">${t.txid}</div>
         </div>
       </div>
 
       <section class="card">
-        <div class="card-head"><div class="card-title">${kind}</div></div>
+        <div class="card-head"><h2 class="card-title">${kind}</h2></div>
         <dl>
           <dt>block</dt><dd><a href="/block/${t.height}">${num(t.height)}</a></dd>
           <dt>time</dt><dd>${utc(new Date(t.time * 1000).toISOString())}</dd>
@@ -280,7 +280,7 @@ export class DdPageTx extends LitElement {
       </section>
 
       <section class="card">
-        <div class="card-head"><div class="card-title">Inputs (${num(t.vin.length)})</div></div>
+        <div class="card-head"><h2 class="card-title">Inputs (${num(t.vin.length)})</h2></div>
         <div class="card-body flush">
           <div class="twrap">
             <table>
@@ -306,7 +306,7 @@ export class DdPageTx extends LitElement {
       </section>
 
       <section class="card">
-        <div class="card-head"><div class="card-title">Outputs (${num(t.vout.length)})</div></div>
+        <div class="card-head"><h2 class="card-title">Outputs (${num(t.vout.length)})</h2></div>
         <div class="card-body flush">
           <div class="twrap">
             <table>

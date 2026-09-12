@@ -132,7 +132,7 @@ export class DdPagePeers extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Vantage points</div>
+          <h1 class="page-title" tabindex="-1">Vantage points</h1>
           <div class="page-sub">
             The same event, seen from every host. One node cannot tell a network problem from its
             own — this is what makes that difference visible.
@@ -203,7 +203,7 @@ export class DdPagePeers extends LitElement {
   private _hosts(d: PeerPropagation): TemplateResult {
     return html`
       <section class="card">
-        <div class="card-head"><div class="card-title">Host connectivity</div></div>
+        <div class="card-head"><h2 class="card-title">Host connectivity</h2></div>
         <div class="card-body flush">
           <div class="twrap">
             <table>
@@ -264,7 +264,7 @@ export class DdPagePeers extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Consistently behind</div>
+          <h2 class="card-title">Consistently behind</h2>
           <div class="page-sub mono">min 5 samples</div>
         </div>
         <div class="card-body flush">
@@ -303,7 +303,7 @@ export class DdPagePeers extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Recent ${this._topic === 'block' ? 'blocks' : 'ChainLocks'}</div>
+          <h2 class="card-title">Recent ${this._topic === 'block' ? 'blocks' : 'ChainLocks'}</h2>
           <div class="page-sub mono">${num(d.events.length)} compared</div>
         </div>
         <div class="card-body flush">

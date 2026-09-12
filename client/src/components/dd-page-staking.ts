@@ -323,7 +323,7 @@ export class DdPageStaking extends LitElement {
     return html`
       <div class="page-head">
         <div>
-          <div class="page-title">Staking health</div>
+          <h1 class="page-title" tabindex="-1">Staking health</h1>
           <div class="page-sub">
             Whether the chain is moving — and whether it is moving because of one machine. The
             second question decides whether anything else here means anything.
@@ -516,7 +516,7 @@ export class DdPageStaking extends LitElement {
     return html`
       <section class="card">
         <div class="card-head">
-          <div class="card-title">Blocks per ${machines ? 'machine' : 'payout key'}</div>
+          <h2 class="card-title">Blocks per ${machines ? 'machine' : 'payout key'}</h2>
           <div class="page-sub mono" style="display:flex; gap:12px; align-items:center">
             <span
               >${num(d.fromHeight)}–${num(d.toHeight)}${machines && byHost
