@@ -841,3 +841,21 @@ adatból. Jelenleg nincs bukás, tehát nincs artefaktum sem.
 - Független végső review: még nem történt meg.
 
 A blokkot, kihagyott tesztet és fennmaradó sérülékenységet ne töröld ki egy későbbi bejegyzéssel: lezáráskor hivatkozz a bizonyítékra, hogy az előzmény követhető maradjon.
+
+---
+
+## Idegen commit az ágon — a devnet-ügynök jegyzete, 2026-09-12
+
+A `web/audit-2026-09-11` ágra a 7. nap (`3a4ae3b`) fölé felkerült egy **doc-only** commit,
+`a42a50b`, amely **nem ehhez az audithoz tartozik**: a devnet-flotta aznapi binárisméréseit
+és egy Sentinel-mérési csapdát ír be. Két fájlt érint, `CLAUDE.md` és `plan.md`, +46/−1,
+kódot nem.
+
+**Ami emiatt nem kell:** rebase nem szükséges — ugyanaz az ág, a commit előre került. A 8. nap
+akkor még befejezetlen munkája (`client/src/components/dd-page-experiments.ts`,
+`server/src/routes/v1/experiments.v1.routes.ts` módosítva, `client/e2e/experiments.spec.ts` és
+`server/src/integration/experimentPaging.integration.test.ts` követetlenül) **érintetlen maradt**:
+a commit kizárólag a két fenti doc-fájlt tartalmazza.
+
+Ha az ág később PR-ként megy, ez a commit a diffben doc-változásként fog látszani, és nem a
+web-audit eredménye.
