@@ -91,7 +91,18 @@ function snapshot(value: SimulationMeasurementSnapshot): SimulationMeasurementSn
   };
 }
 
-/** Explicit allowlist projection: private evidence and future unknown fields cannot escape. */
+/**
+ * Explicit allowlist projection.
+ *
+ * What it guarantees, stated precisely because the previous one-line claim here
+ * ("future unknown fields cannot escape") was not true: fields outside the
+ * report -- the record's own and the anchor's -- are copied by name. Fields
+ * INSIDE the report are verified against its fingerprint first, so a field
+ * planted in storage makes the report fail closed rather than publish; the
+ * small aggregate sub-objects in there are still spread, which means a field
+ * the GENERATOR adds to one of them in future is published with it. That is a
+ * code change somebody makes, not data somebody plants, and it is a residual.
+ */
 export function toPublicSimulationMeasurementResult(
   source: SimulationMeasurementRecord
 ): PublicSimulationMeasurementResult {
@@ -137,7 +148,16 @@ export function toPublicSimulationMeasurementResult(
   return {
     reportId: source.reportId,
     runKey: source.runKey,
-    anchor: { ...source.anchor },
+    // By name. The anchor sits OUTSIDE the fingerprinted report, so nothing
+    // verifies it, and the spread that was here published a field planted in the
+    // stored document -- found by the planted-sentinel integration test, not by
+    // reading this function.
+    anchor: {
+      faultStartHeight: source.anchor.faultStartHeight,
+      faultStartBlockHash: source.anchor.faultStartBlockHash,
+      faultEndHeight: source.anchor.faultEndHeight,
+      faultEndBlockHash: source.anchor.faultEndBlockHash,
+    },
     report,
   };
 }
