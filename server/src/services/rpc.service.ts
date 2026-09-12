@@ -382,6 +382,15 @@ export interface RpcTransaction {
       missedCount?: number;
       size?: number;
       missedIndices?: number[];
+      /**
+       * Emitted for BOTH format versions in the same shape, so no reader needs
+       * a version branch: under version 1 everyone counts as observed and
+       * unobservedIndices is empty (`CPoSeServiceCommitment::ToJson`,
+       * evo/pose_service.h). Optional here only because a node older than
+       * that change omits them.
+       */
+      observedCount?: number;
+      unobservedIndices?: number[];
     };
   };
 }

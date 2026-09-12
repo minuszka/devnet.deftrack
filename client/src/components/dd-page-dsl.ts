@@ -203,7 +203,11 @@ export class DdPageDsl extends LitElement {
               fill=${p.status === 'committed' ? (p.missedCount ? 'var(--warn)' : 'var(--accent)') : 'var(--crit)'}
             ><title>epoch ${p.epoch} · block ${p.boundaryHeight}${
               p.status === 'committed'
-                ? ` · committed · ${p.missedCount ?? 0} of ${p.listSize ?? '?'} missed`
+                ? ` · committed · ${p.missedCount ?? 0} of ${p.listSize ?? '?'} missed${
+                    p.observedCount !== null && p.observedCount !== undefined
+                      ? ` · ${(p.listSize ?? 0) - p.observedCount} with no verdict`
+                      : ''
+                  }`
                 : ' · no commitment (non-convergence)'
             }</title></rect>`
           )}
@@ -235,12 +239,13 @@ export class DdPageDsl extends LitElement {
                   <th scope="col" class="r">Boundary</th>
                   <th scope="col">Verdict</th>
                   <th scope="col" class="r">Missed</th>
+                  <th scope="col" class="r" title="Masternodes this epoch reached no verdict on, either way. Not the same as seen online: format version 2 exists to keep the two apart.">No verdict</th>
                   <th scope="col">Commitment</th>
                 </tr>
               </thead>
               <tbody>
                 ${rows.length === 0
-                  ? html`<tr><td class="empty" colspan="5">Nothing judged yet.</td></tr>`
+                  ? html`<tr><td class="empty" colspan="6">Nothing judged yet.</td></tr>`
                   : rows.map(
                       (e) => html`
                         <tr>
@@ -251,6 +256,17 @@ export class DdPageDsl extends LitElement {
                           <td><span class="pill ${e.status}">${e.status}</span></td>
                           <td class="r mono">
                             ${e.status === 'committed' ? `${e.missedCount ?? 0} / ${e.listSize ?? '—'}` : '—'}
+                          </td>
+                          <td class="r mono">
+                            ${e.status !== 'committed'
+                              ? '—'
+                              : e.observedCount === null
+                                ? html`<span
+                                    class="caveat"
+                                    title="This row was written before the explorer read the field. The answer is on the chain; it has not been read back."
+                                    >not read</span
+                                  >`
+                                : num((e.listSize ?? 0) - e.observedCount)}
                           </td>
                           <td class="mono">
                             ${e.txid

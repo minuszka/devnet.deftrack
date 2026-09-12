@@ -163,7 +163,13 @@ function dslCommitment(height: number, epoch: number, epochBlockHash: string): R
     poseServiceTx: {
       version: 1,
       commitment: {
-        version: 1,
+        // Format version 2, the shape the node emits after #231: besides WHO
+        // was missed it says who was judged at all. Index 1 missed, index 2
+        // unobserved, index 0 seen online -- three different verdicts, which
+        // is the point. Under version 1 the node sends the same two fields
+        // with observedCount == size and an empty unobservedIndices, so
+        // nothing in the collector branches on the version.
+        version: 2,
         epoch,
         epochBlockHash,
         llmqType: 7,
@@ -171,6 +177,8 @@ function dslCommitment(height: number, epoch: number, epochBlockHash: string): R
         missedCount: 1,
         size: REGISTERED.length,
         missedIndices: [1],
+        observedCount: REGISTERED.length - 1,
+        unobservedIndices: [2],
       },
     },
   };
@@ -371,6 +379,13 @@ describe.skipIf(!HAVE_MONGO)('the block indexer, against a real MongoDB', () => 
     expect(absent!.missedCount).toBeNull();
     expect(absent!.missedIndices).toEqual([]);
     expect(absent!.missedProTxHashes).toEqual([]);
+    // An absent boundary judged nobody, so the verdict fields are unrecorded
+    // rather than zero. Zero would read as "everybody was judged, nobody was
+    // unobserved", which is a claim this row cannot support.
+    expect(absent!.commitmentVersion).toBeNull();
+    expect(absent!.observedCount).toBeNull();
+    expect(absent!.unobservedIndices).toEqual([]);
+    expect(absent!.unobservedProTxHashes).toEqual([]);
 
     expect(committed!.epochKey).toBe('dsl:2');
     expect(committed!.status).toBe('committed');
@@ -383,6 +398,20 @@ describe.skipIf(!HAVE_MONGO)('the block indexer, against a real MongoDB', () => 
     expect(committed!.missedIndices).toEqual([1]);
     // Index 1 of the canonical list at the epoch base, resolved to a name.
     expect(committed!.missedProTxHashes).toEqual([REGISTERED[1]]);
+
+    // The verdict half, and the reason this test exists at all: a schema that
+    // does not declare these paths makes Mongoose drop them in strict mode
+    // without a word, leaving the API to answer null for ever. Index 2 is the
+    // masternode this epoch says NOTHING about -- neither missed nor seen --
+    // and it must be stored and named apart from index 1, which was missed,
+    // and index 0, which was observed online.
+    expect(committed!.commitmentVersion).toBe(2);
+    expect(committed!.observedCount).toBe(REGISTERED.length - 1);
+    expect(committed!.unobservedIndices).toEqual([2]);
+    expect(committed!.unobservedProTxHashes).toEqual([REGISTERED[2]]);
+    // The distinction, stated as the view states it: judged ≠ online.
+    expect(committed!.listSize! - committed!.observedCount!).toBe(1);
+    expect(committed!.unobservedProTxHashes).not.toEqual(committed!.missedProTxHashes);
   });
 
   it('changes nothing on a tick with no new block', async () => {
