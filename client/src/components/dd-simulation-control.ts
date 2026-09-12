@@ -9,10 +9,12 @@ import {
   type SimulationCapabilities,
   type SimulationControlRun,
   type SimulationPreflight,
+  type SimulationTarget,
 } from '../lib/admin-api.js';
 
 import { num } from '../lib/format.js';
-import { draftScope } from '../lib/draftIdentity.js';
+import { canonicalJson, draftScope } from '../lib/draftIdentity.js';
+import { eligibility } from '../lib/targetEligibility.js';
 import { acceptsRunUpdate, runSafety } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
@@ -29,6 +31,27 @@ type Mode = 'dry-run' | 'live';
  * The dashboard owns the run and refreshes it; this component renders what it
  * is given and reports what the server answered.
  */
+
+/**
+ * The draft a scenario starts from: its template, minus any target.
+ *
+ * A template has to satisfy its schema, so for a scenario that names a target it
+ * carries a PLACEHOLDER id -- the schema accepts it and no registry resolves it.
+ * That made sense while the only editor was a text box that needed something to
+ * show. With a chooser it is a trap: ticking a real target ADDED it beside the
+ * placeholder, and the request went out naming a target that does not exist.
+ *
+ * A target is chosen from the registry, never supplied by a template, so target
+ * fields start empty. Nothing here matches the placeholder string: the field's
+ * kind decides, which also covers a template that someday names something else.
+ */
+function seedParams(descriptor: ScenarioSummary): Record<string, unknown> {
+  const params: Record<string, unknown> = { ...(descriptor.parameterTemplate ?? {}) };
+  for (const field of descriptor.parameterFields ?? []) {
+    if (field.kind === 'target' || field.kind === 'target-ids') delete params[field.name];
+  }
+  return params;
+}
 
 /** What the panel may offer when the server has not said. Deliberately nothing. */
 const NO_CAPABILITIES: SimulationCapabilities = {
@@ -58,6 +81,11 @@ function signedMargin(value: number | null): string {
   return value === null ? 'unknown' : `${value > 0 ? '+' : ''}${value}`;
 }
 
+/** A count the server could not establish is "unknown", never a zero. */
+function unknownOr(value: number | null): string {
+  return value === null ? 'unknown' : String(value);
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The requested control operation did not complete.';
 }
@@ -72,6 +100,7 @@ export class DdSimulationControl extends LitElement {
     session: { attribute: false },
     scenarios: { attribute: false },
     capabilities: { attribute: false },
+    targets: { attribute: false },
     selectedRunKey: { attribute: false },
     run: { attribute: false },
     plan: { attribute: false },
@@ -96,6 +125,8 @@ export class DdSimulationControl extends LitElement {
   scenarios: ScenarioSummary[] = [];
   /** Undefined until the server answers; an older server never sends it. */
   capabilities: SimulationCapabilities | undefined = undefined;
+  /** The target registry, owned and refreshed by the dashboard. */
+  targets: SimulationTarget[] = [];
   /**
    * The run the dashboard is looking at, from the URL. Null while a new draft
    * is being written.
@@ -165,6 +196,16 @@ export class DdSimulationControl extends LitElement {
       .seed-row input { flex: 1; min-width: 0; }
       .disclosure { background: none; border: none; padding: 0; color: var(--ink-2); font-family: var(--font-mono); font-size: var(--fs-xs); letter-spacing: .09em; text-transform: uppercase; cursor: pointer; }
       .disclosure:hover { color: var(--ink); }
+      .target-chooser { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--sp-3); margin: 0; min-width: 0; }
+      .target-chooser legend { display: flex; gap: var(--sp-2); align-items: baseline; padding: 0 var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+      .target-count { color: var(--ink-3); font-weight: 400; text-transform: none; letter-spacing: 0; }
+      .target-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; }
+      .target-list li { display: flex; align-items: flex-start; gap: var(--sp-2); padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+      .target-list li:last-child { border-bottom: none; }
+      .target-list label { flex-direction: column; gap: 2px; cursor: pointer; color: var(--ink); }
+      .target-list li.blocked label { color: var(--ink-3); cursor: not-allowed; }
+      .target-meta { color: var(--ink-2); font-size: var(--fs-xs); }
+      .target-why { color: var(--warn); font-size: var(--fs-xs); }
       @media (max-width: 900px) { .scenario-fields { grid-template-columns: 1fr; } }
       .notes { display: flex; flex-direction: column; gap: var(--sp-2); }
       textarea { width: 100%; min-height: 156px; resize: vertical; line-height: 1.5; }
@@ -228,6 +269,19 @@ export class DdSimulationControl extends LitElement {
   }
 
   /**
+   * The scenario itself would do nothing live.
+   *
+   * Separate from `_liveOffered` because the two are different facts: one is
+   * about this deployment, the other about this scenario. `clear-recover` plans
+   * only clears, the live executor leaves those to recovery, and a live run of
+   * it would start, apply nothing and report itself run -- which is not a mode
+   * to offer, however well configured the lab is.
+   */
+  private get _scenarioInertLive(): boolean {
+    return this._descriptor?.liveAppliesFaults === false;
+  }
+
+  /**
    * The allowlist arrives after the first render, so the parameter field is
    * filled from whichever scenario is selected once its descriptor exists --
    * and again whenever the selection changes. One rule covers both.
@@ -244,7 +298,7 @@ export class DdSimulationControl extends LitElement {
     const descriptor = this._descriptor;
     if (descriptor === null || this._seededScenarioId === descriptor.scenarioId) return;
     this._seededScenarioId = descriptor.scenarioId;
-    this._params = { ...(descriptor.parameterTemplate ?? {}) };
+    this._params = seedParams(descriptor);
     this._paramsText = null;
     this._paramsError = '';
   }
@@ -285,6 +339,17 @@ export class DdSimulationControl extends LitElement {
   /** The fields this scenario's descriptor describes, or none. */
   private _fields(): ScenarioFieldSpec[] {
     return this._descriptor?.parameterFields ?? [];
+  }
+
+  /**
+   * The ceiling that applies right now: the lowered one while its condition
+   * holds. Flapping takes ten masternodes but five stakers, and showing ten
+   * with the role set to staker would invite a request the server refuses.
+   */
+  private _effectiveMax(field: ScenarioFieldSpec): number | undefined {
+    const when = field.maxWhen;
+    if (when !== undefined && when.values.includes(String(this._params[when.field] ?? ''))) return when.max;
+    return field.max;
   }
 
   /** A field is shown only when the field it depends on has an admitting value. */
@@ -432,6 +497,9 @@ export class DdSimulationControl extends LitElement {
 
   private _selectScenario(event: Event): void {
     this._scenarioId = (event.target as HTMLSelectElement).value;
+    // A mode the new scenario cannot honour is not left selected behind the
+    // disabled option, where it would still be what Prepare sends.
+    if (this._mode === 'live' && this._scenarioInertLive) this._mode = 'dry-run';
     // The parameter field is refilled by willUpdate, from the server's own
     // template for the newly chosen scenario.
     this._draftChanged();
@@ -481,6 +549,15 @@ export class DdSimulationControl extends LitElement {
     // difference anyway; refusing it on the screen says which one is wrong.
     if (this._paramsError !== '') {
       this._message = `The parameters could not be read: ${this._paramsError}`;
+      return;
+    }
+    // A required target is chosen from the registry or not at all. The server
+    // would refuse its absence too; saying so here names the field.
+    const missing = this._fields().find(
+      (f) => f.required && (f.kind === 'target' || f.kind === 'target-ids') && this._params[f.name] === undefined
+    );
+    if (missing !== undefined) {
+      this._message = `Choose at least one target for "${missing.label}" before preparing.`;
       return;
     }
     const parameters: Record<string, unknown> = { ...this._params };
@@ -671,7 +748,7 @@ export class DdSimulationControl extends LitElement {
           <label><span>Mode</span>
             <select .value=${this._mode} @change=${this._selectMode} ?disabled=${this._busy}>
               <option value="dry-run">dry-run</option>
-              <option value="live" ?disabled=${!this._liveOffered}>Live · regtest lab</option>
+              <option value="live" ?disabled=${!this._liveOffered || this._scenarioInertLive}>Live · regtest lab</option>
             </select>
           </label>
           <label class="seed"><span>Deterministic seed</span>
@@ -744,26 +821,11 @@ export class DdSimulationControl extends LitElement {
         </label>
       `;
     }
-    if (field.kind === 'target-ids') {
-      const list = Array.isArray(value) ? (value as string[]).join(', ') : '';
-      return html`
-        <label for=${id} class="wide">
-          <span>${field.label} <em class="optional">optional</em></span>
-          <input
-            id=${id}
-            type="text"
-            .value=${list}
-            placeholder="lab-mn-1, lab-mn-2"
-            @input=${(e: Event) => {
-              const raw = (e.target as HTMLInputElement).value.trim();
-              const ids = raw === '' ? undefined : raw.split(',').map((s) => s.trim()).filter((s) => s !== '');
-              this._setParam(field.name, ids);
-            }}
-            ?disabled=${this._busy}
-          />
-          ${field.help ? html`<small class="field-help">${field.help}</small>` : nothing}
-        </label>
-      `;
+    if (field.kind === 'target' || field.kind === 'target-ids') {
+      // The comma-separated text box this replaces let an operator type an id
+      // the registry has never heard of, or a staker into a masternode slot,
+      // and find out from the server.
+      return this._targetChooser(field);
     }
     return html`
       <label for=${id}>
@@ -771,10 +833,10 @@ export class DdSimulationControl extends LitElement {
         <input
           id=${id}
           type="number"
-          inputmode="numeric"
-          step="1"
+          inputmode=${field.kind === 'number' ? 'decimal' : 'numeric'}
+          step=${field.kind === 'number' ? 'any' : '1'}
           min=${field.min ?? nothing}
-          max=${field.max ?? nothing}
+          max=${this._effectiveMax(field) ?? nothing}
           .value=${value === undefined ? '' : String(value)}
           @input=${(e: Event) => {
             const raw = (e.target as HTMLInputElement).value;
@@ -787,11 +849,109 @@ export class DdSimulationControl extends LitElement {
           required=${field.required ? true : nothing}
         />
         <small class="field-range"
-          >${field.min}–${field.max}${field.unit ? ` ${field.unit}` : ''}</small
+          >${field.min}–${this._effectiveMax(field)}${field.unit ? ` ${field.unit}` : ''}</small
         >
         ${field.help ? html`<small class="field-help">${field.help}</small>` : nothing}
       </label>
     `;
+  }
+
+  /**
+   * The registry, as a chooser, for one target field.
+   *
+   * Every registered target is listed -- including the ones that cannot be
+   * chosen -- because a target that silently isn't there reads as a registry
+   * problem, while one that is there and marked "in maintenance" says exactly
+   * what to do about it. The reasons are the server's own rules, mirrored in
+   * `targetEligibility.ts`; the server still decides.
+   *
+   * Only the display label and the target id are shown. The registry also
+   * carries a host reference, and on the devnet that is not something to put on
+   * a screen a screenshot can be taken of.
+   */
+  private _targetChooser(field: ScenarioFieldSpec): TemplateResult {
+    const single = field.kind === 'target';
+    const chosen = new Set<string>(
+      single
+        ? typeof this._params[field.name] === 'string'
+          ? [this._params[field.name] as string]
+          : []
+        : Array.isArray(this._params[field.name])
+          ? (this._params[field.name] as string[])
+          : []
+    );
+    const draft = { network: this._network, params: this._params };
+    const rows = this.targets.map((t) => ({ target: t, verdict: eligibility(t, field.target, draft) }));
+    const usable = rows.filter((r) => r.verdict.ok).length;
+
+    return html`
+      <fieldset class="wide target-chooser" ?disabled=${this._busy}>
+        <legend>
+          ${field.label}
+          ${field.required ? nothing : html`<em class="optional">optional</em>`}
+          <span class="target-count">${usable} of ${this.targets.length} selectable</span>
+        </legend>
+        ${this.targets.length === 0
+          ? html`<div class="notice" role="status">
+              The target registry is empty on this deployment, so there is nothing to choose.
+              Register targets before preparing a scenario that names one.
+            </div>`
+          : usable === 0
+            ? html`<div class="notice" role="status">
+                No registered target can be used here. Each is listed with the reason.
+              </div>`
+            : nothing}
+        ${this.targets.length > 0
+          ? html`<ul class="target-list">
+              ${rows.map(({ target, verdict }) => {
+                const id = `target-${field.name}-${target.targetId}`;
+                return html`
+                  <li class=${verdict.ok ? 'ok' : 'blocked'}>
+                    <input
+                      id=${id}
+                      type=${single ? 'radio' : 'checkbox'}
+                      name=${`target-${field.name}`}
+                      .checked=${chosen.has(target.targetId)}
+                      ?disabled=${!verdict.ok && !chosen.has(target.targetId)}
+                      @change=${(e: Event) =>
+                        this._toggleTarget(field, target.targetId, (e.target as HTMLInputElement).checked)}
+                    />
+                    <label for=${id}>
+                      <span class="mono">${target.targetId}</span>
+                      <span class="target-meta">${target.displayLabel} · ${target.role}</span>
+                      ${verdict.ok ? nothing : html`<span class="target-why">${verdict.reason}</span>`}
+                    </label>
+                  </li>
+                `;
+              })}
+            </ul>`
+          : nothing}
+        ${field.help ? html`<small class="field-help">${field.help}</small>` : nothing}
+      </fieldset>
+    `;
+  }
+
+  /**
+   * Choose or unchoose one target.
+   *
+   * A list field keeps `count` in step with what was chosen, because the server
+   * refuses a target list whose length is not the count -- and a form that let
+   * the two disagree would send exactly that. Clearing the last choice removes
+   * the field entirely, so the server goes back to choosing from the seed.
+   */
+  private _toggleTarget(field: ScenarioFieldSpec, targetId: string, checked: boolean): void {
+    if (field.kind === 'target') {
+      this._setParam(field.name, checked ? targetId : undefined);
+      return;
+    }
+    const current = Array.isArray(this._params[field.name]) ? [...(this._params[field.name] as string[])] : [];
+    const next = checked
+      ? [...new Set([...current, targetId])]
+      : current.filter((id) => id !== targetId);
+    this._setParam(field.name, next.length === 0 ? undefined : next);
+    if (next.length > 0 && this._fields().some((f) => f.name === 'count')) {
+      this._setParam('count', next.length);
+    }
   }
 
   /**
@@ -854,7 +1014,7 @@ export class DdSimulationControl extends LitElement {
               requires — the server validates them, and refuses what it does not recognise.
             </div>`
           : nothing}
-        ${descriptor.templateNeedsTargetId === true
+        ${descriptor.templateNeedsTargetId === true && !this._fields().some((f) => f.kind === 'target' || f.kind === 'target-ids')
           ? html`<div class="notice">
               The template names a placeholder target id. Replace it with a registered target:
               the schema accepts the placeholder, the registry will not.
@@ -866,6 +1026,13 @@ export class DdSimulationControl extends LitElement {
               Live mode is unavailable: this deployment reports no configured lab executor.
               Dry-run plans are unaffected.
             </div>`}
+        ${this._liveOffered && this._scenarioInertLive
+          ? html`<div class="notice">
+              <b class="mono">${descriptor.scenarioId}</b> is not offered live: it is a recovery
+              action, not a fault, so a live run of it would apply nothing. Recovery clears simulator
+              state on every run that needs it.
+            </div>`
+          : nothing}
         ${this._mode === 'live'
           ? html`<div class="notice">
               A live run executes in the regtest lab only. A configured executor is not a passed
@@ -911,25 +1078,53 @@ export class DdSimulationControl extends LitElement {
     `;
   }
 
+  /**
+   * Whether the draft on the form describes a different run from the one on
+   * screen.
+   *
+   * Compared through the same canonical form the create key uses, so a
+   * reordered but identical object is not "changed". A different target set is
+   * the case that matters: the preview beneath is the SAVED plan, and without
+   * this line an operator who had just ticked two more targets would read the
+   * old impact as the new one.
+   */
+  private _draftDiffers(run: SimulationControlRun): boolean {
+    return (
+      canonicalJson({ scenarioId: this._scenarioId, parameters: this._params }) !==
+      canonicalJson({ scenarioId: run.metadata.scenarioId, parameters: run.metadata.parameters })
+    );
+  }
+
   private _selectedView(run: SimulationControlRun, plan: DryRunPlan): TemplateResult {
     return html`
-      ${this._preview(plan)}
+      ${this._preview(plan, run)}
       ${this._preflightCard()}
       ${this._approvalAndRecovery(run)}
     `;
   }
 
-  private _preview(plan: DryRunPlan): TemplateResult {
+  private _preview(plan: DryRunPlan, run: SimulationControlRun): TemplateResult {
     const impact = plan.impact;
     return html`
       <section class="card">
         <div class="card-head"><h3 class="card-title">Target preview</h3><div class="page-sub mono">${plan.runKey}</div></div>
+        ${this._draftDiffers(run)
+          ? html`<div class="notice draft-differs" role="status">
+              This preview is the prepared run's, from its saved plan. The draft above has changed
+              since. Prepare it to preview that change; the run's own controls below are not affected.
+            </div>`
+          : nothing}
         <div class="impact">
           <div><span>Targets</span><b>${num(impact.affectedTargetCount)}</b></div>
+          <div><span>Masternodes</span><b>${num(impact.affectedMasternodeCount)}</b></div>
+          <div><span>Stakers</span><b>${num(impact.affectedStakerCount)}</b></div>
           <div><span>Hosts</span><b>${num(impact.affectedHostCount)}</b></div>
           <div><span>Quorum members affected</span><b>${num(impact.affectedCurrentQuorumMembers)}</b></div>
-          <div><span>DKG margin</span><b>${signedMargin(impact.dkgMarginAfterFault)}</b></div>
-          <div><span>ChainLock margin</span><b>${signedMargin(impact.chainLockMarginAfterFault)}</b></div>
+          <!-- Unknown reads unknown, never 0: a margin of zero is a finding, and a
+               quorum the server could not size is not one. -->
+          <div><span>Quorum size / surviving</span><b class="quorum-size">${unknownOr(impact.currentQuorumSize)} / ${unknownOr(impact.survivingCurrentQuorumMembers)}</b></div>
+          <div><span>DKG margin</span><b class="dkg-margin">${signedMargin(impact.dkgMarginAfterFault)}</b></div>
+          <div><span>ChainLock margin</span><b class="cl-margin">${signedMargin(impact.chainLockMarginAfterFault)}</b></div>
           <div><span>Actions</span><b>${num(plan.actions.length)}</b></div>
         </div>
         ${impact.warnings.length ? html`<div class="alert">${impact.warnings.map((warning) => html`<div>${warning}</div>`)}</div>` : nothing}

@@ -75,7 +75,32 @@ export interface ScenarioDescriptor {
  * past, an enum value it does not know, or a field the schema does not have all
  * fail there. The table cannot drift without a red test.
  */
-export type ScenarioFieldKind = 'integer' | 'enum' | 'target-ids';
+export type ScenarioFieldKind = 'integer' | 'number' | 'enum' | 'target' | 'target-ids';
+
+/**
+ * Which registered targets a target field can actually be resolved to.
+ *
+ * Three rules, from two places, and the chooser marks all of them:
+ *
+ *   - network, enabled, maintenance -- the resolver's own candidate filter
+ *     (`targetResolver.ts`), applied before any scenario sees a target;
+ *   - role and capability -- the dry-run executor's eligibility for this
+ *     scenario (`dryRunExecutor.ts`), which is where a masternode without
+ *     `netem-p2p` is refused for a network degradation.
+ *
+ * `scenarioFields.test.ts` proves the role and capability half against
+ * `generateDryRunPlan` itself. The role is never inferred from a target's NAME:
+ * a name like `mn11` has already been taken for a staker on this fleet once,
+ * and acting on that shorthand nearly took a masternode off the network.
+ */
+export interface ScenarioTargetRequirement {
+  /** A fixed role the executor requires. */
+  role?: SimulationTargetRole;
+  /** Or: the parameter whose value is the role (restart-flapping, network-degradation). */
+  roleFrom?: string;
+  /** A capability the executor requires on the target. */
+  capability?: 'service-control' | 'netem-p2p' | 'partition-p2p' | 'dsl-test-hook';
+}
 
 export interface ScenarioField {
   name: string;
@@ -92,6 +117,16 @@ export interface ScenarioField {
   values?: readonly string[];
   /** One line under the field. Says what the number MEANS, not what it is. */
   help?: string;
+  /** Target fields: what the server will resolve this field to. */
+  target?: ScenarioTargetRequirement;
+  /**
+   * A lower ceiling while another field holds one of these values.
+   *
+   * restart-flapping's `count` is 1..10, except that it is 1..5 when the role
+   * is staker -- block production rests on those daemons. A form that showed
+   * the plain max would accept 8 stakers and let the server refuse it.
+   */
+  maxWhen?: { field: string; values: readonly string[]; max: number };
   /**
    * The field is only meaningful when another field has one of these values.
    * `dsl-fault.param` is the only one so far: the delay kinds require it and
@@ -104,6 +139,17 @@ export interface ScenarioField {
 export interface ScenarioCatalogueEntry extends ScenarioDescriptor {
   parameterTemplate: Record<string, unknown>;
   templateNeedsTargetId: boolean;
+  /**
+   * Whether running this scenario live actually injects anything.
+   *
+   * False for exactly one: `clear-recover`. Every action it plans is a
+   * `fault-clear`, and the live executor skips those on purpose -- clearing is
+   * recovery's job, not a fault's. A live clear-recover would therefore start,
+   * apply nothing and report itself run. The panel must not offer that as if it
+   * were a mode; `scenarioFields.test.ts` proves the flag on the live plan
+   * itself rather than on this comment.
+   */
+  liveAppliesFaults: boolean;
   /**
    * The form fields for this scenario, in the order they should be shown.
    * Absent for a scenario the panel has no form for yet, which is the honest

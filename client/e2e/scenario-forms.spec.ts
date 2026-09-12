@@ -210,10 +210,13 @@ test.describe('scenario forms', () => {
         // The conditional one is absent until its condition holds, which is the
         // subject of its own test above.
         if (field.onlyWhen !== undefined) continue;
-        await expect(
-          page.locator(`#param-${field.name}`),
-          `${scenario.scenarioId}.${field.name}`
-        ).toBeVisible();
+        // A target field is a chooser over the registry since day 16, not an
+        // input -- so it is found by its legend rather than by an input id.
+        const locator =
+          field.kind === 'target' || field.kind === 'target-ids'
+            ? page.locator('fieldset.target-chooser', { hasText: field.label })
+            : page.locator(`#param-${field.name}`);
+        await expect(locator, `${scenario.scenarioId}.${field.name}`).toBeVisible();
       }
     }
   });

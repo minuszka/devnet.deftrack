@@ -23,6 +23,12 @@ export interface SimulationTarget {
   expectedBuild: string | null;
   enabled: boolean;
   maintenance: boolean;
+  /**
+   * What the executor can do to this target. The server has always sent it;
+   * the panel did not read it, which is why a chooser could not have known that
+   * a masternode without `netem-p2p` is refused for a network degradation.
+   */
+  capabilities?: Array<'service-control' | 'netem-p2p' | 'partition-p2p' | 'dsl-test-hook'>;
 }
 
 export interface ActiveSimulationRun {
@@ -230,7 +236,7 @@ export interface SimulationHistory {
 export interface ScenarioFieldSpec {
   name: string;
   label: string;
-  kind: 'integer' | 'enum' | 'target-ids';
+  kind: 'integer' | 'number' | 'enum' | 'target' | 'target-ids';
   required: boolean;
   min?: number;
   max?: number;
@@ -239,6 +245,14 @@ export interface ScenarioFieldSpec {
   help?: string;
   /** Shown only while another field holds one of these values. */
   onlyWhen?: { field: string; values: string[] };
+  /** Target fields: the role and capability the server will resolve them to. */
+  target?: {
+    role?: 'masternode' | 'staker' | 'seed';
+    roleFrom?: string;
+    capability?: 'service-control' | 'netem-p2p' | 'partition-p2p' | 'dsl-test-hook';
+  };
+  /** A lower ceiling while another field holds one of these values. */
+  maxWhen?: { field: string; values: string[]; max: number };
 }
 
 export interface ScenarioSummary {
@@ -260,6 +274,12 @@ export interface ScenarioSummary {
   templateNeedsTargetId?: boolean;
   /** The form fields for this scenario, in the order to show them. */
   parameterFields?: ScenarioFieldSpec[];
+  /**
+   * False when running this scenario live injects nothing -- `clear-recover`,
+   * whose every action is a clear the live executor leaves to recovery. Absent
+   * on an older server, which is read as "not known to be inert".
+   */
+  liveAppliesFaults?: boolean;
 }
 
 /**

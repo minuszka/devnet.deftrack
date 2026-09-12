@@ -308,16 +308,16 @@ export const SCENARIO_PARAMETER_TEMPLATES: Readonly<
 };
 
 /**
- * The four scenarios day 15 gives a form to, field by field.
+ * Every scenario, field by field -- the four simple ones from day 15 and the
+ * five that need a real target from day 16.
  *
  * Every bound here is the schema's own bound, and `scenarioFields.test.ts`
  * proves it by pushing values at `parseScenarioRequest` -- one inside each
  * bound, one outside -- rather than by reading this table back to itself.
  *
- * The scenarios that are absent are absent on purpose. They take a target
- * chooser that does not exist yet (day 16), and a number field that silently
- * dropped `anchorTargetId` would produce a request the registry cannot
- * resolve. Those keep the JSON view until there is something real to draw.
+ * Target fields carry the requirement the server applies to them, so the
+ * chooser can mark a target it will refuse rather than let the operator pick
+ * one and learn why from an error.
  */
 const durationField = (help: string): ScenarioField => ({
   name: 'durationSeconds',
@@ -330,13 +330,21 @@ const durationField = (help: string): ScenarioField => ({
   help,
 });
 
-const targetIdsField: ScenarioField = {
+/**
+ * The explicit target list, carrying what the executor will accept for it.
+ *
+ * Optional for every count-based scenario: absent means the server chooses,
+ * deterministically, from the seed. When given, it must be unique and exactly
+ * as long as `count` -- `validateCrossFields` refuses anything else.
+ */
+const targetIdsField = (target: ScenarioField['target']): ScenarioField => ({
   name: 'targetIds',
-  label: 'Explicit target ids',
+  label: 'Explicit targets',
   kind: 'target-ids',
   required: false,
-  help: 'Leave empty to let the server choose. If given, the list must be unique and exactly as long as the count.',
-};
+  target,
+  help: 'Leave empty to let the server choose from the seed. If chosen, exactly as many as the count, each once.',
+});
 
 export const SCENARIO_FIELDS: Readonly<Partial<Record<SimulationScenarioId, ScenarioField[]>>> = {
   'mn-stop': [
@@ -352,7 +360,7 @@ export const SCENARIO_FIELDS: Readonly<Partial<Record<SimulationScenarioId, Scen
     durationField(
       `At most ${MAX_OUTAGE_BLOCKS} blocks. An unanchored outage this short cannot be guaranteed to miss a DKG contribution window -- that is what anchoring is for, not a longer outage.`
     ),
-    targetIdsField,
+    targetIdsField({ role: 'masternode', capability: 'service-control' }),
   ],
   'staker-stop': [
     {
@@ -368,7 +376,7 @@ export const SCENARIO_FIELDS: Readonly<Partial<Record<SimulationScenarioId, Scen
       help: 'Capped well below the masternode count: these are the daemons that produce blocks.',
     },
     durationField('At most six blocks, measured the same way as every other outage.'),
-    targetIdsField,
+    targetIdsField({ role: 'staker', capability: 'service-control' }),
   ],
   'quorum-member-outage': [
     {
@@ -389,7 +397,9 @@ export const SCENARIO_FIELDS: Readonly<Partial<Record<SimulationScenarioId, Scen
       help: 'Which schedule the outage is aimed at. A member absent around DKG is punished; one absent around signing is not, and that difference is the measurement.',
     },
     durationField('At most six blocks.'),
-    targetIdsField,
+    // Current quorum members only, which the chooser cannot know; the server
+    // narrows to them and says so if a chosen target is not one.
+    targetIdsField({ role: 'masternode', capability: 'service-control' }),
   ],
   'dsl-fault': [
     {
@@ -430,7 +440,168 @@ export const SCENARIO_FIELDS: Readonly<Partial<Record<SimulationScenarioId, Scen
       help: 'Only the delay kinds take this, and they require it: the node refuses a delay of zero blocks as not a delay.',
       onlyWhen: { field: 'faultKind', values: ['response-delay', 'report-delay'] },
     },
-    targetIdsField,
+    targetIdsField({ role: 'masternode', capability: 'dsl-test-hook' }),
+  ],
+
+  /* ── day 16: the scenarios that need a real target ────────────────────── */
+
+  'host-outage': [
+    {
+      name: 'anchorTargetId',
+      label: 'Any target on the host',
+      kind: 'target',
+      required: true,
+      // No role: the anchor only names the host. What is then stopped is every
+      // service-control target on it except the seed, which is decided on the
+      // server and shown in the preview -- the chooser does not guess it.
+      target: {},
+      help: 'Picks the host, not the node. Every service-control target on that host is stopped, except the seed, which is never stopped.',
+    },
+    durationField('At most six blocks.'),
+    {
+      name: 'expectedMasternodes',
+      label: 'Expected masternodes on the host',
+      kind: 'integer',
+      required: false,
+      min: 1,
+      max: SCENARIO_LIMITS.maxTargets,
+      unit: 'nodes',
+      help: 'Optional guard. If the host no longer carries exactly this many, the plan is refused rather than stopping a different set.',
+    },
+  ],
+  'restart-flapping': [
+    {
+      name: 'role',
+      label: 'Role',
+      kind: 'enum',
+      required: true,
+      values: ['masternode', 'staker'],
+    },
+    {
+      name: 'count',
+      label: 'Services to flap',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: 10,
+      unit: 'services',
+      maxWhen: { field: 'role', values: ['staker'], max: SCENARIO_LIMITS.maxStakers },
+      help: `At most ${SCENARIO_LIMITS.maxStakers} when the role is staker: those are the daemons that produce blocks.`,
+    },
+    {
+      name: 'cycles',
+      label: 'Cycles',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: SCENARIO_LIMITS.maxFlapCycles,
+      unit: 'cycles',
+    },
+    {
+      name: 'downSeconds',
+      label: 'Down per cycle',
+      kind: 'integer',
+      required: true,
+      min: 5,
+      max: 60,
+      unit: 'seconds',
+    },
+    {
+      name: 'upSeconds',
+      label: 'Up per cycle',
+      kind: 'integer',
+      required: true,
+      min: 5,
+      max: 120,
+      unit: 'seconds',
+      help: `The whole schedule -- cycles x (down + up) -- may not exceed ${SCENARIO_LIMITS.maxDurationSeconds} seconds.`,
+    },
+    targetIdsField({ roleFrom: 'role', capability: 'service-control' }),
+  ],
+  'network-degradation': [
+    {
+      name: 'role',
+      label: 'Role',
+      kind: 'enum',
+      required: true,
+      values: ['masternode', 'staker'],
+      help: 'Never the seed: it is the explorer\'s own evidence source, so impairing it degrades the measurement, not the network.',
+    },
+    {
+      name: 'count',
+      label: 'Nodes to degrade',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: 10,
+      unit: 'nodes',
+    },
+    durationField('At most six blocks.'),
+    {
+      name: 'latencyMs',
+      label: 'Added latency',
+      kind: 'integer',
+      required: true,
+      min: 0,
+      max: SCENARIO_LIMITS.maxLatencyMs,
+      unit: 'ms',
+    },
+    {
+      name: 'jitterMs',
+      label: 'Jitter',
+      kind: 'integer',
+      required: true,
+      min: 0,
+      max: SCENARIO_LIMITS.maxJitterMs,
+      unit: 'ms',
+      help: 'May not exceed the latency.',
+    },
+    {
+      name: 'lossPercent',
+      label: 'Packet loss',
+      kind: 'number',
+      required: true,
+      min: 0,
+      max: SCENARIO_LIMITS.maxPacketLossPercent,
+      unit: '%',
+    },
+    {
+      name: 'correlationPercent',
+      label: 'Loss correlation',
+      kind: 'number',
+      required: true,
+      min: 0,
+      max: 100,
+      unit: '%',
+      help: 'At least one of latency, jitter or loss has to be non-zero, or nothing is degraded.',
+    },
+    targetIdsField({ roleFrom: 'role', capability: 'netem-p2p' }),
+  ],
+  'node-isolation': [
+    {
+      name: 'count',
+      label: 'Masternodes to isolate',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: SCENARIO_LIMITS.maxIsolatedTargets,
+      unit: 'nodes',
+    },
+    durationField('At most six blocks.'),
+    targetIdsField({ role: 'masternode', capability: 'partition-p2p' }),
+  ],
+  'clear-recover': [
+    {
+      // No duration and no count: this is a safety action, not a fault. It
+      // clears what the simulator put on the named targets and proves they are
+      // clean, and the general fault-duration field has no meaning here.
+      name: 'targetIds',
+      label: 'Targets to clear',
+      kind: 'target-ids',
+      required: true,
+      target: {},
+      help: 'Clears simulator fault state on these targets and records the recovery proof. Nothing is stopped.',
+    },
   ],
 };
 
@@ -514,6 +685,7 @@ export function scenarioDescriptors(): ScenarioCatalogueEntry[] {
     return {
       ...SCENARIO_REGISTRY[id],
       parameterTemplate,
+      liveAppliesFaults: id !== 'clear-recover',
       ...(parameterFields === undefined ? {} : { parameterFields }),
       // Whether the operator has to replace something before this can resolve.
       // Said by the server rather than sniffed for by the panel, because the

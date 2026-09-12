@@ -820,6 +820,7 @@ export class DdAdminShell extends LitElement {
           .session=${session}
           .scenarios=${this._scenarios}
           .capabilities=${this._capabilities}
+          .targets=${this._targets}
           .selectedRunKey=${this._selectedRunKey}
           .run=${this._selectedRun}
           .plan=${this._selectedPlan}

@@ -67,8 +67,36 @@ test.describe('simulation control', () => {
     await expect(page.locator('.notes')).toContainText('offered no parameter template');
   });
 
-  test('a placeholder target id is called a placeholder', async ({ app, page }) => {
+  /*
+   * A corrected expectation, not a deleted one.
+   *
+   * This used to assert that the template's placeholder target id reached the
+   * draft, with a notice asking for it to be replaced. That was right while the
+   * only editor was a text box. Since day 16 a target is chosen from the
+   * registry, and the placeholder staying in the draft was a defect: ticking a
+   * real target ADDED it beside the placeholder, and the request named a target
+   * that does not exist. So the placeholder no longer enters the draft at all.
+   */
+  test('a placeholder target id never reaches a draft that has a chooser', async ({ app, page }) => {
     await openAdmin(app, adminSessionStubs());
+    await page.locator('select').first().selectOption('clear-recover');
+
+    await openJson(page);
+    await expect(page.locator(PARAMETERS)).not.toHaveValue(/replace-with-a-registered-target-id/);
+    // With nothing to replace, there is nothing to warn about.
+    await expect(page.locator('.notes')).not.toContainText('the registry will not');
+  });
+
+  /**
+   * The notice still has a reader: a server that describes no form fields, so
+   * the draft is the raw template and the placeholder is still in it.
+   */
+  test('a server without form fields still names its placeholder', async ({ app, page }) => {
+    const noFields = SCENARIO_STUBS.map((scenario) => {
+      const { parameterFields: _omitted, ...rest } = scenario;
+      return rest;
+    });
+    await openAdmin(app, adminSessionStubs({ scenarios: noFields }));
     await page.locator('select').first().selectOption('clear-recover');
 
     await openJson(page);
@@ -199,11 +227,26 @@ test.describe('simulation control', () => {
         expect(value, scenario.scenarioId).toBe('{}');
         continue;
       }
-      expect(JSON.parse(value), scenario.scenarioId).toEqual(scenario.parameterTemplate);
-      // Never `{}`: the empty object is the shape the old table produced for
-      // anything it did not know, and it is refused by every scenario that
-      // requires a field.
-      expect(Object.keys(JSON.parse(value) as object).length, scenario.scenarioId).toBeGreaterThan(0);
+      // The template, minus any target field: since day 16 a target is chosen
+      // from the registry and never carried in from the template's placeholder.
+      const targetFields = new Set(
+        (scenario.parameterFields ?? [])
+          .filter((f) => f.kind === 'target' || f.kind === 'target-ids')
+          .map((f) => f.name)
+      );
+      const expected = Object.fromEntries(
+        Object.entries(scenario.parameterTemplate).filter(([key]) => !targetFields.has(key))
+      );
+      expect(JSON.parse(value), scenario.scenarioId).toEqual(expected);
+      // Never `{}` for a scenario that takes anything besides a target: the empty
+      // object is what the old table produced for anything it did not know. A
+      // scenario whose ONLY parameter is its target (clear-recover) is `{}` by
+      // design, and cannot be prepared that way -- Prepare asks for the target.
+      if (Object.keys(expected).length === 0) {
+        expect(targetFields.size, `${scenario.scenarioId} is empty and has no target to choose`).toBeGreaterThan(0);
+      } else {
+        expect(Object.keys(JSON.parse(value) as object).length, scenario.scenarioId).toBeGreaterThan(0);
+      }
     }
   });
 });
