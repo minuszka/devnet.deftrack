@@ -1305,6 +1305,112 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## J3 javító munkanap – a Fairness profilja és a registry létszáma, majd teljes elfogadási kör
+
+```text
+Nap / dátum / implementáló: J3 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/review-fixes-2026-09-12 @ 423b64b (J2 után)
+Napi feladat és előfeltételei: a review R5 és R6 találata, majd a teljes
+  elfogadási kör. Előfeltétel: J1, J2 — kész.
+Auditpontok: F05 (R5), F06 (R6)
+```
+
+**R5 — a profil feloldása egyszer történt meg, és mindkét válasz beragadt.** A
+chain tip és a ChainLock-jelentés `_resolved === null` őrszem mögött olvasódott,
+csakhogy a **„nem feloldható” sem null** — így a sikeres és a sikertelen válasz
+egyformán beragadt az oldal élettartamára. Egyetlen 503 a ChainLock-jelentésen
+azt jelentette, hogy **soha többé nem indult Fairness-lekérdezés**; egy az
+aktiválási magasságot átlépő tip pedig a másik irányba ragadt be: az a link,
+ami azért van, hogy kövesse a tipet, továbbra is arról a profilról kérdezett,
+amelyik már nem ír alá. Mindkettőből csak teljes újratöltés vagy kézi
+profilválasztás vezetett ki — egyiket sem tudja az olvasó, hogy meg kell tennie.
+
+A pár mostantól **minden tickben** olvasódik. A profil-**registry** továbbra is
+egyszer: az a cache indokolt, mert a profilok a binárissal változnak, nem a
+tippel. Ez a pár viszont **maga a tip**.
+
+**Az explicit választást ez nem érinti.** Az `llmq=<név>` és az `llmq=all` az
+`_effective()`-ben dönt, a feloldás már csak a mellette lévő „· at the tip”
+jelölőt határozza meg — ezért ilyenkor a kód **nem is várja meg**.
+
+**R6 — a „jelenleg regisztrált” létszám nem a vizsgált ablak létszáma.** A
+`currentRegisteredNodes` kihagyta azt a node-ot, amelynek nincs eligible köre az
+ablakban, azzal az érveléssel, hogy különben új node-ból gyártanánk éhező hostot.
+Az érvelés helyes, csak **más számokról szól**: a `neverSelected` és a
+`roundsEligible` az a hely, ahová tartozik, és mindkettő továbbra is alkalmazza.
+**Itt** alkalmazva viszont azt okozta, hogy a „hányan vannak regisztrálva”
+kérdésre adott válasz attól függött, melyik ablakról és melyik profilról kérdez
+valaki — vagyis egy tegnap regisztrált masternode hiányzott abból a számból,
+ami a **mai** állapotot írja le. Ez a mező saját dokumentált szerződésével ment
+szembe, ami kifejezetten a registryt mondja, nem a mintát.
+
+A két oszlop szándékosan két különböző kérdés — ezért van belőlük kettő. Egy
+host, amelyik 2 regisztráltat és 1 kiválasztottat mutat, **le van írva, nem
+megvádolva**.
+
+**A hibás meglévő unit elvárást javítottam, nem töröltem** (a review kifejezetten
+ezt kérte): ugyanaz az eset, az indoklással mellette, és három új állítással —
+a másik oszlop nem mozdult, az új node nincs a `neverSelected`-ben, és a régi
+node `roundsEligible`-je változatlan.
+
+**Érintett fájlok:** `client/src/components/dd-page-fairness.ts` (+4 E2E eset);
+`server/src/domain/selectionFairness.ts` (+ javított unit elvárás);
+`server/src/integration/fairnessSelection.integration.test.ts` (+1 eset, +1 host
+a fixtúrában).
+
+**Szerződésváltozás / kompatibilitás:** a `currentRegisteredNodes` **jelentése
+nem változott** — a megvalósítás igazodott hozzá. A wire-formátum változatlan.
+
+**Negatív kontrollok — kettő, és egyik elsőre csak félig bukott:**
+
+| Kivett őrszem | Ami elpirult |
+|---|---|
+| a tickenkénti feloldás | R5a **és** R5b — de R5b csak a teszt javítása után |
+| a registry-létszám eligibility-szűrése | a javított unit elvárás **és** az új HTTP-eset, plusz a redakciós eset hostszáma |
+
+**A nap két saját hibája, mindkettő a tesztekben:**
+
+1. **Az R5b tesztem versenyhelyzetet tartalmazott.** A „nem feloldható” felirat
+   **akkor is** megjelenik, amíg a válasz még úton van, ezért a tesztem
+   visszaállította a végpontot, mielőtt az 503-at egyáltalán feldolgozták volna —
+   így a javítás nélkül is zöld maradt: az **első** olvasást mérte, nem az
+   újrapróbálkozást. Most a hiba **saját indokára** vár a képernyőn
+   („no ChainLock report”), nem időzítésre.
+2. **Én okoztam egy flake-et, és nem retryval fedtem el.** A feloldás
+   megvárásával minden szűrőkattintás után két körrel később indult a
+   Fairness-kérés. Egy meglévő állítás közvetlenül a kattintás után olvasta ki a
+   kéréslistát — eddig csak azért működött, mert gyors volt. A javítás **kettős**:
+   az állítás mostantól megvárja a kérést, a kód pedig explicit profil mellett
+   nem is várja meg a feloldást, mert az ott semmit nem dönt el. A teljes
+   böngésző-suite ezután **háromszor egymás után** zöld.
+
+**Parancsok, exit-kódok — teljes elfogadási kör:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 typecheck | exit 0 |
+| K1 unit | exit 0 — 844 szerver + 151 kliens |
+| K1 build | exit 0 |
+| K1 `git diff --check` | tiszta |
+| K2 böngésző | exit 0 — **92** teszt (78 → 92 a három javító nap alatt), háromszor egymás után |
+| K3 integráció | exit 0 — 14 fájl, **90** teszt (89 → 90), 8 skip (a Mongo nélküli tartalék ág) |
+| Review-ellenpróbák | **9/9 zöld** (R1–R7 és a C1 kontroll) |
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** a review mind a hét találata lezárva, a
+próbái a rendes kapuban futnak. Az eredeti munkaterv **11. napja** következik
+(F11: a többi oldal szűrőinek URL-hez kötése). Változatlanul nyitott, nem ebből
+a körből: F07 production-nginx fele (14. nap), F10, F12, F13, F14, és az
+integrációs suite egy korábban feljegyzett, ma nem reprodukálódott flake-je.
+
+```text
+Commit(ok), végső SHA: 6913d1d (R5, kliens), e860556 (R6, szerver), + ez a napló
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
@@ -1313,8 +1419,8 @@ Napi státusz: ELLENŐRZÖTT
 | F02 | 05–07, **J2** | `8735d1d`, `5fd3307`, `c1e3605`, `4261e06` | unit: `simulationRunState.test.ts`; E2E: 14 eset szabályozott órával — a 8 eredeti plusz automatikus átmenet, sikertelen bizonyítékfrissítés, operátori recovery, Refresh, és a két idempotencia-eset | **A review újranyitotta** (R3): a státuszpoll csak a futamot frissítette, a bizonyítékot és az idővonalat nem, a Refresh pedig a kiválasztást nem olvasta újra. A J2 lezárta; a mentett terv továbbra is egyszer olvasódik |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
-| F05 | 09, J3 | `881df65` | E2E: 4 eset (feloldott profil, profilváltás, explicit aggregát, feloldhatatlan profil); HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): az automatikus profil beragad — a tip mozgása és egy átmeneti feloldási hiba után sem újul meg. **Nyitott — J3** |
-| F06 | 09, J3 | `881df65` | unit: 4 eset a doménben; HTTP: 7 regisztrált / 5 kiválasztott ugyanabban a válaszban; E2E: két oszlop, néma host, hiányzó mező `—` | **A review újranyitotta** (R6): a `currentRegisteredNodes` a történeti eligibility-vel szűr, így nem a jelenlegi registry létszáma. **Nyitott — J3** |
+| F05 | 09, **J3** | `881df65`, `6913d1d` | E2E: 8 eset — a 4 eredeti plusz mozgó tip, átmeneti feloldási hiba utáni újrapróbálkozás, és az explicit profil + aggregát érinthetetlensége; HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): a feloldás `_resolved === null` mögött ült, és a „nem feloldható” sem null, ezért mindkét válasz beragadt. A J3 lezárta; a profil-registry cache-e indokoltként megmaradt |
+| F06 | 09, **J3** | `881df65`, `e860556` | unit: 4 eset a doménben, ebből egy dokumentált szerződéskorrekcióval; HTTP: 7/5 és 3/0 változatlanul, plusz egy az ablak után regisztrált host 1/0-val, amely nincs a `neverSelected`-ben; E2E: két oszlop, néma host, hiányzó mező `—` | **A review újranyitotta** (R6): a `currentRegisteredNodes` a történeti eligibility-vel szűrt, így nem a jelenlegi registry létszámát adta. A J3 lezárta; az eligibility a `neverSelected`-nél és a `roundsEligible`-nél maradt |
 | F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
@@ -1330,7 +1436,11 @@ Napi státusz: ELLENŐRZÖTT
 - 07. nap: **elkészült**, lásd a checkpoint-összefoglalót a napi bejegyzések után.
 - 14. nap: még nem készült el.
 - 20. nap: még nem készült el.
-- Független végső review: még nem történt meg.
+- **Független review az 01–10. napról: 2026-09-12, hét igazolt találat**
+  ([jelentés](WEBSITE_REVIEW_DAYS_01_10_2026-09-12_HU.md),
+  [ellenpróbák](review-2026-09-12/regressions.spec.ts)). Mind a hét lezárva a
+  J1–J3 javító munkanapokon; az ellenpróbák a rendes kapuban futnak.
+- Független végső review a teljes munkáról: még nem történt meg.
 
 A blokkot, kihagyott tesztet és fennmaradó sérülékenységet ne töröld ki egy későbbi bejegyzéssel: lezáráskor hivatkozz a bizonyítékra, hogy az előzmény követhető maradjon.
 
