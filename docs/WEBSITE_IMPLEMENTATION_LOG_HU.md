@@ -14,7 +14,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 05 | Admin kliensszerződés | ELLENŐRZÖTT | `8735d1d`; K1 zöld (836+111 unit), K2 zöld (31), K3 zöld (12 fájl, 75 teszt); negatív kontroll: a `recovery` visszatétele a projekcióba pirosra viszi a HTTP-tesztet |
 | 06 | Vezérlés visszatöltése | ELLENŐRZÖTT | `5fd3307`; K1 zöld (839+121 unit), K2 zöld (40 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: a draftszerkesztés futamtörlő viselkedését visszatéve 1 teszt pirosra vált |
 | 07 | Futamállapot szinkron | ELLENŐRZÖTT | `c1e3605`; K1 zöld (839+121 unit), K2 zöld (48 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: revision-szabály nélkül az elavult poll felülírja az abortot |
-| 08 | Kísérletlapozás | TERVEZETT | — |
+| 08 | Kísérletlapozás | ELLENŐRZÖTT | `6c6fc96`; K1 zöld (839+121 unit), K2 zöld (56 böngészőteszt), K3 zöld (13 fájl, 84 teszt); negatív kontroll: az argumentum nélküli hívást visszatéve 3 teszt pirosra vált |
 | 09 | Fairness | TERVEZETT | — |
 | 10 | URL-állapot alap | TERVEZETT | — |
 | 11 | URL-állapot további oldalak | TERVEZETT | — |
@@ -814,6 +814,96 @@ adatból. Jelenleg nincs bukás, tehát nincs artefaktum sem.
 3. A CI böngészős lépése még **nem futott le élesben** (01. nap óta nyitva).
 4. F13 (függőségek) újramérése a 13. napon; az `npm audit` azóta 0-t jelez.
 
+## 08. nap – Kísérletlista teljessége
+
+```text
+Nap / dátum / implementáló: 08 / 2026-09-11 (befejezve 2026-09-12) / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ 3a4ae3b
+Napi feladat és előfeltételei: F04. Előfeltétel nincs a 07. napon túl.
+Auditpontok: F04
+```
+
+**Reprodukált kiinduló hiba:** a `dd-page-experiments.ts` így kérte a listát:
+`(await run.api.experiments()).items` — **argumentum nélkül**. A szerver
+alapértelmezése 25, az archívum 34 rekord: kilenc kísérlet elérhetetlen volt
+arról az egyetlen képernyőről, ami indexeli őket, és semmi nem utalt rá, hogy
+van több. A szerver eddig is helyesen lapozott és adta a valódi `total`-t — a
+kliens egyiket sem használta.
+
+**Változtatás röviden:** szerveroldali lapozás 25-ösével, a darabszám a
+kártyafejlécben és a pagerben, státuszszűrő, Newer/Older. Szűrőváltás **lap
+1-re** áll: a lezárt futamok 2. oldala nem ugyanaz, mint az összes futam 2.
+oldala. Három addig azonos kinézetű üres állapot szétvált — betöltés / hiba /
+tényleg üres —, mert ezen az oldalon a „nem történt semmi" az az egyetlen
+válasz, amit sosem szabad megtippelni. És két futam részlete között váltva a
+régi nem marad ott az új URL alatt.
+
+**Érintett fájlok:** `client/src/components/dd-page-experiments.ts`,
+`server/src/routes/v1/experiments.v1.routes.ts`, új
+`client/e2e/experiments.spec.ts`, új
+`server/src/integration/experimentPaging.integration.test.ts`.
+
+**Szerződésváltozás / kompatibilitás:** nincs. A route válaszalakja változatlan;
+csak a rendezés kapott `runKey` tie-breakert.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 839 szerver + 121 kliens |
+| K2 | exit 0 — **56** böngészőteszt (48 → 56) |
+| K3 | exit 0 — **13** integrációs fájl, 84 teszt (8 skipped) |
+
+**UI-fixture tesztek (8 új):** 34 rekord végiglapozása (1–25, majd 26–34, a
+végén tiltott Older); a lapot a **szervertől** kéri (`offset=0`, `offset=25`);
+státuszszűrő a darabszámot is szűkíti; szűrőváltás visszaáll az 1. lapra
+(`status=running&offset=0`); üres archívum kimondva; **betöltés közben nem
+állítja, hogy üres**; hibás betöltés sem olvasható üresnek; és egy futam
+részlete nem marad ott egy másik URL alatt.
+
+**Valós HTTP/Mongo tesztek (7 új):** valódi `total` a kiszolgált lap mellett;
+34 rekord végiglapozása duplikáció és kimaradás nélkül; a deklarált sorrend;
+ugyanaz a lap kétszer ugyanazt adja; a szűrő azt számolja, amit illeszt; utolsó
+részleges lap; végen túli offset **üres lap + igaz `total`** (nem nulla).
+
+**Negatív kontroll:** az argumentum nélküli `api.experiments()` hívást
+visszatéve a 8 böngészőtesztből **3 elbukik**. Visszaállítva minden zöld.
+
+**Egy állítást kétszer kellett helyesbítenem — ez a nap fontosabb tanulsága.**
+A `runKey` tie-breakerhez előbb azt írtam a kódba és a tesztbe, hogy duplikált
+és kimaradt sorokat javít. **A negatív kontroll nem bukott el**, ezért
+megmértem közvetlenül:
+
+- index **nélküli** rendezésnél 8 azonos kulcsú dokumentumot 4-es lapokban
+  lapozva a MongoDB kettőt kétszer adott vissza (`r-0`, `r-2`), kettőt pedig
+  egyszer sem (`r-4`, `r-7`);
+- az `ExperimentRun` gyűjteményen viszont **van `startedAt` index**, és azzal a
+  sorrend tie-breaker nélkül is determinisztikus — szűrővel és anélkül is.
+
+Tehát a tie-breaker **biztosíték, nem megfigyelt hiba javítása**, és az F04
+tisztán kliensoldali volt. A kód kommentje és a tesztfájl fejléce most pontosan
+ezt mondja; a második, „a deklarált sorrendet bizonyítja" megfogalmazás is
+téves volt, és szintén javítva.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Kihagyott ellenőrzés és oka:** szöveges keresés — a terv kifejezetten
+kihagyhatónak jelölte ebben a hatókörben, és 25 betöltött soron imitálni
+félrevezető lenne.
+
+**Nyitott probléma / következő lépés:** a lapozás állapota még **nincs az
+URL-ben** (`?page=`, `?status=`) — az a **10. nap** feladata, és a mostani
+`_offset`/`_status` mezők pont annak a bemenetei.
+
+```text
+Commit(ok), végső SHA: 6c6fc96
+Végső git státusz: a saját munkám tiszta. A fában maradt, NEM az enyém:
+  CLAUDE.md módosítása és hat `ops/fleet-roll-dslv2-*.sh` / `ops/seed-roll-dslv2.sh`
+  fájl a devnet-flotta munkájából — érintetlenül hagyva, nem stagelve.
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
@@ -821,7 +911,7 @@ adatból. Jelenleg nincs bukás, tehát nincs artefaktum sem.
 | F01 | 05–06 | `8735d1d`, `5fd3307` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 9 eset (F5, hibás kulcs, 404, A→B késői válasz, 401, draftszerkesztés) | Kliensoldalon lezárva. A vezérlés URL-ből visszatölthető, a mentett tervből; a recovery-bizonyíték új, redaktált végponton érhető el |
 | F02 | 05–07 | `8735d1d`, `5fd3307`, `c1e3605` | unit: `simulationRunState.test.ts`; E2E: 8 eset szabályozott órával (állapotmenet, elavult poll, dupla kattintás, idempotencia, lease, rejtett lap, hibás olvasás) | Kliensoldalon lezárva: egy tulajdonos, 5 s-os poll, revision-rendezés, futamonkénti idempotencia |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
-| F04 | 08 | Nyitott | — | — |
+| F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
 | F05 | 09 | Nyitott | — | — |
 | F06 | 09 | Nyitott | — | — |
 | F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
