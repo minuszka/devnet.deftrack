@@ -15,7 +15,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 06 | Vezérlés visszatöltése | ELLENŐRZÖTT | `5fd3307`; K1 zöld (839+121 unit), K2 zöld (40 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: a draftszerkesztés futamtörlő viselkedését visszatéve 1 teszt pirosra vált |
 | 07 | Futamállapot szinkron | ELLENŐRZÖTT | `c1e3605`; K1 zöld (839+121 unit), K2 zöld (48 böngészőteszt), K3 zöld (12 fájl, 77 teszt); negatív kontroll: revision-szabály nélkül az elavult poll felülírja az abortot |
 | 08 | Kísérletlapozás | ELLENŐRZÖTT | `6c6fc96`; K1 zöld (839+121 unit), K2 zöld (56 böngészőteszt), K3 zöld (13 fájl, 84 teszt); negatív kontroll: az argumentum nélküli hívást visszatéve 3 teszt pirosra vált |
-| 09 | Fairness | TERVEZETT | — |
+| 09 | Fairness | ELLENŐRZÖTT | `881df65`; K1 zöld (844+121 unit), K2 zöld (65 böngészőteszt), K3 zöld (14 fájl, 89 teszt); két negatív kontroll: 2 unit + 2 HTTP, illetve 4 böngészőteszt pirosra vált |
 | 10 | URL-állapot alap | TERVEZETT | — |
 | 11 | URL-állapot további oldalak | TERVEZETT | — |
 | 12 | Szemantika és kontraszt | TERVEZETT | — |
@@ -904,6 +904,106 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 09. nap – Fairness korrekció
+
+```text
+Nap / dátum / implementáló: 09 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/audit-2026-09-11 @ abba17c
+Napi feladat és előfeltételei: F05, F06. Szerveroldali DTO is változik, tehát K3 alkalmazandó.
+Auditpontok: F05, F06
+```
+
+**Reprodukált kiinduló hiba — két olvasat, mindkettő ugyanúgy téves: egy
+mintára igaz szám, úgy bemutatva, mintha arra lenne igaz, amire a néző gondol.**
+
+1. **F05.** A `dd-page-fairness.ts` így kért:
+   `run.api.selectionFairness(this._rounds)` — **`llmqName` nélkül**. A szerver
+   pedig profil nélkül **nem szűr**. Vagyis minden szám a lapon öt egymásba
+   fésült ütemterv összegéből készült, és semmi nem írta ki. Ez az a hiba,
+   amit a projekt saját jegyzetei kifejezetten tiltanak.
+2. **F06.** A hosttábla „Masternodes" oszlopa a `hosts[].nodes` mezőt írta ki,
+   ami a **mintában legalább egyszer kiválasztott** node-ok száma. Élesben egy
+   hétnode-os host ötöt mutatott — a másik kettő nem tűnt el, hanem **kimaradt a
+   kiválasztásból**, és pont ez a lap mondanivalója.
+
+Emellett a csempék az `invalid` összeget a **képernyőn lévő sorokból** számolták,
+miközben a route a node-listát **200 elemnél levágja**.
+
+**Változtatás röviden:** a lap a front page-dzsel azonos szabállyal oldja fel az
+aktuális profilt (ChainLock-aláírók + tip), **kiírja** a számok mellé, és a
+registryből kínálja a többit. Az aggregát megmaradt — **választásként**, olyan
+néven, ami megmondja, mi az. Ha a profil nem állapítható meg, a lap **kérdez**,
+és **semmit nem tölt be**.
+
+A hosttábla két oszlop, két forrásból: `Registered nodes` az aktuális
+registryből, `Selected nodes` a mintából. A mintában nem szereplő, de jelenleg
+regisztrált host **nullával szerepel**, nem hiányzik; az ablak után regisztrált
+node viszont **nem számít bele** — ugyanaz a szabály, amiért az eligibility
+létezik: nem kimaradt, hanem nem volt ott.
+
+Az `invalid` összeg a szerveren, **a vágás előtt** készül, a legrosszabb
+node-aránnyal együtt. Régi szerver (`totals` nélkül) → **em dash**, nem a
+szeletből számolt szám: a szelet nem tartalék, hanem másik szám. Ugyanez a
+`currentRegisteredNodes`-ra: hiányzó és `null` egyaránt **ismeretlen**, nem nulla.
+
+**Érintett fájlok:** `shared/src/index.ts` (additív DTO),
+`server/src/domain/selectionFairness.ts` (+ teszt),
+`server/src/routes/v1/fairness.v1.routes.ts`, új
+`server/src/integration/fairnessSelection.integration.test.ts`,
+`client/src/lib/api.ts`, `client/src/components/dd-page-fairness.ts`, új
+`client/e2e/fairness.spec.ts`, `client/e2e/fixtures/api.ts`.
+
+**Szerződésváltozás / kompatibilitás:** **additív**. Új:
+`hosts[].currentRegisteredNodes` és `totals`. A `hosts[].nodes` jelentése
+**változatlan** (kiválasztott node-ok száma) — csak a UI neve lett `Selected
+nodes`. Régi szerver + új kliens: mindkét új mező hiányában `—`, nem 0 és nem
+a szeletből számolt összeg. A Fairness képletei és a konszenzus nem változtak.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **844** szerver (839 → 844) + 121 kliens |
+| K2 | exit 0 — **65** böngészőteszt (56 → 65) |
+| K3 | exit 0 — **14** integrációs fájl, 89 teszt (8 skipped) |
+
+**Valós HTTP/Mongo tesztek (5 új):** a profilszűrő tényleg szűkít (llmq_defcon
+**2**, llmq_400_60 **1**, aggregát **3** kör — tehát a három válasz nem
+ugyanaz); 7 regisztrált / 5 kiválasztott egy válaszban; a néma host nullával
+szerepel; a `totals` minden node-ot számol; és a **redakció**: a beültetett
+RFC 5737 címek (`198.51.100.11/.12`) **egyike sem** szerepel a teljes
+válasz-törzsben, miközben mindkét host tényleg renderelődött.
+
+**UI-fixture tesztek (9 új):** a tipnél aláíró profilt kérdezi és ki is írja;
+profilváltás követi az adatot; az aggregát explicit választás; feloldhatatlan
+profilnál **nulla** fairness-kérés indul, és a választás indítja el; a
+hosttábla két oszlopa; néma host nullával; hiányzó mező `—`; a totals a
+szerverről jön (41 / 300 a képernyőn lévő 2 helyett); `totals` nélküli szerver
+kiírja, hogy nem jelentette.
+
+**Negatív kontrollok (mindkettő tüzelt):**
+
+1. A `currentRegisteredNodes`-t a kiválasztott számra állítva **2 unit + 2
+   HTTP** teszt bukik el.
+2. Az `llmqName` küldését kivéve **4 böngészőteszt** bukik el.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Kihagyott ellenőrzés és oka:** az auditban szereplő 43,09% / 39,47% **nem
+került tesztelvárásba** — az auditpillanat mérése, nem szerződés.
+
+**Nyitott probléma / következő lépés:** a profil- és ablakválasztás még **nincs
+az URL-ben** — a **10. nap** feladata, és a mostani `_llmq` / `_rounds` mezők
+annak a bemenetei.
+
+```text
+Commit(ok), végső SHA: 881df65
+Végső git státusz: a saját munkám tiszta. A fában maradt, NEM az enyém:
+  CLAUDE.md módosítása és hat ops/*-dslv2*.sh fájl a flottamunkából.
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
@@ -912,8 +1012,8 @@ Napi státusz: ELLENŐRZÖTT
 | F02 | 05–07 | `8735d1d`, `5fd3307`, `c1e3605` | unit: `simulationRunState.test.ts`; E2E: 8 eset szabályozott órával (állapotmenet, elavult poll, dupla kattintás, idempotencia, lease, rejtett lap, hibás olvasás) | Kliensoldalon lezárva: egy tulajdonos, 5 s-os poll, revision-rendezés, futamonkénti idempotencia |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
-| F05 | 09 | Nyitott | — | — |
-| F06 | 09 | Nyitott | — | — |
+| F05 | 09 | `881df65` | E2E: 4 eset (feloldott profil, profilváltás, explicit aggregát, feloldhatatlan profil); HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | Lezárva. A profil a képernyőn is szerepel, nem csak a query stringben |
+| F06 | 09 | `881df65` | unit: 4 eset a doménben; HTTP: 7 regisztrált / 5 kiválasztott ugyanabban a válaszban; E2E: két oszlop, néma host, hiányzó mező `—` | Lezárva. A `hosts[].nodes` jelentése kompatibilitásból változatlan, a UI neve `Selected nodes` |
 | F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
