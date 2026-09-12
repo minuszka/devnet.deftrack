@@ -1,0 +1,372 @@
+﻿node.exe : [WebServer] (node:23920) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([WebServer] (no... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:25072) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:19352) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]   VITE v8.2.2  ready in 179 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:5191/
+
+Running 9 tests using 4 workers
+
+(node:6220) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15820) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:20028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:23460) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 16:30:56 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+[WebServer] 16:30:56 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+[WebServer] 16:30:56 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+[WebServer] 16:30:56 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+  x  1 docs\review-2026-09-12\regressions.spec.ts:18:1 › R1 selecting B cannot leave an actionable Abort for A during hydration (696ms)
+(node:24648) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 16:30:58 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+  ok 5 docs\review-2026-09-12\regressions.spec.ts:77:1 › C1 Back across routes preserves the destination status filter (454ms)
+[WebServer] 16:30:58 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+  x  6 docs\review-2026-09-12\regressions.spec.ts:88:1 › R5a implicit fairness profile follows a moving chain tip (554ms)
+  x  2 docs\review-2026-09-12\regressions.spec.ts:52:1 › R3 status transition refreshes recovery evidence (2.6s)
+(node:13776) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  x  3 docs\review-2026-09-12\regressions.spec.ts:66:1 › R4 start acknowledgment belongs to the selected run (2.8s)
+  x  7 docs\review-2026-09-12\regressions.spec.ts:105:1 › R6 current registry size includes registrations after the sampled window (9ms)
+(node:26448) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:14564) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 16:31:00 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+[WebServer] 16:31:00 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit
+.dev/msg/dev-mode for more information.
+  x  9 docs\review-2026-09-12\regressions.spec.ts:136:1 › R7 an edited draft is a new create request even with the same seed (634ms)
+  x  4 docs\review-2026-09-12\regressions.spec.ts:36:1 › R2 late A failure cannot erase already loaded B (4.4s)
+  x  8 docs\review-2026-09-12\regressions.spec.ts:117:1 › R5b fairness recovers after a temporary profile-resolution failure (2.8s)
+
+
+  1) docs\review-2026-09-12\regressions.spec.ts:18:1 › R1 selecting B cannot leave an actionable Abort for A during hydration 
+
+    Error: expect(received).toHaveLength(expected)
+
+    Expected length: 0
+    Received length: 1
+    Received array:  [{"body": {}, "idempotencyKey": "admin-panel:sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:abort:12a69972-42db-48a4-b768-c2435e2a1b68", "method": "POST", "path": "/api/v1/admin/simulations/runs/sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/abort"}]
+
+      31 |   const oldAbort = page.getByRole('button', { name: 'Abort & recover' });
+      32 |   if (await oldAbort.count() && await oldAbort.isEnabled()) await oldAbort.click();
+    > 33 |   expect(app.requestsTo(`${base(RUN_A)}/abort`, 'POST')).toHaveLength(0);
+         |                                                          ^
+      34 | });
+      35 |
+      36 | test('R2 late A failure cannot erase already loaded B', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:33:58
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R1-selecting-B-ae873-bort-for-A-during-hydration\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R1-selecting-B-ae873-bort-for-A-during-hydration\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R1-selecting-B-ae873-bort-for-A-during-hydration\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R1-selecting-B-ae873-bort-for-A-during-hydration\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) docs\review-2026-09-12\regressions.spec.ts:36:1 › R2 late A failure cannot erase already loaded B 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: locator('.run-state')
+    Expected substring: "sim_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    Timeout: 2000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" with timeout 2000ms
+      - waiting for locator('.run-state')
+
+
+      47 |   await page.waitForTimeout(1600);
+      48 |   expect(new URL(page.url()).searchParams.get('run')).toBe(RUN_B);
+    > 49 |   await expect(page.locator('.run-state')).toContainText(RUN_B);
+         |                                            ^
+      50 | });
+      51 |
+      52 | test('R3 status transition refreshes recovery evidence', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:49:44
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R2-late-A-failure-cannot-erase-already-loaded-B\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R2-late-A-failure-cannot-erase-already-loaded-B\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R2-late-A-failure-cannot-erase-already-loaded-B\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R2-late-A-failure-cannot-erase-already-loaded-B\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) docs\review-2026-09-12\regressions.spec.ts:52:1 › R3 status transition refreshes recovery evidence 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: locator('.approval')
+    Timeout: 2000ms
+    - Expected substring  -  1
+    + Received string     + 18
+
+    - all targets clear
+    +
+    +           Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is cooldown (live lab run).
+    +           
+    +           
+    +       
+    +         No fault outstanding. 
+    +         
+    +             No recovery proof has been recorded for this run yet.
+    +           
+    +       
+    +     
+    +           
+    +           
+    +           
+    +             Abort & recover
+    +             
+    +           
+    +         
+
+    Call log:
+      - Expect "toContainText" with timeout 2000ms
+      - waiting for locator('.approval')
+        20 × locator resolved to <div class="approval">…</div>
+           - unexpected value "
+              Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is cooldown (live lab run).
+              
+              
+          
+            No fault outstanding. 
+            
+                No recovery proof has been recorded for this run yet.
+              
+          
+        
+              
+              
+              
+                Abort & recover
+                
+              
+            "
+
+
+      61 |   await page.clock.fastForward(5000);
+      62 |   await expect(page.locator('.run-state')).toContainText('cooldown');
+    > 63 |   await expect(page.locator('.approval')).toContainText('all targets clear');
+         |                                           ^
+      64 | });
+      65 |
+      66 | test('R4 start acknowledgment belongs to the selected run', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:63:43
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R3-status-transition-refreshes-recovery-evidence\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R3-status-transition-refreshes-recovery-evidence\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R3-status-transition-refreshes-recovery-evidence\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R3-status-transition-refreshes-recovery-evidence\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) docs\review-2026-09-12\regressions.spec.ts:66:1 › R4 start acknowledgment belongs to the selected run 
+
+    Error: expect(locator).toBeDisabled() failed
+
+    Locator:  getByRole('button', { name: 'Confirm and start', exact: true })
+    Expected: disabled
+    Received: enabled
+    Timeout:  2000ms
+
+    Call log:
+      - Expect "toBeDisabled" with timeout 2000ms
+      - waiting for getByRole('button', { name: 'Confirm and start', exact: true })
+        20 × locator resolved to <button class="btn primary">…</button>
+           - unexpected value "enabled"
+
+
+      72 |   await select(page, RUN_B);
+      73 |   await expect(page.locator('.run-state')).toContainText(RUN_B);
+    > 74 |   await expect(page.getByRole('button', { name: 'Confirm and start', exact: true })).toBeDisabled();
+         |                                                                                      ^
+      75 | });
+      76 |
+      77 | test('C1 Back across routes preserves the destination status filter', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:74:86
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R4-start-ackno-750f2-belongs-to-the-selected-run\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R4-start-ackno-750f2-belongs-to-the-selected-run\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R4-start-ackno-750f2-belongs-to-the-selected-run\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R4-start-ackno-750f2-belongs-to-the-selected-run\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) docs\review-2026-09-12\regressions.spec.ts:88:1 › R5a implicit fairness profile follows a moving chain tip 
+
+    Error: expect(received).toContain(expected) // indexOf
+
+    Expected substring: "llmqName=llmq_defcon"
+    Received string:    "/api/v1/fairness/selection?rounds=50&llmqName=llmq_400_60"
+
+      100 |   await page.clock.fastForward(60000);
+      101 |   await expect.poll(() => app.callsTo('/api/v1/fairness/selection').length).toBeGreaterThan(1);
+    > 102 |   expect(app.callsTo('/api/v1/fairness/selection').at(-1)).toContain(`llmqName=${V2_PROFILE}`);
+          |                                                            ^
+      103 | });
+      104 |
+      105 | test('R6 current registry size includes registrations after the sampled window', () => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:102:60
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R5a-implicit-f-ac784--follows-a-moving-chain-tip\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R5a-implicit-f-ac784--follows-a-moving-chain-tip\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R5a-implicit-f-ac784--follows-a-moving-chain-tip\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R5a-implicit-f-ac784--follows-a-moving-chain-tip\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6) docs\review-2026-09-12\regressions.spec.ts:105:1 › R6 current registry size includes registrations after the sampled window 
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+      112 |   expect(result.hosts[0]?.nodes).toBe(1);
+      113 |   expect(result.neverSelected).not.toContain('new');
+    > 114 |   expect(result.hosts[0]?.currentRegisteredNodes).toBe(2);
+          |                                                   ^
+      115 | });
+      116 |
+      117 | test('R5b fairness recovers after a temporary profile-resolution failure', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:114:51
+
+    Error Context: client\test-results\review-days-01-10\regressions-R6-current-reg-d1baa-ns-after-the-sampled-window\error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R6-current-reg-d1baa-ns-after-the-sampled-window\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R6-current-reg-d1baa-ns-after-the-sampled-window\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  7) docs\review-2026-09-12\regressions.spec.ts:117:1 › R5b fairness recovers after a temporary profile-resolution failure 
+
+    Error: expect(received).toBeGreaterThan(expected)
+
+    Expected: > 0
+    Received:   0
+
+    Call Log:
+    - Timeout 2000ms exceeded while waiting on the predicate
+
+      131 |   app.stub({ '/api/v1/chainlocks': { body: ok(chainLockReport()) } });
+      132 |   await page.clock.fastForward(60000);
+    > 133 |   await expect.poll(() => app.callsTo('/api/v1/fairness/selection').length).toBeGreaterThan(0);
+          |                                                                             ^
+      134 | });
+      135 |
+      136 | test('R7 an edited draft is a new create request even with the same seed', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:133:77
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R5b-fairness-r-c3796--profile-resolution-failure\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R5b-fairness-r-c3796--profile-resolution-failure\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R5b-fairness-r-c3796--profile-resolution-failure\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R5b-fairness-r-c3796--profile-resolution-failure\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  8) docs\review-2026-09-12\regressions.spec.ts:136:1 › R7 an edited draft is a new create request even with the same seed 
+
+    Error: expect(received).not.toBe(expected) // Object.is equality
+
+    Expected: not "admin-panel:draft:22b9830b-8b5c-4ee7-9f6d-a90241b1e562:create:b4b3eb6d-94a0-4bc5-80fe-58c8b6d0f328"
+
+      152 |   expect(requests[0].idempotencyKey).toBe(requests[1].idempotencyKey);
+      153 |   expect(requests[1].body).not.toEqual(requests[2].body);
+    > 154 |   expect(requests[1].idempotencyKey).not.toBe(requests[2].idempotencyKey);
+          |                                          ^
+      155 | });
+      156 |
+        at D:\www\devnet .deftrack\docs\review-2026-09-12\regressions.spec.ts:154:42
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R7-an-edited-d-f0c8a-est-even-with-the-same-seed\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: client\test-results\review-days-01-10\regressions-R7-an-edited-d-f0c8a-est-even-with-the-same-seed\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    client\test-results\review-days-01-10\regressions-R7-an-edited-d-f0c8a-est-even-with-the-same-seed\trace.zip
+    Usage:
+
+        npx playwright show-trace client\test-results\review-days-01-10\regressions-R7-an-edited-d-f0c8a-est-even-with-the-same-seed\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  8 failed
+    docs\review-2026-09-12\regressions.spec.ts:18:1 › R1 selecting B cannot leave an actionable Abort for A during hydration 
+    docs\review-2026-09-12\regressions.spec.ts:36:1 › R2 late A failure cannot erase already loaded B 
+    docs\review-2026-09-12\regressions.spec.ts:52:1 › R3 status transition refreshes recovery evidence 
+    docs\review-2026-09-12\regressions.spec.ts:66:1 › R4 start acknowledgment belongs to the selected run 
+    docs\review-2026-09-12\regressions.spec.ts:88:1 › R5a implicit fairness profile follows a moving chain tip 
+    docs\review-2026-09-12\regressions.spec.ts:105:1 › R6 current registry size includes registrations after the sampled window 
+    docs\review-2026-09-12\regressions.spec.ts:117:1 › R5b fairness recovers after a temporary profile-resolution failure 
+    docs\review-2026-09-12\regressions.spec.ts:136:1 › R7 an edited draft is a new create request even with the same seed 
+  1 passed (9.2s)

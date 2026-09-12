@@ -258,7 +258,7 @@ belépési pont viselkedése hibás URI-ra nem ellenőrzött.
   teljes lezáráshoz a production belépési pont (nginx) viselkedése kell hibás
   percent-escape-re. 14. nap.
 - Írás közben az egyik szerkesztésem **valódi NUL bájtot** írt a
-  `router.ts`-be (` ` escape-nek szántam). A typecheck és a tesztek
+  `router.ts`-be (`\u0000`-nak, escape-nek szántam). A typecheck és a tesztek
   **átmentek vele**; a `file` parancs buktatta le („data” a „JavaScript source”
   helyett). Sentinelre cserélve (`/__not-found`, `/__broken-link`), a fájl újra
   ASCII. Tanulság a naplóba: a zöld teszt nem bizonyítja, hogy a forrás ép.
@@ -1092,16 +1092,122 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
+
+```text
+Nap / dátum / implementáló: J1 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/review-fixes-2026-09-12 @ 83b8710 (main)
+Napi feladat és előfeltételei: a független 01–10. napi review R1, R2, R4
+  találata. Előfeltétel: a review ellenpróbái reprodukálva — megvan.
+Auditpontok: F01 (újranyitva), F02 (részben; R3 a J2-re marad)
+```
+
+**Először a piros, utána a javítás.** A review ellenpróbáit a saját gépen
+lefuttattam, mielőtt egy sort is módosítottam volna: `8 failed, 1 passed`,
+pontosan a jelentett bontásban. A C1 kontroll zöld, tehát a futtatás maga jó.
+
+**R1 — futamváltás közben a régi futam Abort gombja még a régi futamra küldött.**
+A kiválasztott kulcs azonnal az új futamra állt, a futamobjektum, a terve és a
+bizonyítéka viszont maradt. Amíg az új futam betöltött, a panel a **régi** futam
+Abort gombját mutatta az **új** futam kulcsa alatt — és az a gomb valódi abortot
+küldött egy élő faultra, amit már senki nem nézett. Két rétegben javítva:
+
+1. a dashboard **futamváltáskor azonnal elejti** a futamot, a tervét, a recovery
+   bizonyítékát, a preflightját és az idővonalát — de csak *váltáskor*, mert a
+   képernyőn lévő futam újraolvasása nem veheti el egy élő fault vezérlését;
+2. a panel **nem rendereli és nem hajtja végre** azt a műveletet, amelynek a
+   futama nem a kiválasztott. Minden gomb `run.runKey`-t nevez meg a kérésben;
+   az a kártya, amelynek a futama nem a kiválasztott, ne is létezzen.
+
+Szándékosan két réteg: a tévedés ára egy rossz futamra kézbesített abort.
+
+**R2 — egy korábbi kérés késői hibája eltüntette a már betöltött új futamot.**
+A betöltés **sikerága** ellenőrizte, melyik kiválasztáshoz tartozik; a hibaága
+nem. Így az A futam lassú 503-a, ami akkor érkezett, amikor az operátor már a
+B-n volt, kitörölte B futamát, tervét, bizonyítékát és idővonalát, és A hibáját
+tette a helyükre. Helyette **kiválasztásonkénti generáció**: minden betöltés
+elkapja, és emeli minden kiválasztásváltás, a törlés és a munkamenet vége is. A
+kulcs önmagában nem tudja megkülönböztetni **ugyanannak a futamnak két kérését**,
+ezért nem elég rá ellenőrizni. Amit nem szabad elrontani, és nem is romlott el:
+**ugyanannak a futamnak a sikertelen státuszpollja továbbra is megtartja a
+vezérlést** (`run-status.spec.ts` „a failed status read keeps the run and its
+controls”).
+
+**R4 — az indítási megerősítés átkerült egyik futamról a másikra.** A két
+jelölőnégyzet csak új terv előkészítésekor nullázódott, máskor soha. Az A futam
+indításának megerősítése után a B futam „Confirm and start” gombja már engedve
+volt, anélkül hogy bárki bármit megerősített volna a B-ről. A megerősítés mostantól
+**ahhoz a futamkulcshoz tartozik**, amelyikre adták — kulcshoz kötve, nem a futam
+objektumhoz, mert azt a státuszpoll pár másodpercenként lecseréli, és az operátor
+keze alól törölné ki a pipát.
+
+**Érintett fájlok:** `client/src/components/dd-admin-shell.ts`,
+`client/src/components/dd-simulation-control.ts`,
+`client/e2e/run-selection.spec.ts` (+4 eset).
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerverkód nem változott, authot,
+CSRF-et, revision-ellenőrzést és szerveroldali idempotenciát nem érintettem.
+
+**A tesztek a rendes kapuba kerültek.** A review próbái a `docs/` alatt nem
+automatikus kapuk. A négy eset a kliens saját suite-jában van, tehát minden CI
+push futtatja őket.
+
+**Negatív kontrollok — négy, és mind a négy pontosan a saját tesztjén bukott:**
+
+| Kivett őrszem | Ami elpirult | Ami zöld maradt |
+|---|---|---|
+| a dashboard futamváltáskori törlése | „a selection that is still loading…” (az idővonal-állítás) | a másik 12 |
+| a panel kiválasztás-ellenőrzése | „a panel whose run is not the selected one…” | a másik 12 |
+| a generáció a hibaágban | „a late failure for the previous run…” | a másik 12 |
+| a futamonkénti megerősítés-nullázás | „a start confirmation does not travel…” | a másik 12 |
+
+Az R1 két rétege külön-külön van kifeszítve: a dashboard oldalát az idővonal
+állítása fogja meg (a panel őrszeme elrejti a gombokat, de az idővonal a
+shellben van), a panel oldalát egy szándékosan **fehér dobozos** eset, amely
+kézzel állítja szét a futamot és a kiválasztást. Ez utóbbi állapot a felületen
+keresztül már nem érhető el — épp ezért kell hozzá fehér dobozos teszt, és épp
+ezért maradna bizonyíték nélkül az egyik réteg, ha csak a review próbáira
+hagyatkoznék.
+
+**Egy hiba, amit a nap hozott elő, és nem a review:** ez a naplófájl maga
+**valódi NUL bájtot** tartalmazott — a 2. napi bejegyzés, amely épp a
+`router.ts`-be került NUL bájtról szól, backtickek közé egy igazi NUL-t írt. A
+`file` „data”-t mondott rá, nem szöveget. Kicserélve az escape nevére. A javítás
+első próbálkozása **újra beleírta**: a Bash-heredoc egy backslash-szintet lenyel,
+így az escape valódi NUL-lá vált a Python-forrásban. Az önellenőrzés elbukott és
+megállította — ezért kell minden ilyen szkriptbe bukni képes ellenőrzés.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 844 szerver + 139 kliens unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **82** böngészőteszt (78 → 82) |
+| Review-ellenpróbák | R1, R2, R4 és C1 zöld; R3, R5a, R5b, R6, R7 még piros (J2/J3) |
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** R3 és R7 a **J2**, R5 és R6 a **J3**
+csomagban. A K3 integrációs kör a J3 végén, a teljes elfogadási körrel együtt —
+a J1 egyetlen szerveroldali sort sem érintett.
+
+```text
+Commit(ok), végső SHA: 4972341 (kód + tesztek), + ez a naplóbejegyzés
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## Auditpontok lezárási mátrixa
 
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
-| F01 | 05–06 | `8735d1d`, `5fd3307` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 9 eset (F5, hibás kulcs, 404, A→B késői válasz, 401, draftszerkesztés) | Kliensoldalon lezárva. A vezérlés URL-ből visszatölthető, a mentett tervből; a recovery-bizonyíték új, redaktált végponton érhető el |
-| F02 | 05–07 | `8735d1d`, `5fd3307`, `c1e3605` | unit: `simulationRunState.test.ts`; E2E: 8 eset szabályozott órával (állapotmenet, elavult poll, dupla kattintás, idempotencia, lease, rejtett lap, hibás olvasás) | Kliensoldalon lezárva: egy tulajdonos, 5 s-os poll, revision-rendezés, futamonkénti idempotencia |
+| F01 | 05–06, **J1** | `8735d1d`, `5fd3307`, `4972341` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 13 eset — a 9 eredeti plusz a review R1/R2/R4 ellenpróbái és a panel őrszemének fehér dobozos esete | **A review újranyitotta** (R1, R2, R4): futamváltás közben a régi futamra ment volna az abort, késői hiba törölte az újat, a megerősítés átvándorolt. A J1 mindhármat lezárta, őrszemenként külön negatív kontrollal |
+| F02 | 05–07, J2 | `8735d1d`, `5fd3307`, `c1e3605` | unit: `simulationRunState.test.ts`; E2E: 8 eset szabályozott órával (állapotmenet, elavult poll, dupla kattintás, idempotencia, lease, rejtett lap, hibás olvasás) | **A review újranyitotta** (R3): a státuszpoll csak a futamot frissíti, a recovery-bizonyítékot nem, így automatikus `cooldown` után is „nincs bizonyíték” marad. **Nyitott — J2** |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
-| F05 | 09 | `881df65` | E2E: 4 eset (feloldott profil, profilváltás, explicit aggregát, feloldhatatlan profil); HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | Lezárva. A profil a képernyőn is szerepel, nem csak a query stringben |
-| F06 | 09 | `881df65` | unit: 4 eset a doménben; HTTP: 7 regisztrált / 5 kiválasztott ugyanabban a válaszban; E2E: két oszlop, néma host, hiányzó mező `—` | Lezárva. A `hosts[].nodes` jelentése kompatibilitásból változatlan, a UI neve `Selected nodes` |
+| F05 | 09, J3 | `881df65` | E2E: 4 eset (feloldott profil, profilváltás, explicit aggregát, feloldhatatlan profil); HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): az automatikus profil beragad — a tip mozgása és egy átmeneti feloldási hiba után sem újul meg. **Nyitott — J3** |
+| F06 | 09, J3 | `881df65` | unit: 4 eset a doménben; HTTP: 7 regisztrált / 5 kiválasztott ugyanabban a válaszban; E2E: két oszlop, néma host, hiányzó mező `—` | **A review újranyitotta** (R6): a `currentRegisteredNodes` a történeti eligibility-vel szűr, így nem a jelenlegi registry létszáma. **Nyitott — J3** |
 | F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
@@ -1110,6 +1216,7 @@ Napi státusz: ELLENŐRZÖTT
 | F12 | 12 | Nyitott | — | — |
 | F13 | 13 | Nyitott | — | — |
 | F14 | 12 | Nyitott | — | — |
+| R7 (nem audit) | J2 | Nyitott | — | A create idempotenciakulcs csak a seedre van scope-olva, ezért megváltozott draft örökli az előző kérés kulcsát |
 
 ## Review checkpointok
 
