@@ -1721,6 +1721,169 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 16. nap – Összetett űrlapok és hatáselőnézet
+
+```text
+Nap / dátum / implementáló: 16 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day16-complex-forms @ bb70418 (main, a 15. nap után)
+Napi feladat és előfeltételei: az öt target-választót igénylő scenario.
+  Előfeltétel: 15. nap (field-metaadat, kanonikus objektum) — megvan.
+Auditpontok: nincs önálló F-pont; a szimulátor-termékfolyamat 2–3. lépése
+```
+
+**Kiinduló állapot.** A `host-outage`, `restart-flapping`, `network-degradation`,
+`node-isolation` és `clear-recover` mind célpontot nevez meg, és ehhez egyetlen
+eszköz volt: egy szövegmező. Egy registryben nem létező id, egy staker egy
+masternode-helyen, egy karbantartásban lévő célpont — mindegyik a szervertől
+derült ki, a Prepare **után**.
+
+### Egy választó, ami megmondja, miért nem
+
+Minden regisztrált célpont listázva van, **azok is**, amelyek nem választhatók,
+mindegyik az okkal: rossz hálózaton, letiltva, karbantartásban, rossz szerep,
+hiányzó képesség. Egy célpont, ami csendben nincs ott, registry-hibának
+olvasódik; egy, ami azt írja, „in maintenance", megmondja, mit kell tenni.
+**Csak a megjelenítési név és a target id látszik, a host-hivatkozás soha.**
+
+Az okok a szerver **két** helyéről jönnek, és mindkettőt ellenőriztem a forrásban:
+a resolver jelöltszűrője (hálózat, enabled, nem maintenance — `targetResolver.ts:156`,
+és a `draftPreparation.ts` pontosan ezt adja tovább a végrehajtónak, tehát a
+`clear-recover`-re is vonatkozik), és a dry-run végrehajtó scenariónkénti
+jogosultsága (szerep + képesség).
+
+### A szerep a registryből jön, soha nem a névből
+
+Ezen a flottán az egyik hoston a 11-es példány masternode, minden más hoston
+staker — és ez a rövidítés egyszer majdnem levett egy masternode-ot a hálózatról.
+A fixtúra-registry ezért egy stakert `lab-mn-st`-nek nevez: egy nevet olvasó
+választó azonnal elbukna rajta.
+
+### Bizonyítva azon, ami dönt
+
+A field-metaadat mostantól minden célpontmezőnél hordozza a követelményt
+(szerep vagy az azt tartó paraméter neve, plusz képesség), és a
+`scenarioFields.test.ts` a jelölteket **magán a `generateDryRunPlan`-en** tolja
+át: a megfelelő célpont feloldódik, minden rossz szerep (a seed is) elutasítva,
+a hiányzó képesség elutasítva. Ugyanez a teszt fedi mostantól a **tört** mezőket
+(a csomagvesztés valós szám — egy egész lépésű űrlap olyan értéket utasítana el,
+amit a szerver elfogad) és a `restart-flapping` staker-plafonját (10 masternode,
+de csak 5 staker).
+
+**Öt szerveroldali negatív kontroll, mind a saját állításán bukott:**
+`node-isolation` rossz képességgel, `staker-stop` rossz szereppel, a staker-plafon
+egyel elcsúsztatva, a csomagvesztés egésznek deklarálva, és a `clear-recover`
+live-jelzője hamisan igaznak.
+
+### Egy valódi hiba, amit a tesztek találtak meg
+
+A célpontot igénylő scenariók sablonja egy **helyőrző** id-t hordoz, mert a
+sablonnak meg kell felelnie a sémájának. A választóval ez csapdává vált: egy
+valódi célpont bepipálása a helyőrző **mellé adta hozzá**, és a kérés egy nem
+létező célpontot nevezett meg. A célpontmezők mostantól **üresen indulnak** —
+a mező *fajtája* dönt, nem a helyőrző szöveg illesztése —, és a Prepare nevén
+nevezi a kötelező, de ki nem választott célpontot, ahelyett hogy semmit küldene.
+
+Két korábbi teszt azt állította, hogy a helyőrző bekerül a draftba. **Javítottam,
+nem töröltem** őket, az indoklással mellettük; a régebbi szerver útja, ahol a
+helyőrző még ott van, saját tesztet tartott meg.
+
+### A `clear-recover` a saját policyja szerint
+
+Nincs időtartam és nincs darabszám, mert nem fault. És **nincs live-ként
+felkínálva**: minden akciója egy `fault-clear`, amit a live végrehajtó szándékosan
+kihagy (a takarítás a recovery dolga) — egy live futása tehát **semmit nem
+alkalmazna**, és lefutottnak mondaná magát. A katalógus ezt `liveAppliesFaults`
+jelzővel mondja ki, a `labFaultsForPlan`-en bizonyítva, kontrollként egy valódi
+fault-scenarióval.
+
+### Az előnézet
+
+Masternode- és staker-darabszám, quorumméret és túlélők, és **„unknown", soha
+nem 0**, ahol a szerver nem tudta megmérni — egy nulla margin **lelet**, egy
+nem mért nem az. Ha a draft eltér a képernyőn lévő futamtól, az előnézet
+kimondja, hogy az a **mentett terv**, és új Prepare-t kér; **a futam vezérlése
+érintetlen**, ahogy a terv előírja.
+
+### Egy nap óta nyitott flake gyökérokának megtalálása — külön commitban
+
+A K3-hoz a teljes integrációs suite-nak zöldnek kellett lennie, és ma nem volt
+az: **négy futás egymás után bukott** (10, 2, 1 és 1 hibával), mindig
+ugyanaz az `experimentOutcome` `beforeAll` hook lépte túl az időkorlátot. Ez a
+6. nap óta nyitott flake.
+
+**Két hipotézist teszteltem, és az elsőt megcáfoltam.**
+
+1. *A 333 szivárgott teszt-adatbázis lassítja a mongodot.* Mind a 333-at
+   letöröltem (szigorúan a `deftrack_itest_` előtaggal, kizárólag a 27018-as
+   eldobható példányon — a `deftrack_devnet` a 27017-en van), és újrafuttattam:
+   **továbbra is bukott.** Megcáfolva.
+2. *A 14 fájl párhuzamosan dolgozik egyetlen mongod-on.* Egyenként minden fájl
+   átment; szekvenciálisan a teljes suite **háromból háromszor** zöld, kb. 30 s
+   alatt. Megerősítve.
+
+A javítás egy flag: `--no-file-parallelism` az npm scriptben, az indoklással a
+`mongo.ts` fejkommentjében. **Nem emelt időkorlát** — az elrejtené a versengést,
+nem megszüntetné.
+
+**A szivárgás külön hiba, és nyitva marad.** A 14 fájlból 11 **minden futáson**
+— a sikereseken is — otthagyja az adatbázisát, pedig mindegyik hívja a
+`dropTestMongo`-t; csak a `fairness`, `mndiff` és `mnpoller` takarít. Hibát nem
+okoz (a szekvenciális futás szivárgás mellett is zöld), de naponta gyűlik. **20. nap.**
+
+### Érintett fájlok
+
+Szerver: `scenarioTypes.ts` (`ScenarioTargetRequirement`, `maxWhen`,
+`liveAppliesFaults`, új mezőfajták), `scenarioRegistry.ts` (mind a kilenc scenario),
+`scenarioFields.test.ts` (11 eset), `simulationScenarios.integration.test.ts`,
+`integration/mongo.ts` és `package.json` (a flake).
+Kliens: új `lib/targetEligibility.ts` (+ 9 unit eset), `admin-api.ts`,
+`dd-simulation-control.ts`, `dd-admin-shell.ts`, új
+`e2e/complex-scenarios.spec.ts` (15 eset), `e2e/fixtures/admin.ts`, és a javított
+`simulation-control` / `scenario-forms` specek.
+
+**Szerződésváltozás / kompatibilitás:** additív — a descriptor `target`, `maxWhen`
+és `liveAppliesFaults` mezőket kap, a target DTO-n a szerver által eddig is küldött
+`capabilities` mostantól olvasva van. Egy régebbi szerver ezeket nem küldi, és a
+panel ilyenkor nem talál ki semmit. Szerveroldali validáció **nem változott**.
+
+### Negatív kontrollok — tizenegy, mind a saját tesztjén bukott
+
+Szerver (5): lásd fent. Kliens (6): a sablon célpontja bent marad; a jogosultság
+figyelmen kívül hagyja a szerepet; a staker-plafon figyelmen kívül; a megváltozott
+draft sosem elavult; a `clear-recover` live-ként felkínálva; a hiányzó kötelező
+célpont mégis kimegy.
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **855** szerver (850 → 855) + **163** kliens (154 → 163) unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **145** böngészőteszt (129 → 145), egy workerrel |
+| K3 | exit 0 — 14 fájl, 91 teszt, **szekvenciálisan**, háromból háromszor |
+| CSP-kapu | exit 0 |
+
+**Egy nem megerősített flake a böngésző-suite-ban:** a teljes suite négy workeres
+futásán egyszer elbukott a 12. napi skip-link teszt, mert az Overview címe nem
+rajzolódott ki a keretidőn belül. Egyenként 3×, ismételve 5× négy workeren, és a
+teljes suite egy workerrel (ahogy a CI futtatja) zöld. Feljegyzem, nem retryval
+tüntetem el.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:**
+
+- a **17. nap** (publikus szimulációs eredmények) elkezdhető;
+- az integrációs adatbázis-szivárgás (11/14 fájl) — 20. nap;
+- a terv „profilt" is kér az előnézetbe, de a mentett terv DTO-ja **nem hordoz
+  profilnevet**; nem találtam ki, a meglévő quorumméret és túlélőszám van kint.
+
+```text
+Commit(ok), végső SHA: 0d08439 (integrációs flake), e4c16d5 (16. nap)
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text

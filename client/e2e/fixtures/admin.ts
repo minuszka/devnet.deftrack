@@ -1,4 +1,4 @@
-import type { ScenarioFieldSpec } from '../../src/lib/admin-api.js';
+import type { ScenarioFieldSpec, SimulationTarget } from '../../src/lib/admin-api.js';
 import { ok, type ApiStubs } from '../harness.js';
 import { healthSnapshot, pageOf } from './api.js';
 
@@ -22,6 +22,7 @@ export interface AdminScenarioStub {
   parameterTemplate?: Record<string, unknown>;
   templateNeedsTargetId?: boolean;
   parameterFields?: ScenarioFieldSpec[];
+  liveAppliesFaults?: boolean;
 }
 
 /** A subset of the real allowlist, with the templates the server serves for it. */
@@ -84,6 +85,77 @@ export const SCENARIO_STUBS: AdminScenarioStub[] = [
     riskClass: 'low',
     parameterTemplate: { targetIds: ['replace-with-a-registered-target-id'] },
     templateNeedsTargetId: true,
+    liveAppliesFaults: false,
+    parameterFields: [
+      { name: 'targetIds', label: 'Targets to clear', kind: 'target-ids', required: true, target: {} },
+    ],
+  },
+  {
+    scenarioId: 'host-outage',
+    version: 1,
+    title: 'Full host outage',
+    description: 'All allowlisted services on one registered host are stopped.',
+    riskClass: 'high',
+    parameterTemplate: { anchorTargetId: 'replace-with-a-registered-target-id', durationSeconds: 60 },
+    templateNeedsTargetId: true,
+    parameterFields: [
+      { name: 'anchorTargetId', label: 'Any target on the host', kind: 'target', required: true, target: {} },
+      { name: 'durationSeconds', label: 'Duration', kind: 'integer', required: true, min: 5, max: 900, unit: 'seconds' },
+      { name: 'expectedMasternodes', label: 'Expected masternodes on the host', kind: 'integer', required: false, min: 1, max: 20, unit: 'nodes' },
+    ],
+  },
+  {
+    scenarioId: 'restart-flapping',
+    version: 1,
+    title: 'Restart and flapping',
+    description: 'Selected services repeatedly alternate between stopped and running.',
+    riskClass: 'high',
+    parameterTemplate: { role: 'masternode', count: 1, cycles: 1, downSeconds: 10, upSeconds: 10 },
+    templateNeedsTargetId: false,
+    parameterFields: [
+      { name: 'role', label: 'Role', kind: 'enum', required: true, values: ['masternode', 'staker'] },
+      {
+        name: 'count', label: 'Services to flap', kind: 'integer', required: true, min: 1, max: 10, unit: 'services',
+        maxWhen: { field: 'role', values: ['staker'], max: 5 },
+      },
+      { name: 'cycles', label: 'Cycles', kind: 'integer', required: true, min: 1, max: 5, unit: 'cycles' },
+      { name: 'downSeconds', label: 'Down per cycle', kind: 'integer', required: true, min: 5, max: 60, unit: 'seconds' },
+      { name: 'upSeconds', label: 'Up per cycle', kind: 'integer', required: true, min: 5, max: 120, unit: 'seconds' },
+      { name: 'targetIds', label: 'Explicit targets', kind: 'target-ids', required: false, target: { roleFrom: 'role', capability: 'service-control' } },
+    ],
+  },
+  {
+    scenarioId: 'network-degradation',
+    version: 1,
+    title: 'Network degradation',
+    description: 'Latency, jitter and loss are applied to selected nodes.',
+    riskClass: 'medium',
+    parameterTemplate: { role: 'masternode', count: 1, durationSeconds: 60, latencyMs: 100, jitterMs: 20, lossPercent: 1, correlationPercent: 0 },
+    templateNeedsTargetId: false,
+    parameterFields: [
+      { name: 'role', label: 'Role', kind: 'enum', required: true, values: ['masternode', 'staker'] },
+      { name: 'count', label: 'Nodes to degrade', kind: 'integer', required: true, min: 1, max: 10, unit: 'nodes' },
+      { name: 'durationSeconds', label: 'Duration', kind: 'integer', required: true, min: 5, max: 900, unit: 'seconds' },
+      { name: 'latencyMs', label: 'Added latency', kind: 'integer', required: true, min: 0, max: 2000, unit: 'ms' },
+      { name: 'jitterMs', label: 'Jitter', kind: 'integer', required: true, min: 0, max: 1000, unit: 'ms' },
+      { name: 'lossPercent', label: 'Packet loss', kind: 'number', required: true, min: 0, max: 30, unit: '%' },
+      { name: 'correlationPercent', label: 'Loss correlation', kind: 'number', required: true, min: 0, max: 100, unit: '%' },
+      { name: 'targetIds', label: 'Explicit targets', kind: 'target-ids', required: false, target: { roleFrom: 'role', capability: 'netem-p2p' } },
+    ],
+  },
+  {
+    scenarioId: 'node-isolation',
+    version: 1,
+    title: 'Node isolation',
+    description: 'Selected masternodes are partitioned from their peers.',
+    riskClass: 'high',
+    parameterTemplate: { count: 1, durationSeconds: 60 },
+    templateNeedsTargetId: false,
+    parameterFields: [
+      { name: 'count', label: 'Masternodes to isolate', kind: 'integer', required: true, min: 1, max: 5, unit: 'nodes' },
+      { name: 'durationSeconds', label: 'Duration', kind: 'integer', required: true, min: 5, max: 900, unit: 'seconds' },
+      { name: 'targetIds', label: 'Explicit targets', kind: 'target-ids', required: false, target: { role: 'masternode', capability: 'partition-p2p' } },
+    ],
   },
   {
     // A scenario this server describes but offers no template for -- what a
@@ -101,6 +173,8 @@ export interface AdminStubOptions {
   /** Omit the capabilities field entirely, as a server built before it would. */
   omitCapabilities?: boolean;
   scenarios?: AdminScenarioStub[];
+  /** The target registry. Empty unless a test is about choosing targets. */
+  targets?: SimulationTarget[];
 }
 
 export function adminSessionStubs(options: AdminStubOptions = {}): ApiStubs {
@@ -118,7 +192,9 @@ export function adminSessionStubs(options: AdminStubOptions = {}): ApiStubs {
       body: ok({ subject: 'fixture-operator', role: 'operator', csrfToken: 'fixture-csrf-token' }),
     },
     '/api/v1/health': { body: ok(healthSnapshot()) },
-    '/api/v1/admin/simulations/targets': { body: ok({ items: [], total: 0 }) },
+    '/api/v1/admin/simulations/targets': {
+      body: ok({ items: options.targets ?? [], total: (options.targets ?? []).length }),
+    },
     '/api/v1/admin/simulations/runs': { body: ok({ items: [], total: 0 }) },
     '/api/v1/admin/simulations/scenarios': {
       body: ok(capabilities === undefined ? { items: scenarios } : { items: scenarios, capabilities }),
@@ -242,4 +318,39 @@ export function runStubs(options: RunStubOptions): ApiStubs {
       }),
     },
   };
+}
+
+/**
+ * A lab registry with one target for every reason the chooser must give.
+ *
+ * Invented, like every fixture here: the ids are lab-style, and `hostRef` is a
+ * container name, never an address. Named so the NAME would mislead where it
+ * can -- `lab-mn-st` is a staker -- because the chooser has to read the role
+ * from the registry and nothing else.
+ */
+export function labRegistry(): SimulationTarget[] {
+  const all: SimulationTarget['capabilities'] = ['service-control', 'netem-p2p', 'partition-p2p', 'dsl-test-hook'];
+  const t = (overrides: Partial<SimulationTarget> & Pick<SimulationTarget, 'targetId'>): SimulationTarget => ({
+    displayLabel: overrides.targetId,
+    hostRef: 'lab-host-a',
+    role: 'masternode',
+    network: 'regtest',
+    expectedBuild: 'test-build',
+    enabled: true,
+    maintenance: false,
+    capabilities: all,
+    ...overrides,
+  });
+  return [
+    t({ targetId: 'lab-mn-1' }),
+    t({ targetId: 'lab-mn-2' }),
+    t({ targetId: 'lab-mn-3', hostRef: 'lab-host-b' }),
+    t({ targetId: 'lab-mn-off', enabled: false }),
+    t({ targetId: 'lab-mn-maint', maintenance: true }),
+    t({ targetId: 'lab-mn-devnet', network: 'devnet' }),
+    t({ targetId: 'lab-mn-nonetem', capabilities: ['service-control', 'partition-p2p'] }),
+    t({ targetId: 'lab-mn-st', role: 'staker', hostRef: 'lab-host-c' }),
+    t({ targetId: 'lab-st-1', role: 'staker', hostRef: 'lab-host-c' }),
+    t({ targetId: 'lab-seed', role: 'seed', hostRef: 'lab-host-a' }),
+  ];
 }

@@ -116,12 +116,14 @@ describe.skipIf(!HAVE_MONGO)('the admin scenario catalogue over HTTP', () => {
    * empty list -- because the panel reads an empty list as "this scenario takes
    * no parameters" and a missing key as "draw the JSON view".
    */
-  it('serves form fields for exactly the four scenarios that have them', async () => {
+  it('serves form fields for every scenario, and the live flag with them', async () => {
     const { body } = await catalogue();
     const items = body.data?.items ?? [];
 
+    // Every scenario since day 16, which added the five that need a target.
+    // The day-15 version of this line said four; the contract grew on purpose.
     const withFields = items.filter((item) => item.parameterFields !== undefined).map((item) => item.scenarioId);
-    expect(withFields.sort()).toEqual(['dsl-fault', 'mn-stop', 'quorum-member-outage', 'staker-stop']);
+    expect(withFields).toHaveLength(9);
 
     const stakers = items.find((item) => item.scenarioId === 'staker-stop');
     const stakerCount = stakers?.parameterFields?.find((field) => field.name === 'count');
@@ -131,10 +133,16 @@ describe.skipIf(!HAVE_MONGO)('the admin scenario catalogue over HTTP', () => {
     const param = dsl?.parameterFields?.find((field) => field.name === 'param');
     expect(param?.onlyWhen).toEqual({ field: 'faultKind', values: ['response-delay', 'report-delay'] });
 
-    // Absent, not empty, for a scenario the panel has no form for yet.
-    const host = items.find((item) => item.scenarioId === 'host-outage');
-    expect(host).toBeDefined();
-    expect('parameterFields' in (host ?? {})).toBe(false);
+    // A target field carries the requirement the executor applies, over the wire.
+    const isolation = items.find((item) => item.scenarioId === 'node-isolation');
+    const targets = isolation?.parameterFields?.find((field) => field.name === 'targetIds') as
+      | { target?: { role?: string; capability?: string } }
+      | undefined;
+    expect(targets?.target).toEqual({ role: 'masternode', capability: 'partition-p2p' });
+
+    // And the one scenario that does nothing live says so.
+    const live = items.map((item) => [item.scenarioId, (item as { liveAppliesFaults?: boolean }).liveAppliesFaults]);
+    expect(live.filter(([, applies]) => applies === false).map(([id]) => id)).toEqual(['clear-recover']);
   });
 
   it('advertises no live network when no executor is configured', async () => {
