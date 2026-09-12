@@ -17,6 +17,17 @@ import mongoose from 'mongoose';
  * index. It answers whatever it was written to answer, which is the definition
  * of a test that cannot fail.
  *
+ * The files run ONE AT A TIME (`--no-file-parallelism` in the npm script), and
+ * that is the fix for a flake that stood open from day 6 of the website work.
+ * Each file has its own database, so nothing is shared except the mongod -- and
+ * fourteen files building indexes and seeding at once against that one server
+ * pushed the heavier `beforeAll` hooks past their timeout. Measured, not
+ * guessed: in parallel the suite failed on every one of four runs (10, 2, 1 and
+ * 1 failures, the same `experimentOutcome` hook each time), passed every file
+ * in isolation, and passed three runs out of three sequentially in about thirty
+ * seconds. Clearing 333 leaked databases first changed nothing, which is what
+ * ruled out the other explanation.
+ *
  * Where the server comes from: `MONGODB_TEST_URI`. CI runs a MongoDB service
  * container; locally, any throwaway instance will do -- and it must be a
  * throwaway, because these tests drop the database they create. They never
