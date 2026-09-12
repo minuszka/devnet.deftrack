@@ -118,6 +118,21 @@ export class DdAdminShell extends LitElement {
    * on their screen.
    */
   private _badRunKey: string | null = null;
+  /**
+   * Which selection the answers arriving now belong to.
+   *
+   * Raised by every selection change, by clearing and by the end of a session,
+   * and captured by each load. A request that was still in flight when the
+   * operator moved on writes nothing at all — not its data, not its error.
+   *
+   * Only the success branch used to check, and it checked `_selectedRunKey`.
+   * That left two holes. A late failure for run A cleared run B's run, plan,
+   * recovery and timeline and put A's error where B's controls had been — one
+   * slow 503 and a live fault lost its Abort button. And the key alone cannot
+   * tell two requests for the SAME run apart, so returning to a run mid-flight
+   * still let the older answer land last.
+   */
+  private _selectionGeneration = 0;
   private _onPopState = (): void => {
     void this._applyUrlSelection();
   };
@@ -369,6 +384,9 @@ export class DdAdminShell extends LitElement {
       // A timed-out server session has the same safe client outcome as a
       // successful sign-out: discard the only in-memory credential.
     } finally {
+      // Same rule as an expired session: whatever was being fetched for the
+      // signed-in operator must not land in a signed-out page.
+      this._selectionGeneration += 1;
       this._session = null;
       this._health = null;
       this._targets = [];
@@ -463,15 +481,14 @@ export class DdAdminShell extends LitElement {
    * so re-reading them five times a minute would be load without information.
    * The status poll below renews the part that moves.
    */
-  private async _loadHistory(runKey: string): Promise<void> {
-    this._selectedRunKey = runKey;
+  private async _loadHistory(runKey: string, generation: number): Promise<void> {
     const [detail, history, recovery] = await Promise.all([
       adminApi.dryRun(runKey),
       adminApi.history(runKey),
       // Evidence that is merely unavailable must never read as "clear".
       adminApi.recovery(runKey).then((r) => r.recovery).catch(() => null),
     ]);
-    if (this._selectedRunKey !== runKey) return;
+    if (generation !== this._selectionGeneration) return;
     this._selectedRun = detail.run;
     this._selectedPlan = detail.plan;
     this._selectedRecovery = recovery;
@@ -552,6 +569,9 @@ export class DdAdminShell extends LitElement {
   }
 
   private _clearSelection(): void {
+    // Nothing in flight may write after this: a load that was fetching the run
+    // being cleared would otherwise put it back, selected, seconds later.
+    this._selectionGeneration += 1;
     this._selectedRunKey = null;
     this._selectedRun = null;
     this._selectedPlan = null;
@@ -562,6 +582,7 @@ export class DdAdminShell extends LitElement {
 
   /** One place to drop everything private, whatever ended the session. */
   private _endSession(message: string): void {
+    this._selectionGeneration += 1;
     this._session = null;
     this._screen = 'signed-out';
     this._message = message;
@@ -590,14 +611,40 @@ export class DdAdminShell extends LitElement {
    * a run they never named.
    */
   private async _loadSelectedRun(runKey: string): Promise<void> {
+    const generation = ++this._selectionGeneration;
     this._loading = true;
+    /*
+     * The previous run's controls go now, not when the new run's answer
+     * arrives.
+     *
+     * The key moved to the new run immediately while the run object, its plan
+     * and its recovery evidence stayed behind, so for as long as the load took
+     * the panel rendered the OLD run's Abort button underneath the NEW run's
+     * key — and that button sent a real abort to the run nobody was looking at
+     * any more. A selection that is still loading shows nothing to press.
+     *
+     * Only on a change of run: reloading the one already on screen (a refresh
+     * that finds no history, a return to the same key) must not take a live
+     * fault's controls away while it re-reads them.
+     */
+    if (runKey !== this._selectedRunKey) {
+      this._selectedRun = null;
+      this._selectedPlan = null;
+      this._selectedRecovery = null;
+      this._selectedPreflight = null;
+      this._history = null;
+    }
     // Held while the request is in flight, so the panel shows which run it is
     // waiting for rather than the previous one.
     this._selectedRunKey = runKey;
     try {
-      await this._loadHistory(runKey);
+      await this._loadHistory(runKey, generation);
+      if (generation !== this._selectionGeneration) return;
       this._message = '';
     } catch (error) {
+      // A failure belongs to the selection that asked for it. Without this,
+      // run A's late 503 wiped the run the operator had already moved to.
+      if (generation !== this._selectionGeneration) return;
       this._history = null;
       this._selectedRun = null;
       this._selectedPlan = null;
@@ -610,6 +657,9 @@ export class DdAdminShell extends LitElement {
         this._message = messageOf(error);
       }
     } finally {
+      // Deliberately not generation-guarded: a request that has finished is one
+      // fewer in flight whoever asked for it, and leaving this true because the
+      // selection moved on would block the dashboard refresh for good.
       this._loading = false;
     }
   }
