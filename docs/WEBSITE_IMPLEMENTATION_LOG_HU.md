@@ -1092,6 +1092,104 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 11. nap – A többi meglévő szűrő URL-je
+
+```text
+Nap / dátum / implementáló: 11 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day11-url-filters @ 90993b3 (main, a J1–J3 merge után)
+Napi feladat és előfeltételei: F11 befejezése a többi oldalon.
+  Előfeltétel: 10. nap (`queryState.ts`) — megvan.
+Auditpontok: F11
+```
+
+**Először a tábla, ahogy a terv kéri.** A nap szabálya az, hogy a **meglévő**
+vezérlőket kell URL-hez kötni, és amelyik oldalon nincs vezérlő, ahhoz **ne
+találjak ki újat**. A hét megnevezett oldalt végignézve:
+
+| Oldal | Vezérlő | Komponensállapot | API-paraméter | URL-paraméter |
+|---|---|---|---|---|
+| PoSe Watch | **nincs** | — | rögzített 24 ó / 7 nap | — |
+| ChainLocks | **nincs** | — | rögzített 500 blokk | — |
+| Sentinel Layer | **nincs** | — | rögzített `limit=200` | — |
+| Vantage Points | topic | `_topic` | `topic` | `topic` |
+| Staking | időablak | `_blocks` | `blocks` | `blocks` |
+| Staking | leaderboard nézet | `_view` | **nincs** (csak megjelenítés) | `view` |
+| Blocks | lapozó | `_offset` | `offset` | `page` |
+| Transactions | lapozó | `_offset` | `offset` | `page` |
+
+Ellenőriztem a Masternodes és az Operators oldalt is: egyiken sincs vezérlő.
+Tehát **négy** oldalon van ténylegesen kötnivaló, három megnevezett oldalon
+pedig szándékosan **semmi**.
+
+**A queryState nem kapott új primitívet.** Az `enum`, a `choice` és a `page`
+mind a négyet lefedi; a szerver `MAX_OFFSET`-je (100 000) és a kliensé
+megegyezik, tehát a lapszám vágása nem talál ki saját korlátot.
+
+**A legbeszédesebb veszteség a topic volt.** Aki talált egy hostot, amelyik a
+ChainLockokon lassú, a blokkokon nem — ez pont az a különbségtétel, amiért az
+oldal létezik —, **nem tudta továbbadni** a képernyőjét: a link a másik
+témára nyílt. A staking ablaka a legfélrevezetőbb: az „egy gép termelte a
+blokkok 40%-át" **egy mintáról szóló állítás**, és az a link, amelyik a mintát
+elejti, az állítást a minta nélkül adja tovább.
+
+**Egy vezérlő, ami szándékosan nem kér újra.** A staking leaderboard nézete
+(gépek vs. kifizetési kulcsok) a **már a képernyőn lévő** válasz másik olvasata
+— két daemon egy gépen egy gép —, ezért bekerül a linkbe, de nem indít kérést.
+A staking visszahívása csak akkor frissít, ha az **ablak** mozdult; ez a
+változás előtt is így volt, és a teszt ki is feszíti.
+
+**Érintett fájlok:** `dd-page-peers.ts`, `dd-page-staking.ts`,
+`dd-page-blocks.ts`, `dd-page-txs.ts`; `client/e2e/fixtures/api.ts`
+(+5 fixtúra) és `client/e2e/query-state.spec.ts` (+12 eset).
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerverkód nem változott, új
+API-paramétert nem vezettem be — mind a négy vezérlő olyan paramétert használ,
+amit a szerver eddig is fogadott.
+
+**Negatív kontrollok — három, oldalanként:**
+
+| Kivett kötés | Ami elpirult |
+|---|---|
+| peers topic vissza komponensmemóriába | „choosing a topic lands in the URL, and Back returns to the other one" |
+| staking ablak + nézet vissza | „the window lands in the URL…" **és** „the leaderboard view is in the URL and costs no request" |
+| mindkét lapozó vissza | „paging lands in the URL…" **és** „a reload keeps the page of transactions…" |
+
+**A harmadik kontroll elsőre csak félig bukott**, és ez a nap tanulsága: a
+Transactions oldalon csak az **olvasási** irány volt kifeszítve. Az URL
+olvasása és írása **két külön huzalozás**, és az az állapot, amikor egy vezérlő
+olvas, de nem ír, pontosan az, amiből ezek az oldalak indultak — a `_move()`
+visszaállítása után a reload-teszt zöld maradt, mert a `connectedCallback` még
+mindig olvasta az URL-t. A teszt most a reload után **tovább is lapoz**, így
+mindkét irány bizonyított.
+
+**Amit ma szándékosan NEM csináltam:** a staking nézetváltó gombjain nincs
+`aria-pressed`, az ablakválasztón van. Ez valódi hiány, de a **12. nap**
+(szemantika, fókusz, kontraszt) dolga; nem kezdek bele egy másik nap
+feladatába azért, mert útközben láttam.
+
+**Parancsok, exit-kódok:**
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 844 szerver + 151 kliens unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **104** böngészőteszt (92 → 104); a query-state suite négyszer egymás után zöld |
+
+A 10. napi három oldal (Rounds, Fairness, Experiments) regressziótesztjei
+változatlanul zöldek.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** F11 kliensoldalon ezzel teljes. A
+**12. nap** (F12 + F14: szemantikus címek, fókuszkezelés, kontraszt)
+elkezdhető; függősége nincs a mai munkán túl.
+
+```text
+Commit(ok), végső SHA: b954e9b
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -1425,7 +1523,7 @@ Napi státusz: ELLENŐRZÖTT
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
 | F10 | 14 | Nyitott | — | — |
-| F11 | 10–11 | Nyitott | — | — |
+| F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni |
 | F12 | 12 | Nyitott | — | — |
 | F13 | 13 | Nyitott | — | — |
 | F14 | 12 | Nyitott | — | — |
