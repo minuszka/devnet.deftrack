@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, ok, test } from './harness.js';
-import { overviewStubs, roundStubs } from './fixtures/stubs.js';
+import { overviewStubs, roundStubs, shellStubs } from './fixtures/stubs.js';
+import { SIM_A, simReport, simRun } from './fixtures/simulations.js';
 import { adminSessionStubs, RUN_A, runStubs } from './fixtures/admin.js';
 import { blockArrivalReport, chainLockReport, healthSnapshot, pageOf, roundRun, selectionFairness } from './fixtures/api.js';
 
@@ -119,6 +120,25 @@ test.describe('the shipped CSP, on the built client', () => {
     // A rendered control panel means the chunk loaded, which is the point.
     await expect(page.getByRole('button', { name: 'Abort & recover' })).toBeVisible();
     expect(await violations(), 'on /admin').toEqual([]);
+  });
+
+  /**
+   * The public simulation results, added on day 17: its export is a `data:`
+   * link, which is exactly the kind of thing a policy is assumed to allow and
+   * should be measured allowing.
+   */
+  test('the simulation results and their export run under it', async ({ app, page }) => {
+    const violations = await underPolicy(page);
+    app.stub({
+      ...shellStubs(),
+      [`/api/v1/simulations/${SIM_A}`]: { body: ok(simRun()) },
+      [`/api/v1/simulations/${SIM_A}/report`]: { body: ok(simReport('matched')) },
+    });
+
+    await app.goto(`/simulations/${SIM_A}`);
+    await expect(page.locator('[data-reading]')).toHaveAttribute('data-reading', 'matched');
+    await expect(page.getByRole('link', { name: 'Download JSON' })).toBeVisible();
+    expect(await violations(), `on /simulations/${SIM_A}`).toEqual([]);
   });
 
   /**

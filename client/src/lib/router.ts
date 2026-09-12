@@ -81,6 +81,7 @@ export const ROUTES: Route[] = [
   { path: '/staking', tag: 'dd-page-staking', label: 'Staking' },
   { path: '/peers', tag: 'dd-page-peers', label: 'Vantage Points' },
   { path: '/experiments', tag: 'dd-page-experiments', label: 'Experiments' },
+  { path: '/simulations', tag: 'dd-page-simulations', label: 'Simulations' },
   { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks' },
   { path: '/txs', tag: 'dd-page-txs', label: 'Transactions' },
   { path: '/operators', tag: 'dd-page-operators', label: 'Operators' },
@@ -91,6 +92,19 @@ export const ROUTES: Route[] = [
     label: 'Experiment',
     hidden: true,
     pattern: /^\/experiments\/([^/]+)$/,
+    key: 'runKey',
+  },
+  {
+    /**
+     * Any segment, not only a well-formed run key: a malformed key is answered
+     * by the page with "that is not a simulation run key", which says more
+     * than a generic page-not-found would.
+     */
+    path: '/simulations',
+    tag: 'dd-page-simulations',
+    label: 'Simulation',
+    hidden: true,
+    pattern: /^\/simulations\/([^/]+)$/,
     key: 'runKey',
   },
   {
