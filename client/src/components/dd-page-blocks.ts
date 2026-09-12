@@ -2,11 +2,27 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { txKindLabel, type BlockDetail, type BlockRow } from '@devnet-deftrack/shared';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
+import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 25;
 const REFRESH_MS = 20_000;
+
+/**
+ * Which page of the list is being read, in the address bar.
+ *
+ * The offset lived in component memory, so a reload snapped back to the newest
+ * blocks and a link carried nothing. Following a chain of events backwards --
+ * which is most of what this page is for -- could not be handed on: the reader
+ * at the other end started again at the tip.
+ *
+ * `page` is 1-based because that is what a reader understands; `offset` is what
+ * the API takes, and the conversion happens once, in `queryState`.
+ */
+const QUERY: Record<string, ParamSpec> = {
+  page: { kind: 'page', limit: PAGE_SIZE },
+};
 
 /** Block-kind chips: proof-of-stake, proof-of-work, ChainLocked. */
 const tagStyles = css`
@@ -45,6 +61,29 @@ export class DdPageBlocks extends LitElement {
     intervalMs: REFRESH_MS,
     load: (run) => this._load(run),
   });
+  /** The address bar; the only thing that reacts to a page change. */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    this._applyQuery(values);
+    this._poll.refresh();
+  });
+
+  override connectedCallback(): void {
+    // Before the first fetch: a link to page 4 asks for page 4, rather than
+    // fetching page 1 and correcting itself.
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  /** URL -> component state. One direction; the URL is the source. */
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const page = values['page'];
+    this._offset = pageToOffset(typeof page === 'number' ? page : 1, PAGE_SIZE);
+  }
+
+  private _page(): number {
+    const page = this._query.values['page'];
+    return typeof page === 'number' ? page : 1;
+  }
 
   static override styles = [baseStyles, cardStyles, tableStyles, pageStyles, pagerStyles, tagStyles];
 
@@ -64,8 +103,7 @@ export class DdPageBlocks extends LitElement {
   }
 
   private _move(delta: number): void {
-    this._offset = Math.max(0, this._offset + delta * PAGE_SIZE);
-    this._poll.refresh();
+    this._query.set({ page: Math.max(1, this._page() + delta) });
   }
 
   override render(): TemplateResult {

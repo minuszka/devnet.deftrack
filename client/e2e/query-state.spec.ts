@@ -1,12 +1,17 @@
 import { expect, ok, test, type ApiStubs } from './harness.js';
 import {
+  blockArrivalReport,
+  blockRun,
   chainLockReport,
   experimentRow,
   healthSnapshot,
   llmqProfile,
   pageOf,
+  peerPropagation,
   roundRun,
   selectionFairness,
+  stakingHealth,
+  txRun,
   V1_PROFILE,
   V2_PROFILE,
 } from './fixtures/api.js';
@@ -78,10 +83,12 @@ test.describe('filters in the URL', () => {
     await app.goto(`/rounds?llmq=${V2_PROFILE}&status=failed&page=2`);
 
     await expect(page.locator('dd-page-rounds')).toHaveCount(1);
-    const calls = app.callsTo(ROUNDS);
     // One fetch, carrying everything the URL said: `page` is 1-based for the
-    // reader, `offset` is what the API takes.
-    expect(calls).toHaveLength(1);
+    // reader, `offset` is what the API takes. Polled, because the element
+    // existing is not the request having been made -- see the note on the
+    // clamping test below.
+    await expect.poll(() => app.callsTo(ROUNDS).length).toBe(1);
+    const calls = app.callsTo(ROUNDS);
     expect(calls[0]).toContain(`llmqName=${V2_PROFILE}`);
     expect(calls[0]).toContain('status=failed');
     expect(calls[0]).toContain('offset=50');
@@ -155,7 +162,16 @@ test.describe('filters in the URL', () => {
 
     // 100000 / 50 + 1
     await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('2001');
-    expect(app.callsTo(ROUNDS).at(-1) ?? '').toContain('offset=100000');
+    /*
+     * Polled, not read once.
+     *
+     * The URL settles before the request it causes has been issued, so reading
+     * the call list the moment the address bar is right reads it too early.
+     * This passed on a fast machine for two days and failed the first time CI
+     * ran it on a slower one -- the assertion was about timing, not about the
+     * behaviour it names.
+     */
+    await expect.poll(() => app.callsTo(ROUNDS).at(-1) ?? '').toContain('offset=100000');
   });
 
   test('fairness carries its profile and window', async ({ app, page }) => {
@@ -214,7 +230,7 @@ test.describe('filters in the URL', () => {
     await page.getByRole('button', { name: 'closed', exact: true }).click();
 
     await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBeNull();
-    expect(app.callsTo(EXPERIMENTS).at(-1) ?? '').toContain('offset=0');
+    await expect.poll(() => app.callsTo(EXPERIMENTS).at(-1) ?? '').toContain('offset=0');
   });
 
   /**
@@ -233,5 +249,261 @@ test.describe('filters in the URL', () => {
     await expect.poll(() => new URL(page.url()).searchParams.get('status')).toBe('closed');
     await expect(page.locator('.pager')).toContainText('of 30');
     await expect(page.locator('tbody')).toContainText('fixture-run-000');
+  });
+});
+
+/**
+ * Day 11: the same rule, applied to the controls the remaining pages already
+ * had.
+ *
+ * Nothing new was invented. The survey behind this block found exactly four
+ * pages with a control -- a topic, a window, a leaderboard view and two pagers
+ * -- and three of the pages the plan names (PoSe, ChainLocks, Sentinel Layer)
+ * have no control at all, so they get no parameter.
+ */
+const PEERS = '/api/v1/peers/propagation';
+const STAKING = '/api/v1/staking/health';
+const BLOCKS = '/api/v1/blocks';
+const TXS = '/api/v1/txs';
+
+function peerStubs(): ApiStubs {
+  return {
+    ...shellStubs(),
+    [PEERS]: (url: URL) => ({
+      body: ok(
+        peerPropagation({
+          topic: (url.searchParams.get('topic') ?? 'block') as 'block' | 'chainlock',
+        })
+      ),
+    }),
+  };
+}
+
+function stakingStubs(): ApiStubs {
+  return {
+    ...shellStubs(),
+    [STAKING]: (url: URL) => ({
+      body: ok(stakingHealth({ windowBlocks: Number(url.searchParams.get('blocks') ?? 500) })),
+    }),
+  };
+}
+
+/** One paged list, answering honestly for whatever slice is asked for. */
+function pagedStubs(path: string, rows: (n: number, top?: number) => unknown[], total: number): ApiStubs {
+  return {
+    ...shellStubs(),
+    [path]: (url: URL) => {
+      const limit = Number(url.searchParams.get('limit') ?? 25);
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      const remaining = Math.max(0, total - offset);
+      return {
+        body: ok({
+          items: rows(Math.min(limit, remaining), 11_500 - offset),
+          total,
+          limit,
+          offset,
+        }),
+      };
+    },
+  };
+}
+
+test.describe('filters in the URL: the remaining pages', () => {
+  /* ── Vantage Points: a topic ────────────────────────────────────────────── */
+
+  test('a link opens the propagation topic it names, in one request', async ({ app, page }) => {
+    app.stub(peerStubs());
+    await app.goto('/peers?topic=chainlock');
+
+    await expect(page.locator('dd-page-peers')).toHaveCount(1);
+    const calls = app.callsTo(PEERS);
+    // One fetch, already carrying the topic: not blocks followed by a
+    // correction to chainlocks.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('topic=chainlock');
+  });
+
+  test('choosing a topic lands in the URL, and Back returns to the other one', async ({
+    app,
+    page,
+  }) => {
+    app.stub(peerStubs());
+    await app.goto('/peers');
+    await expect(page.locator('dd-page-peers')).toHaveCount(1);
+    const before = app.callsTo(PEERS).length;
+
+    await page.getByRole('button', { name: 'ChainLocks', exact: true }).click();
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('topic')).toBe('chainlock');
+    // Exactly one more request: the control writes the URL, the URL hands the
+    // value back once, and the poll reloads from that one callback.
+    await expect.poll(() => app.callsTo(PEERS).length).toBe(before + 1);
+
+    await page.goBack();
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('topic')).toBeNull();
+    await expect.poll(() => app.callsTo(PEERS).at(-1) ?? '').toContain('topic=block');
+  });
+
+  test('a reload keeps the topic that was being read', async ({ app, page }) => {
+    app.stub(peerStubs());
+    await app.goto('/peers?topic=chainlock');
+    await expect(page.locator('dd-page-peers')).toHaveCount(1);
+
+    await page.reload();
+
+    await expect(page.locator('dd-page-peers')).toHaveCount(1);
+    await expect.poll(() => app.callsTo(PEERS).at(-1) ?? '').toContain('topic=chainlock');
+  });
+
+  /* ── Staking: a window that refetches, and a view that must not ─────────── */
+
+  test('a link opens the staking window it names', async ({ app, page }) => {
+    app.stub(stakingStubs());
+    await app.goto('/staking?blocks=1000');
+
+    await expect(page.locator('dd-page-staking')).toHaveCount(1);
+    const calls = app.callsTo(STAKING);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('blocks=1000');
+  });
+
+  test('the window lands in the URL and Back restores the previous sample', async ({
+    app,
+    page,
+  }) => {
+    app.stub(stakingStubs());
+    await app.goto('/staking');
+    await expect(page.locator('dd-page-staking')).toHaveCount(1);
+
+    await page.getByRole('button', { name: '1,000', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('blocks')).toBe('1000');
+
+    await page.goBack();
+
+    // The default is absent from the URL, not written into it.
+    await expect.poll(() => new URL(page.url()).searchParams.get('blocks')).toBeNull();
+    await expect.poll(() => app.callsTo(STAKING).at(-1) ?? '').toContain('blocks=500');
+  });
+
+  /**
+   * The leaderboard view is a way of reading the answer already on screen --
+   * machines against payout keys -- so it belongs in the link but must not ask
+   * the server anything. Two daemons on one box are one machine; which question
+   * somebody was looking at is part of what they found.
+   */
+  test('the leaderboard view is in the URL and costs no request', async ({ app, page }) => {
+    app.stub(stakingStubs());
+    await app.goto('/staking');
+    await expect(page.locator('dd-page-staking')).toHaveCount(1);
+    const before = app.callsTo(STAKING).length;
+
+    await page.getByRole('button', { name: 'Payout keys', exact: false }).click();
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe('keys');
+    await page.waitForTimeout(300);
+    expect(app.callsTo(STAKING).length).toBe(before);
+  });
+
+  test('a link carries the window and the view together', async ({ app, page }) => {
+    app.stub(stakingStubs());
+    await app.goto('/staking?blocks=200&view=keys');
+
+    await expect(page.locator('dd-page-staking')).toHaveCount(1);
+    await expect.poll(() => app.callsTo(STAKING).at(-1) ?? '').toContain('blocks=200');
+    // And the view really is the chosen one, not merely a parameter nobody read.
+    await expect(page.locator('.toggle button.on')).toHaveText(/payout keys/i);
+  });
+
+  /* ── Blocks and Transactions: a pager each ──────────────────────────────── */
+
+  test('a link opens the page of blocks it names, in one request', async ({ app, page }) => {
+    app.stub(pagedStubs(BLOCKS, blockRun, 200));
+    await app.goto('/blocks?page=3');
+
+    await expect(page.locator('dd-page-blocks')).toHaveCount(1);
+    const calls = app.callsTo(BLOCKS);
+    expect(calls).toHaveLength(1);
+    // page 3 at 25 a page.
+    expect(calls[0]).toContain('offset=50');
+    await expect(page.locator('.pager')).toContainText('51–75 of 200');
+  });
+
+  test('paging lands in the URL, and Back returns to the page before', async ({ app, page }) => {
+    app.stub(pagedStubs(BLOCKS, blockRun, 200));
+    await app.goto('/blocks');
+    await expect(page.locator('.pager')).toContainText('1–25');
+
+    await page.getByRole('button', { name: 'Older', exact: true }).click();
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('2');
+    await expect(page.locator('.pager')).toContainText('26–50');
+
+    await page.goBack();
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBeNull();
+    await expect(page.locator('.pager')).toContainText('1–25');
+  });
+
+  test('a reload keeps the page of transactions that was being read', async ({ app, page }) => {
+    app.stub(pagedStubs(TXS, txRun, 90));
+    await app.goto('/txs?page=2');
+    await expect(page.locator('.pager')).toContainText('26–50 of 90');
+
+    await page.reload();
+
+    await expect(page.locator('.pager')).toContainText('26–50 of 90');
+    expect(app.callsTo(TXS).at(-1) ?? '').toContain('offset=25');
+
+    // And the other direction on this page too, not only on Blocks: reading the
+    // URL and writing it are two different pieces of wiring, and a control that
+    // reads but does not write is exactly the state this page started in.
+    await page.getByRole('button', { name: 'Older', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('3');
+    await expect(page.locator('.pager')).toContainText('51–75 of 90');
+  });
+
+  /**
+   * The same normalising rule as the three pages of day 10, on a page that was
+   * wired today: unreadable becomes the default, and the correction is a
+   * replace rather than a push -- nobody asked for it, so it must not cost a
+   * press of Back.
+   */
+  test('an unreadable page number is corrected without costing a Back', async ({ app, page }) => {
+    app.stub({ ...pagedStubs(TXS, txRun, 90), ...overviewStubs() });
+    await app.goto('/');
+    await expect(page.locator('.page-title')).toHaveText('Overview');
+
+    await page.evaluate(() => {
+      history.pushState(null, '', '/txs?page=-9');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    await expect(page.locator('dd-page-txs')).toHaveCount(1);
+    await expect.poll(() => new URL(page.url()).search).toBe('');
+
+    await page.goBack();
+
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+  });
+
+  /**
+   * The pages the plan names that have no control at all. They are here so the
+   * claim "nothing was invented for them" is checked rather than asserted: a
+   * later change that adds a parameter to one of these has to come with a
+   * control somebody can actually operate.
+   */
+  test('a page with no control acquires no parameter', async ({ app, page }) => {
+    app.stub({
+      ...shellStubs(),
+      '/api/v1/chainlocks': { body: ok(chainLockReport()) },
+      '/api/v1/block-arrival': { body: ok(blockArrivalReport()) },
+    });
+    await app.goto('/chainlocks');
+
+    await expect(page.locator('dd-page-chainlocks')).toHaveCount(1);
+    expect(new URL(page.url()).search).toBe('');
+    // And no control that a URL ought to have been carrying.
+    await expect(page.locator('dd-page-chainlocks .seg')).toHaveCount(0);
   });
 });
