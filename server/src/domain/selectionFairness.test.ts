@@ -173,11 +173,22 @@ describe('host node counts', () => {
   });
 
   /*
-   * The same rule eligibility already follows: a masternode registered after
-   * every round in the window was not passed over, it was not there. Counting
-   * it would manufacture a starved host out of a new one.
+   * A corrected expectation, not a deleted one.
+   *
+   * This case used to assert 1: the node registered after every round in the
+   * window was dropped, on the argument that counting it would manufacture a
+   * starved host out of a new one. The argument is sound and it is about a
+   * different number -- `neverSelected` and `roundsEligible` are where it
+   * belongs, and both still apply it. Applied HERE it made "how many are
+   * registered now" depend on which window and which profile were being asked
+   * about, so a masternode registered yesterday was missing from the count of
+   * what exists today. The field's own contract says the registry rather than
+   * the sample, and the implementation disagreed with it.
+   *
+   * The two columns answer different questions, which is why there are two: a
+   * host showing 2 registered and 1 selected is being described, not accused.
    */
-  it('does not count a node the window could not have reached', () => {
+  it('counts the whole current registry, including a node the window predates', () => {
     const nodes = new Map([
       ['mn-old', { host: 'host-a', operatorLabel: null, registeredHeight: 100 }],
       ['mn-new', { host: 'host-a', operatorLabel: null, registeredHeight: 9_000 }],
@@ -190,7 +201,13 @@ describe('host node counts', () => {
       nodes
     );
     const host = f.hosts.find((h) => h.host === 'host-a')!;
-    expect(host.currentRegisteredNodes).toBe(1);
+    expect(host.currentRegisteredNodes).toBe(2);
+    // What this window actually drew is the other column, and it did not move.
+    expect(host.nodes).toBe(1);
+    // And the new node is still not accused of being passed over: it was not
+    // there to pass over.
+    expect(f.neverSelected).not.toContain('mn-new');
+    expect(f.nodes.find((n) => n.proTxHash === 'mn-old')?.roundsEligible).toBe(2);
   });
 });
 

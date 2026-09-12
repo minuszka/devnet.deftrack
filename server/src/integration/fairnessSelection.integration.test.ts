@@ -19,6 +19,8 @@ import { connectTestMongo, dropTestMongo, HAVE_MONGO, MONGO_URI, syncIndexes } f
  */
 const PLANTED_IP = '198.51.100.11';
 const QUIET_IP = '198.51.100.12';
+/** Registered after every round below, so no window here could have drawn it. */
+const LATE_IP = '198.51.100.13';
 
 describe.skipIf(!HAVE_MONGO)('fairness selection over HTTP', () => {
   let server: Server;
@@ -41,13 +43,13 @@ describe.skipIf(!HAVE_MONGO)('fairness selection over HTTP', () => {
     await syncIndexes([MasternodeState, QuorumRound]);
 
     const now = new Date();
-    const mn = (index: number, ip: string) => ({
+    const mn = (index: number, ip: string, registeredHeight = 100) => ({
       proTxHash: `${String(index).padStart(2, '0')}${'a'.repeat(62)}`,
       type: 'Regular',
       collateralHash: 'b'.repeat(64),
       collateralIndex: index,
       service: `${ip}:${19_799 + index}`,
-      registeredHeight: 100,
+      registeredHeight,
       lastPaidHeight: 8_200,
       poSePenalty: 0,
       poSeBanHeight: -1,
@@ -60,10 +62,20 @@ describe.skipIf(!HAVE_MONGO)('fairness selection over HTTP', () => {
       lastSeenAt: now,
     });
 
-    // Seven on the busy host, three on a host no round ever draws from.
+    /*
+      * Seven on the busy host, three on a host no round ever draws from, and one
+      * registered at 9_500 -- after every round seeded below.
+      *
+      * That last one is the review's R6 in the fixture: it is in the registry
+      * today, so it belongs in "how many are registered now", and it was not
+      * there when these rounds ran, so it belongs in neither `neverSelected`
+      * nor the selected count. The host used to be missing from the answer
+      * altogether.
+      */
     await MasternodeState.insertMany([
       ...Array.from({ length: 7 }, (_unused, i) => mn(i, PLANTED_IP)),
       ...Array.from({ length: 3 }, (_unused, i) => mn(10 + i, QUIET_IP)),
+      mn(20, LATE_IP, 9_500),
     ]);
 
     const member = (index: number, valid: boolean) => ({
@@ -171,6 +183,8 @@ describe.skipIf(!HAVE_MONGO)('fairness selection over HTTP', () => {
       hosts?: Array<{ host: string; nodes: number; currentRegisteredNodes?: number | null }>;
       totals?: { nodesCounted: number; timesSelected: number; timesInvalid: number };
       nodes?: unknown[];
+      neverSelected?: string[];
+      neverSelectedCount?: number;
     };
   }
 
@@ -215,6 +229,26 @@ describe.skipIf(!HAVE_MONGO)('fairness selection over HTTP', () => {
     expect(quiet?.nodes).toBe(0);
   });
 
+  /**
+   * R6 over the wire. The count is the registry as it is now; the eligibility
+   * filter belongs to the historical ratios and to `neverSelected`, and it
+   * stayed there. Applied to this field it made "how many are registered" an
+   * answer about which window had been asked for.
+   */
+  it('counts a node registered after the window, without accusing it', async () => {
+    const { body } = await fairness('rounds=50&llmqName=llmq_defcon');
+    const late = body.data?.hosts?.find((h) => h.currentRegisteredNodes === 1);
+    expect(late).toBeDefined();
+    // In the registry today, drawn by nothing in this window -- two columns,
+    // two questions.
+    expect(late?.nodes).toBe(0);
+    // And not passed over: it was not there to pass over. A starved host is
+    // what this page exists to find, so manufacturing one is the worst
+    // available failure.
+    expect(body.data?.neverSelected).not.toContain(`20${'a'.repeat(14)}`);
+    expect(body.data?.neverSelectedCount).toBe(5);
+  });
+
   it('carries totals computed over every node', async () => {
     const { body } = await fairness('rounds=50&llmqName=llmq_defcon');
     expect(body.data?.totals?.nodesCounted).toBe(5);
@@ -230,8 +264,11 @@ describe.skipIf(!HAVE_MONGO)('fairness selection over HTTP', () => {
     const { raw, body } = await fairness('rounds=50&llmqName=llmq_defcon');
     expect(raw).not.toContain(PLANTED_IP);
     expect(raw).not.toContain(QUIET_IP);
-    // And the seeded rows really were rendered, or this proves nothing.
-    expect(body.data?.hosts?.length).toBe(2);
+    expect(raw).not.toContain(LATE_IP);
+    // And the seeded rows really were rendered, or this proves nothing. Three
+    // hosts, not two: the third is the one registered after the window, which
+    // was absent from the answer entirely before R6 was fixed.
+    expect(body.data?.hosts?.length).toBe(3);
     expect(body.data?.hosts?.every((h) => h.host.startsWith('host-'))).toBe(true);
   });
 });
