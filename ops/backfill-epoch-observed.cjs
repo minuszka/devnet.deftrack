@@ -51,15 +51,36 @@ function rpcCall(method, params) {
     });
 }
 
+/**
+ * Mongoose pluralises `ServiceEpoch` to `serviceepoches`, not `serviceepochs`:
+ * the -es follows the "ch". The first version of this script guessed the other
+ * spelling, found an empty collection and reported "0 rows to fill" as if the
+ * work were already done -- caught only because the API was answering null for
+ * the same rows in the same minute. A wrong collection name is otherwise
+ * indistinguishable from a finished job, which is the more dangerous of the
+ * two, so the name is checked against what the database actually has.
+ */
+const COLLECTION = 'serviceepoches';
+
+async function collectionOrRefuse(db) {
+  const names = (await db.listCollections().toArray()).map((c) => c.name);
+  if (!names.includes(COLLECTION)) {
+    throw new Error(
+      `collection "${COLLECTION}" does not exist in this database. Available: ${names.sort().join(', ')}`
+    );
+  }
+  return db.collection(COLLECTION);
+}
+
 async function main() {
   const dry = process.argv.includes('--dry-run');
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGODB_URI is not set');
   await mongoose.connect(uri);
   const db = mongoose.connection.db;
+  const epochs = await collectionOrRefuse(db);
 
-  const rows = await db
-    .collection('serviceepochs')
+  const rows = await epochs
     .find({ status: 'committed', commitmentVersion: { $in: [null, undefined] } })
     .sort({ boundaryHeight: 1 })
     .toArray();
@@ -105,7 +126,7 @@ async function main() {
       // epoch-base masternode list, and the collector's resolver refuses a
       // partial answer. An empty list beside a non-empty index list means "not
       // resolved", which the view already distinguishes.
-      await db.collection('serviceepochs').updateOne({ _id: row._id }, { $set: update });
+      await epochs.updateOne({ _id: row._id }, { $set: update });
     }
     filled++;
   }
