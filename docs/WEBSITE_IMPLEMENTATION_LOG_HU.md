@@ -1321,6 +1321,101 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 13. nap – Függőségek
+
+```text
+Nap / dátum / implementáló: 13 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day13-dependencies @ 3e48551 (main, a 12. nap után)
+Napi feladat és előfeltételei: F13. Előfeltétel: nincs.
+Auditpontok: F13 (részben — lásd lent)
+```
+
+**Az audit reprodukálva, előtte:** `npm audit --json` → **3 moderate**, mind
+`qs`, `fixAvailable: true`. A lánc rögzítve (`npm explain qs`):
+
+```
+server  express@^4.21.2  →  express@4.22.2
+                             ├── body-parser@~1.20.5 → 1.20.6 → qs@~6.15.1 → 6.15.3
+                             └── qs@~6.15.1                                → 6.15.3
+```
+
+Az advisoryk sávja `qs 2.2.5 – 6.15.3`; a javított verzió a **6.16.0**.
+
+**Két útból az egyik lezárható, manifest nélkül.** A `body-parser@1.20.8` már
+`qs@~6.16.0`-t deklarál, és ezt az express saját `~1.20.5` tartománya **eleve
+megengedi**. Vagyis a legszűkebb szülőcsomag-frissítés egy **lockfile-változás**:
+nincs `package.json` módosítás, nincs override, nincs megsértett tartomány.
+
+**Mérve, nem állítva:** a régi lockfile-lal `npm audit` **3 moderate**-et jelent
+és nevesíti a `body-parser`-t; az újjal **2 moderate**-et, a `body-parser` eltűnt
+a listáról. Ugyanaz a parancs, ugyanaz a fa, csak a lockfile más.
+
+**Ami marad, és miért.** A maradék kettő az **express saját, közvetlen**
+`qs@~6.15.1` függése. A `4.22.2` az utolsó express 4.x, és a 4-es vonalon
+**semmi** nem lép le erről a pinről — az egyetlen felfelé út az **express 5**,
+ami framework-major, és amit a munkaterv kifejezetten nem kér.
+
+**A CI-ben dokumentált korábbi döntést újraellenőriztem, nem megismételtem.**
+A komment azt rögzítette, hogy egy `overrides` bejegyzést **kipróbáltak és
+visszavontak**, mert az „megsértene egy deklarált tartományt egy olyan
+sérülékenység miatt, amink nincs". Ennek az érvelésnek az **egyik premisszája
+megváltozott** — a body-parser már nincs a listán —, a másik viszont áll, sőt
+most jobban alátámasztott:
+
+- `app.set('query parser', 'simple')` (`server/src/index.ts:66`) → az express a
+  query stringhez **nem** hívja a qs-t;
+- `express.urlencoded` **sehol** nincs felcsatolva, csak `express.json` →
+  a body-parser sem jut el a qs-hez.
+
+Vagyis egyik advisory kódútja sem érhető el ezen az API-n. Ez **elfogadott
+moderate, nevesített úttal — nem javított**.
+
+**A high/critical kapu nem gyengült:** a `npm audit --audit-level=high` sor
+változatlan. A CI-komment számai frissültek (három helyett kettő, és a
+maradék út megnevezve), a korábbi döntés maga **bent maradt**, nem töröltem ki
+a probléma helyett.
+
+**Érintett fájlok:** `package-lock.json` (csak a body-parser-ág),
+`.github/workflows/ci.yml` (komment). `package.json` **egyik workspace-ben sem**
+változott. `npm audit fix --force` nem futott, a lockfile nem lett törölve,
+override nem került be.
+
+**Parancsok, exit-kódok — tiszta checkoutból:**
+
+| Kapu | Eredmény |
+|---|---|
+| `npm ci` (lockfile-egzakt) | exit 0; a fa: `body-parser@1.20.8` → `qs@6.16.0`, `express@4.22.2` → `qs@6.15.3` |
+| `npm audit` előtte / utána | **3 moderate → 2 moderate**; `npm audit --audit-level=high` exit 0 |
+| K1 | mind exit 0 — 844 szerver + 154 kliens unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — 119 böngészőteszt, egy workerrel |
+| K3 | exit 0 — 14 fájl, 90 integrációs teszt **valódi HTTP-vel** az expressen és a body-parseren át, query stringekkel és JSON bodykkal |
+
+A K3 itt nem formalitás: pontosan azt a két csomagot gyakorolja, amelyek
+verziója változott.
+
+**Nyitott probléma / következő lépés:**
+
+- **F13 nem zárható le**, a terv saját feltétele szerint: csak javított láncnál
+  zárható. Két moderate marad, **elfogadott** státusszal, express 5-ig.
+- **Egy őrszem hiányzik, és ma nem tettem be.** Az elfogadás teljes indoklása
+  két konfigurációs tényen áll (`query parser` = `simple`, nincs `urlencoded`),
+  és ezt **semmi nem védi**: ha valaki átkapcsol az extended parserre, az
+  elfogadott kockázat csendben elveszti az alapját. Egy szerveroldali teszt
+  megfogná, de a mai fájlkör manifestekre, lockfile-ra és CI-kommentre szól.
+  A **20. napi regressziós körbe** viszem.
+- Automatikus frissítési PR-ek (Dependabot/Renovate) az audit javaslatában
+  szerepelnek; ma nem vezettem be, mert az a repo-szintű CI-politika része és
+  nem ennek a napnak a fájlköre.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+```text
+Commit(ok), végső SHA: 5b8b5a7
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT (F13 részben — elfogadott maradék)
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -1656,7 +1751,7 @@ Napi státusz: ELLENŐRZÖTT
 | F10 | 14 | Nyitott | — | — |
 | F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni |
 | F12 | 12 | `1828831` | E2E: 10 eset — egy h1 oldalanként, szekciók h2-ben, fókusz navigációkor és Backnél, fókusz megmaradása poll és szűrőváltás alatt, Back a szűrő fölött nem mozdítja, skip link kezelővel és láthatóan, teljes billentyűzetes útvonal, caption a táblázatában | Kliensoldalon lezárva. Számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás; a staking nézetváltóján továbbra sincs `aria-pressed` |
-| F13 | 13 | Nyitott | — | — |
+| F13 | 13 | `5b8b5a7` | `npm audit` előtte/utána mérve: **3 moderate → 2**, a `body-parser` lekerült a listáról; `npm ci`, K1, K2, K3 mind exit 0 | **Részben — elfogadott maradék.** A body-parser útja lockfile-frissítéssel lezárva, manifest és override nélkül. A maradék kettő az express saját `qs@~6.15.1` pinje; a 4-es vonal nem lép le róla, az egyetlen felfelé út az express 5 (framework-major, a terv nem kéri). Nem elérhető kódút: `query parser` = `simple`, `urlencoded` nincs. **Hiányzó őrszem:** ezt a két konfigurációs tényt semmi nem védi — 20. nap |
 | F14 | 12 | `1828831` | unit: a tényleges gombpár 4,5:1 mindkét témában + a régi kompozíció mérésként rögzítve; E2E: a gomb valódi számított szín-párja a lapon, mindkét témában | Lezárva. Saját `--btn-danger-bg`/`--btn-danger-fg` pár (7,29:1 sötét, 5,61:1 világos); a `--crit` szövegszínként változatlan, a keret is az maradt |
 | R7 (nem audit) | **J2** | `4261e06` | unit: `draftIdentity.test.ts` 12 eset; E2E: változatlan retry ugyanaz a kulcs, megváltozott payload új kulcs, és egy draftszerkesztés nem nyúl a futam még tartozó kulcsához | Lezárva. A kliens kanonikus formája szándékosan azonos a szerverével, így a kettő nem tud másképp gondolkodni arról, mi „ugyanaz a kérés” |
 

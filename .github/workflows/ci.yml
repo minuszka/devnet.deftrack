@@ -53,13 +53,24 @@ jobs:
 
       # Fails on high and critical, prints everything else.
       #
-      # The three moderate findings here are all `qs`, reached through
-      # body-parser's `~6.15.1` pin, and this server is not on that code path at
-      # all: there is no express.urlencoded and the query parser is `simple`.
-      # An `overrides` entry would violate a declared range to fix a
-      # vulnerability we do not have -- tried, and reverted. So moderate is
-      # reported and high is refused, rather than the whole thing being waved
-      # through with `|| true`.
+      # Two moderate findings, both `qs`, and both reached only through
+      # express's OWN direct `~6.15.1` pin. It was three: body-parser moved to
+      # `qs@~6.16.0` in 1.20.8, which express's `~1.20.5` already allows, so a
+      # lockfile update took that path out with no manifest change and no
+      # override. 4.22.2 is the last express 4.x and nothing in the 4 line ever
+      # moves off `~6.15.1`; the only upstream fix is express 5, a framework
+      # major this work does not require.
+      #
+      # The earlier decision stands, re-checked rather than repeated: an
+      # `overrides` entry would violate a range express itself declares, to fix
+      # a vulnerability this server does not have. Neither advisory is
+      # reachable here -- `app.set('query parser', 'simple')` keeps qs out of
+      # query parsing, and nothing mounts `express.urlencoded`, so no request
+      # to this API reaches qs at all. That is an accepted moderate with a
+      # named path, not a fixed one.
+      #
+      # So moderate is reported and high is refused, rather than the whole
+      # thing being waved through with `|| true`.
       - name: Audit dependencies
         run: |
           npm audit || true
