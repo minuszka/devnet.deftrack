@@ -4,6 +4,7 @@ import {
   type AdminSession,
   type DryRunPlan,
   type RecoveryReportView,
+  type ScenarioFieldSpec,
   type ScenarioSummary,
   type SimulationCapabilities,
   type SimulationControlRun,
@@ -28,21 +29,6 @@ type Mode = 'dry-run' | 'live';
  * The dashboard owns the run and refreshes it; this component renders what it
  * is given and reports what the server answered.
  */
-
-/**
- * The panel no longer keeps its own table of parameter defaults.
- *
- * It kept one, maintained separately from the schema that validates it, and it
- * drifted exactly as such a table does: `dsl-fault` had no entry at all, so
- * selecting it put `{}` in the field -- three required fields short, refused by
- * the server, with nothing here saying why. The template now comes from the
- * module that owns the schema, and a scenario this server does not describe
- * gets no template rather than an empty one that looks runnable.
- */
-function templateJson(descriptor: ScenarioSummary | null): string {
-  if (descriptor?.parameterTemplate === undefined) return '';
-  return JSON.stringify(descriptor.parameterTemplate, null, 2);
-}
 
 /** What the panel may offer when the server has not said. Deliberately nothing. */
 const NO_CAPABILITIES: SimulationCapabilities = {
@@ -95,7 +81,10 @@ export class DdSimulationControl extends LitElement {
     _network: { state: true },
     _mode: { state: true },
     _seed: { state: true },
-    _parameters: { state: true },
+    _params: { state: true },
+    _paramsText: { state: true },
+    _paramsError: { state: true },
+    _advanced: { state: true },
     _riskAcknowledged: { state: true },
     _startAcknowledged: { state: true },
     _busy: { state: true },
@@ -129,8 +118,7 @@ export class DdSimulationControl extends LitElement {
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
   private _seed = newSeed();
-  private _parameters = '';
-  /** Which scenario the parameter field was last filled from. */
+  /** Which scenario the parameter object was last filled from. */
   private _seededScenarioId: string | null = null;
 
   private _riskAcknowledged = false;
@@ -168,6 +156,16 @@ export class DdSimulationControl extends LitElement {
       label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: var(--fs-sm); }
       label > span, .field-label { font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
       .parameters { grid-column: 1 / -1; }
+      .scenario-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); }
+      .scenario-fields label.wide { grid-column: 1 / -1; }
+      .field-range { color: var(--ink-3); font-family: var(--font-mono); font-size: var(--fs-xs); }
+      .field-help { color: var(--ink-2); font-size: var(--fs-xs); line-height: 1.45; }
+      .unit, .optional { color: var(--ink-3); font-style: normal; text-transform: none; letter-spacing: 0; }
+      .seed-row { display: flex; gap: var(--sp-2); align-items: stretch; }
+      .seed-row input { flex: 1; min-width: 0; }
+      .disclosure { background: none; border: none; padding: 0; color: var(--ink-2); font-family: var(--font-mono); font-size: var(--fs-xs); letter-spacing: .09em; text-transform: uppercase; cursor: pointer; }
+      .disclosure:hover { color: var(--ink); }
+      @media (max-width: 900px) { .scenario-fields { grid-template-columns: 1fr; } }
       .notes { display: flex; flex-direction: column; gap: var(--sp-2); }
       textarea { width: 100%; min-height: 156px; resize: vertical; line-height: 1.5; }
       .form-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding: 0 var(--sp-4) var(--sp-4); }
@@ -246,8 +244,106 @@ export class DdSimulationControl extends LitElement {
     const descriptor = this._descriptor;
     if (descriptor === null || this._seededScenarioId === descriptor.scenarioId) return;
     this._seededScenarioId = descriptor.scenarioId;
-    this._parameters = templateJson(descriptor);
+    this._params = { ...(descriptor.parameterTemplate ?? {}) };
+    this._paramsText = null;
+    this._paramsError = '';
   }
+
+  /* ── the canonical parameter object, and its two faces ──────────────────── */
+
+  /**
+   * ONE object is the truth, and both the form and the JSON render from it.
+   *
+   * The panel used to hold the parameters as a string of JSON, which made the
+   * textarea the only editor there could ever be: a form field would have had
+   * to parse, edit and reserialise on every keystroke, and an unparseable
+   * moment in the middle would have destroyed what the reader had typed.
+   */
+  private _params: Record<string, unknown> = {};
+
+  /**
+   * The Advanced editor's raw text, while it differs from the canonical object.
+   *
+   * `null` means "show what the object says". A string means somebody is
+   * editing JSON by hand, and the text is kept verbatim even when it does not
+   * parse -- losing what a person typed because it was briefly invalid is the
+   * behaviour this replaces.
+   */
+  private _paramsText: string | null = null;
+
+  /** Non-empty while the Advanced text cannot be read. Blocks Prepare. */
+  private _paramsError = '';
+
+  /** The Advanced JSON view is collapsed until somebody asks for it. */
+  private _advanced = false;
+
+  /** What the textarea shows: the edit in progress, or the object. */
+  private _paramsJson(): string {
+    return this._paramsText ?? JSON.stringify(this._params, null, 2);
+  }
+
+  /** The fields this scenario's descriptor describes, or none. */
+  private _fields(): ScenarioFieldSpec[] {
+    return this._descriptor?.parameterFields ?? [];
+  }
+
+  /** A field is shown only when the field it depends on has an admitting value. */
+  private _fieldApplies(field: ScenarioFieldSpec): boolean {
+    if (field.onlyWhen === undefined) return true;
+    return field.onlyWhen.values.includes(String(this._params[field.onlyWhen.field] ?? ''));
+  }
+
+  /**
+   * A form edit. The canonical object moves, and the JSON view follows.
+   *
+   * Setting a value also settles every field that depends on it, because the
+   * server refuses both halves of getting that wrong: the delay kinds REQUIRE
+   * `param` and the others REFUSE it, so a form that left the old value behind
+   * would send a request that cannot be accepted, for a reason the reader
+   * cannot see on the screen.
+   */
+  private _setParam(name: string, value: unknown): void {
+    const next: Record<string, unknown> = { ...this._params };
+    if (value === undefined || value === '') delete next[name];
+    else next[name] = value;
+
+    for (const field of this._fields()) {
+      if (field.onlyWhen?.field !== name) continue;
+      if (field.onlyWhen.values.includes(String(value))) {
+        if (next[field.name] === undefined) next[field.name] = field.min ?? 1;
+      } else {
+        delete next[field.name];
+      }
+    }
+
+    this._params = next;
+    // The object moved, so the JSON view is no longer somebody's edit.
+    this._paramsText = null;
+    this._paramsError = '';
+    this._draftChanged();
+  }
+
+  /**
+   * An Advanced-view edit. The text is kept as typed; the object follows only
+   * when the text can be read.
+   */
+  private _setParamsJson(text: string): void {
+    this._paramsText = text;
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('Parameters must be a JSON object.');
+      }
+      this._params = parsed as Record<string, unknown>;
+      this._paramsError = '';
+    } catch (error) {
+      // Deliberately not cleared: an unreadable draft must not be able to start
+      // a run, and it must not quietly revert to the last good object either.
+      this._paramsError = error instanceof Error ? error.message : 'That is not valid JSON.';
+    }
+    this._draftChanged();
+  }
+
 
   /**
    * The run these controls may act on: the one held, and only while it is the
@@ -359,6 +455,18 @@ export class DdSimulationControl extends LitElement {
     this._draftChanged();
   }
 
+  /**
+   * A fresh seed for the draft.
+   *
+   * The seed scopes the create idempotency key along with the rest of the
+   * request, so a new seed is a genuinely new request -- which is what this
+   * button is for, and why it is offered for a draft and nowhere else.
+   */
+  private _newSeed(): void {
+    this._seed = newSeed();
+    this._draftChanged();
+  }
+
   private _prepare(event: SubmitEvent): void {
     event.preventDefault();
     void this._prepareRun();
@@ -368,15 +476,14 @@ export class DdSimulationControl extends LitElement {
     const session = this.session;
     const descriptor = this._descriptor;
     if (session === null || descriptor === null) return;
-    let parameters: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(this._parameters);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('Parameters must be a JSON object.');
-      parameters = parsed as Record<string, unknown>;
-    } catch (error) {
-      this._message = errorMessage(error);
+    // An unreadable Advanced edit stops here rather than being silently
+    // replaced by the last object that did parse. The server would refuse the
+    // difference anyway; refusing it on the screen says which one is wrong.
+    if (this._paramsError !== '') {
+      this._message = `The parameters could not be read: ${this._paramsError}`;
       return;
     }
+    const parameters: Record<string, unknown> = { ...this._params };
     /*
      * A draft has no run key yet, so its own identity scopes the retry -- and
      * that identity is the whole request, not the seed it happens to carry.
@@ -567,8 +674,17 @@ export class DdSimulationControl extends LitElement {
               <option value="live" ?disabled=${!this._liveOffered}>Live · regtest lab</option>
             </select>
           </label>
-          <label><span>Deterministic seed</span><input type="text" .value=${this._seed} @input=${(event: Event) => { this._seed = (event.target as HTMLInputElement).value; this._draftChanged(); }} ?disabled=${this._busy} required /></label>
-          <label class="parameters"><span>Typed scenario parameters (JSON)</span><textarea .value=${this._parameters} @input=${(event: Event) => { this._parameters = (event.target as HTMLTextAreaElement).value; this._draftChanged(); }} ?disabled=${this._busy} spellcheck="false" required></textarea></label>
+          <label class="seed"><span>Deterministic seed</span>
+            <span class="seed-row">
+              <input type="text" .value=${this._seed} @input=${(event: Event) => { this._seed = (event.target as HTMLInputElement).value; this._draftChanged(); }} ?disabled=${this._busy} required />
+              <!-- Only a draft may be reseeded. A run that already exists has
+                   its seed recorded in its own metadata, and reseeding would
+                   describe it wrongly rather than change it. -->
+              <button type="button" class="btn" @click=${this._newSeed} ?disabled=${this._busy} title="Generate a new seed for this draft">New</button>
+            </span>
+          </label>
+          ${this._parameterForm()}
+          ${this._parameterJsonView()}
           ${this._parameterNotes(descriptor)}
         </div>
         <div class="form-foot">
@@ -585,6 +701,138 @@ export class DdSimulationControl extends LitElement {
           </button>
         </div>
       </form>
+    `;
+  }
+
+  /**
+   * The scenario's own parameters, as fields.
+   *
+   * Drawn from what the server's descriptor says about them, so the bounds on
+   * screen are the bounds the validator enforces -- they are not a second copy
+   * kept here, and `scenarioFields.test.ts` proves the server's table against
+   * `parseScenarioRequest` itself. A scenario the server describes no fields
+   * for gets the JSON view and no invented inputs.
+   */
+  private _parameterForm(): TemplateResult {
+    const fields = this._fields().filter((field) => this._fieldApplies(field));
+    if (fields.length === 0) {
+      return html`<div class="parameters notice">
+        This server describes no form fields for
+        <b class="mono">${this._descriptor?.scenarioId ?? 'this scenario'}</b>. Use the JSON below —
+        the server validates it either way.
+      </div>`;
+    }
+    return html`<div class="parameters scenario-fields">${fields.map((f) => this._parameterField(f))}</div>`;
+  }
+
+  private _parameterField(field: ScenarioFieldSpec): TemplateResult {
+    const value = this._params[field.name];
+    const id = `param-${field.name}`;
+    if (field.kind === 'enum') {
+      return html`
+        <label for=${id}>
+          <span>${field.label}</span>
+          <select
+            id=${id}
+            .value=${String(value ?? '')}
+            @change=${(e: Event) => this._setParam(field.name, (e.target as HTMLSelectElement).value)}
+            ?disabled=${this._busy}
+          >
+            ${(field.values ?? []).map((v: string) => html`<option value=${v}>${v}</option>`)}
+          </select>
+          ${field.help ? html`<small class="field-help">${field.help}</small>` : nothing}
+        </label>
+      `;
+    }
+    if (field.kind === 'target-ids') {
+      const list = Array.isArray(value) ? (value as string[]).join(', ') : '';
+      return html`
+        <label for=${id} class="wide">
+          <span>${field.label} <em class="optional">optional</em></span>
+          <input
+            id=${id}
+            type="text"
+            .value=${list}
+            placeholder="lab-mn-1, lab-mn-2"
+            @input=${(e: Event) => {
+              const raw = (e.target as HTMLInputElement).value.trim();
+              const ids = raw === '' ? undefined : raw.split(',').map((s) => s.trim()).filter((s) => s !== '');
+              this._setParam(field.name, ids);
+            }}
+            ?disabled=${this._busy}
+          />
+          ${field.help ? html`<small class="field-help">${field.help}</small>` : nothing}
+        </label>
+      `;
+    }
+    return html`
+      <label for=${id}>
+        <span>${field.label}${field.unit ? html` <em class="unit">${field.unit}</em>` : nothing}</span>
+        <input
+          id=${id}
+          type="number"
+          inputmode="numeric"
+          step="1"
+          min=${field.min ?? nothing}
+          max=${field.max ?? nothing}
+          .value=${value === undefined ? '' : String(value)}
+          @input=${(e: Event) => {
+            const raw = (e.target as HTMLInputElement).value;
+            // An empty box is "not set", not zero. Zero is a value the server
+            // refuses for every one of these, and inventing it here would turn
+            // a half-typed number into a refused request.
+            this._setParam(field.name, raw === '' ? undefined : Number(raw));
+          }}
+          ?disabled=${this._busy}
+          required=${field.required ? true : nothing}
+        />
+        <small class="field-range"
+          >${field.min}–${field.max}${field.unit ? ` ${field.unit}` : ''}</small
+        >
+        ${field.help ? html`<small class="field-help">${field.help}</small>` : nothing}
+      </label>
+    `;
+  }
+
+  /**
+   * The same object, as JSON, behind a disclosure.
+   *
+   * Kept because it is the only way to express something the form has no field
+   * for, and because an operator reading a refusal from the server wants to see
+   * exactly what was sent. It is not the default view any more: a JSON blob is
+   * not a form, and it was the whole of this panel's parameter editing.
+   */
+  private _parameterJsonView(): TemplateResult {
+    return html`
+      <div class="parameters">
+        <button
+          type="button"
+          class="disclosure"
+          aria-expanded=${this._advanced ? 'true' : 'false'}
+          @click=${() => {
+            this._advanced = !this._advanced;
+          }}
+        >
+          ${this._advanced ? '▾' : '▸'} Advanced: the parameters as JSON
+        </button>
+        ${this._advanced
+          ? html`
+              <textarea
+                .value=${this._paramsJson()}
+                @input=${(e: Event) => this._setParamsJson((e.target as HTMLTextAreaElement).value)}
+                ?disabled=${this._busy}
+                spellcheck="false"
+                aria-label="Scenario parameters as JSON"
+              ></textarea>
+            `
+          : nothing}
+        ${this._paramsError
+          ? html`<div class="alert" role="alert">
+              The parameters cannot be read: ${this._paramsError}. What you typed is kept; nothing
+              will be prepared until it parses.
+            </div>`
+          : nothing}
+      </div>
     `;
   }
 
@@ -721,6 +969,11 @@ export class DdSimulationControl extends LitElement {
         <div class="card-head"><h3 class="card-title">3. Approval and recovery</h3><div class="page-sub mono">${run.state.status}</div></div>
         <div class="approval">
           <div class="state-line run-state">Run <strong class="mono">${run.runKey}</strong> is <strong>${run.state.status}</strong>${run.state.live ? ' (live lab run)' : ' (dry-run)'}.</div>
+          <!-- The saved seed, from the run rather than from the form beside it.
+               The draft above is a different thing with a different seed, and
+               reading this one off that one is how a reproduction is written
+               down wrongly. -->
+          <div class="state-line">Created from seed <strong class="mono">${run.metadata.seed}</strong>, scenario <strong class="mono">${run.metadata.scenarioId}</strong> v${run.metadata.scenarioVersion}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}
           ${this._safetyLine(run)}
           ${run.state.status === 'scheduled'

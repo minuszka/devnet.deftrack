@@ -53,7 +53,15 @@ export interface StubResponse {
 }
 
 /** A stub is fixed, or computed from the request URL when the query matters. */
-export type StubHandler = StubResponse | ((url: URL) => StubResponse);
+/**
+ * A stub, or a function that decides from the request.
+ *
+ * The method is passed as well as the URL because one path genuinely serves two
+ * things: `/api/v1/admin/simulations/runs` is the run LIST on GET and the
+ * create on POST, and a stub that could only see the URL had to answer one of
+ * them wrongly.
+ */
+export type StubHandler = StubResponse | ((url: URL, method: string) => StubResponse);
 
 /**
  * Keyed by pathname; the query string is matched inside a handler, not here.
@@ -185,7 +193,7 @@ export class AppHarness {
           await this.safeAbort(route);
           return;
         }
-        const stub = typeof handler === 'function' ? handler(url) : handler;
+        const stub = typeof handler === 'function' ? handler(url, request.method()) : handler;
         if (stub.delayMs !== undefined && stub.delayMs > 0) {
           await new Promise((resolve) => setTimeout(resolve, stub.delayMs));
         }

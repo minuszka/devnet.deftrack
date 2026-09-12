@@ -438,8 +438,9 @@ test.describe('run status', () => {
     await prepare.click();
     await expect.poll(() => app.requestsTo('/api/v1/admin/simulations/runs', 'POST').length).toBe(2);
 
-    // Now one field moves, and nothing else -- not the seed.
-    await page.locator('textarea').fill('{"count":2,"durationSeconds":60}');
+    // Now one field moves, and nothing else -- not the seed. Through the form,
+    // which is how a draft is edited since day 15.
+    await page.locator('#param-count').fill('2');
     await prepare.click();
     await expect.poll(() => app.requestsTo('/api/v1/admin/simulations/runs', 'POST').length).toBe(3);
 
@@ -465,7 +466,7 @@ test.describe('run status', () => {
     await abort.click();
     await expect(page.locator('.alert[role="alert"]').first()).toBeVisible();
 
-    await page.locator('textarea').fill('{"count":3,"durationSeconds":120}');
+    await page.locator('#param-count').fill('3');
     await abort.click();
 
     const calls = app.requestsTo(`/api/v1/admin/simulations/runs/${RUN_A}/abort`, 'POST');

@@ -61,6 +61,14 @@ describe.skipIf(!HAVE_MONGO)('the admin scenario catalogue over HTTP', () => {
         scenarioId: string;
         parameterTemplate?: Record<string, unknown>;
         templateNeedsTargetId?: boolean;
+        parameterFields?: Array<{
+          name: string;
+          kind: string;
+          min?: number;
+          max?: number;
+          values?: string[];
+          onlyWhen?: { field: string; values: string[] };
+        }>;
       }>;
       capabilities?: { liveExecutorConfigured: boolean; liveNetworks: string[] };
     };
@@ -96,6 +104,37 @@ describe.skipIf(!HAVE_MONGO)('the admin scenario catalogue over HTTP', () => {
 
     const dsl = items.find((item) => item.scenarioId === 'dsl-fault');
     expect(dsl?.parameterTemplate).toEqual({ faultKind: 'response-drop', count: 1, epochs: 1 });
+  });
+
+  /**
+   * Day 15's descriptor extension, over the wire rather than from the module.
+   *
+   * The bounds themselves are proven against the validator in
+   * `scenarioFields.test.ts`; what only an HTTP read can show is that the route
+   * actually serves them, that the serialised shape survives the envelope, and
+   * that a scenario with no form is served WITHOUT the key rather than with an
+   * empty list -- because the panel reads an empty list as "this scenario takes
+   * no parameters" and a missing key as "draw the JSON view".
+   */
+  it('serves form fields for exactly the four scenarios that have them', async () => {
+    const { body } = await catalogue();
+    const items = body.data?.items ?? [];
+
+    const withFields = items.filter((item) => item.parameterFields !== undefined).map((item) => item.scenarioId);
+    expect(withFields.sort()).toEqual(['dsl-fault', 'mn-stop', 'quorum-member-outage', 'staker-stop']);
+
+    const stakers = items.find((item) => item.scenarioId === 'staker-stop');
+    const stakerCount = stakers?.parameterFields?.find((field) => field.name === 'count');
+    expect(stakerCount).toMatchObject({ kind: 'integer', min: 1, max: 5 });
+
+    const dsl = items.find((item) => item.scenarioId === 'dsl-fault');
+    const param = dsl?.parameterFields?.find((field) => field.name === 'param');
+    expect(param?.onlyWhen).toEqual({ field: 'faultKind', values: ['response-delay', 'report-delay'] });
+
+    // Absent, not empty, for a scenario the panel has no form for yet.
+    const host = items.find((item) => item.scenarioId === 'host-outage');
+    expect(host).toBeDefined();
+    expect('parameterFields' in (host ?? {})).toBe(false);
   });
 
   it('advertises no live network when no executor is configured', async () => {

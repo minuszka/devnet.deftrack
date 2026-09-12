@@ -58,9 +58,58 @@ export interface ScenarioDescriptor {
  * satisfying the schema and naming a registered target are different questions,
  * answered in different places.
  */
+/**
+ * What a scenario's parameters look like ON A FORM.
+ *
+ * Display metadata, not a second validator. The server validates every request
+ * through `parseScenarioRequest` exactly as before; this only lets the panel
+ * draw a number field with its real bounds and its unit instead of handing an
+ * operator a JSON blob and letting the server refuse it afterwards.
+ *
+ * It is declared beside the schema rather than derived from it, because
+ * introspecting zod is fragile across versions -- and a hand-maintained table
+ * beside a validator is exactly the thing this project has already watched
+ * drift once (the panel's own parameter defaults, which had no entry for
+ * `dsl-fault` at all). So `scenarioFields.test.ts` PROBES the validator at
+ * every declared boundary: a min that the schema rejects, a max it accepts one
+ * past, an enum value it does not know, or a field the schema does not have all
+ * fail there. The table cannot drift without a red test.
+ */
+export type ScenarioFieldKind = 'integer' | 'enum' | 'target-ids';
+
+export interface ScenarioField {
+  name: string;
+  label: string;
+  kind: ScenarioFieldKind;
+  /** Required unless the schema marks it optional. */
+  required: boolean;
+  /** Integer fields: inclusive bounds, as the schema states them. */
+  min?: number;
+  max?: number;
+  /** Shown beside the input; purely for the reader. */
+  unit?: string;
+  /** Enum fields: the values the schema admits, in the schema's order. */
+  values?: readonly string[];
+  /** One line under the field. Says what the number MEANS, not what it is. */
+  help?: string;
+  /**
+   * The field is only meaningful when another field has one of these values.
+   * `dsl-fault.param` is the only one so far: the delay kinds require it and
+   * the others refuse it outright, so a form that always shows it is offering
+   * a value the server will reject.
+   */
+  onlyWhen?: { field: string; values: readonly string[] };
+}
+
 export interface ScenarioCatalogueEntry extends ScenarioDescriptor {
   parameterTemplate: Record<string, unknown>;
   templateNeedsTargetId: boolean;
+  /**
+   * The form fields for this scenario, in the order they should be shown.
+   * Absent for a scenario the panel has no form for yet, which is the honest
+   * reading: it falls back to the JSON view rather than inventing a field.
+   */
+  parameterFields?: ScenarioField[];
 }
 
 /**

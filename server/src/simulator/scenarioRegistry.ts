@@ -6,6 +6,7 @@ import {
   SIMULATION_SCENARIO_IDS,
   type ScenarioCatalogueEntry,
   type ScenarioDescriptor,
+  type ScenarioField,
   type SimulationScenarioId,
 } from './scenarioTypes.js';
 
@@ -306,6 +307,133 @@ export const SCENARIO_PARAMETER_TEMPLATES: Readonly<
   'dsl-fault': { faultKind: 'response-drop', count: 1, epochs: 1 },
 };
 
+/**
+ * The four scenarios day 15 gives a form to, field by field.
+ *
+ * Every bound here is the schema's own bound, and `scenarioFields.test.ts`
+ * proves it by pushing values at `parseScenarioRequest` -- one inside each
+ * bound, one outside -- rather than by reading this table back to itself.
+ *
+ * The scenarios that are absent are absent on purpose. They take a target
+ * chooser that does not exist yet (day 16), and a number field that silently
+ * dropped `anchorTargetId` would produce a request the registry cannot
+ * resolve. Those keep the JSON view until there is something real to draw.
+ */
+const durationField = (help: string): ScenarioField => ({
+  name: 'durationSeconds',
+  label: 'Duration',
+  kind: 'integer',
+  required: true,
+  min: 5,
+  max: SCENARIO_LIMITS.maxDurationSeconds,
+  unit: 'seconds',
+  help,
+});
+
+const targetIdsField: ScenarioField = {
+  name: 'targetIds',
+  label: 'Explicit target ids',
+  kind: 'target-ids',
+  required: false,
+  help: 'Leave empty to let the server choose. If given, the list must be unique and exactly as long as the count.',
+};
+
+export const SCENARIO_FIELDS: Readonly<Partial<Record<SimulationScenarioId, ScenarioField[]>>> = {
+  'mn-stop': [
+    {
+      name: 'count',
+      label: 'Masternodes to stop',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: SCENARIO_LIMITS.maxTargets,
+      unit: 'nodes',
+    },
+    durationField(
+      `At most ${MAX_OUTAGE_BLOCKS} blocks. An unanchored outage this short cannot be guaranteed to miss a DKG contribution window -- that is what anchoring is for, not a longer outage.`
+    ),
+    targetIdsField,
+  ],
+  'staker-stop': [
+    {
+      name: 'count',
+      label: 'Stakers to stop',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      // Lower than every other count, and deliberately: stopping stakers stops
+      // block production, and the chain only advances while something stakes.
+      max: SCENARIO_LIMITS.maxStakers,
+      unit: 'stakers',
+      help: 'Capped well below the masternode count: these are the daemons that produce blocks.',
+    },
+    durationField('At most six blocks, measured the same way as every other outage.'),
+    targetIdsField,
+  ],
+  'quorum-member-outage': [
+    {
+      name: 'count',
+      label: 'Members to stop',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: SCENARIO_LIMITS.maxTargets,
+      unit: 'members',
+    },
+    {
+      name: 'phase',
+      label: 'Around which activity',
+      kind: 'enum',
+      required: true,
+      values: ['dkg', 'chainlock'],
+      help: 'Which schedule the outage is aimed at. A member absent around DKG is punished; one absent around signing is not, and that difference is the measurement.',
+    },
+    durationField('At most six blocks.'),
+    targetIdsField,
+  ],
+  'dsl-fault': [
+    {
+      name: 'faultKind',
+      label: 'Fault',
+      kind: 'enum',
+      required: true,
+      values: DSL_FAULT_KINDS,
+      help: 'Spelled as the node spells it. Nothing is stopped: the node withholds or delays its own Sentinel traffic.',
+    },
+    {
+      name: 'count',
+      label: 'Masternodes affected',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: SCENARIO_LIMITS.maxTargets,
+      unit: 'nodes',
+    },
+    {
+      name: 'epochs',
+      label: 'Epochs',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: DSL_FAULT_LIMITS.maxEpochs,
+      unit: 'epochs',
+      help: `One epoch is ${DSL_EPOCH_BLOCKS} blocks. Kept under the node's own suspend threshold, so a single run cannot suspend a target.`,
+    },
+    {
+      name: 'param',
+      label: 'Delay',
+      kind: 'integer',
+      required: true,
+      min: 1,
+      max: DSL_FAULT_LIMITS.maxDelayBlocks,
+      unit: 'blocks',
+      help: 'Only the delay kinds take this, and they require it: the node refuses a delay of zero blocks as not a delay.',
+      onlyWhen: { field: 'faultKind', values: ['response-delay', 'report-delay'] },
+    },
+    targetIdsField,
+  ],
+};
+
 export const SIMULATION_PRESET_IDS = [
   'dkg-minus-16',
   'dkg-minus-17',
@@ -382,9 +510,11 @@ export function parseScenarioRequest(input: unknown): SimulationScenarioRequest 
 export function scenarioDescriptors(): ScenarioCatalogueEntry[] {
   return SIMULATION_SCENARIO_IDS.map((id) => {
     const parameterTemplate = { ...SCENARIO_PARAMETER_TEMPLATES[id] };
+    const parameterFields = SCENARIO_FIELDS[id];
     return {
       ...SCENARIO_REGISTRY[id],
       parameterTemplate,
+      ...(parameterFields === undefined ? {} : { parameterFields }),
       // Whether the operator has to replace something before this can resolve.
       // Said by the server rather than sniffed for by the panel, because the
       // placeholder is the server's own constant.
