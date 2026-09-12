@@ -24,6 +24,17 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: './e2e',
+  /*
+   * `csp.spec.ts` is deliberately not part of this suite.
+   *
+   * It measures the shipped Content-Security-Policy against the BUILT client,
+   * served by `vite preview` (playwright.csp.config.ts). Run here it would
+   * measure the dev server instead -- which rewrites modules, injects its own
+   * client and runs Lit in dev mode -- so it would pass while saying nothing
+   * about the bundle nginx serves, and a real failure in the build would be
+   * masked by a green run against something else.
+   */
+  testIgnore: 'csp.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   // No retries: a test that passes on the second attempt is a defect report,

@@ -1416,6 +1416,192 @@ Napi státusz: ELLENŐRZÖTT (F13 részben — elfogadott maradék)
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 14. nap – nginx fejlécek + 2. checkpoint
+
+```text
+Nap / dátum / implementáló: 14 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day14-nginx-headers @ 87f8a7b (main, a 13. nap után)
+Napi feladat és előfeltételei: F10, és F07 production fele. Előfeltétel: nincs.
+Auditpontok: F10, F07
+```
+
+**A terv egy korlátját a tulajdonos feloldotta.** A 14. nap kész-feltétele úgy
+szól, hogy „**élő nginxet nem reloadol e nap önmagában**". A megbízó ma
+kifejezetten engedélyezte a VPS-t („mehet a vps-re is ami kell"), ezért a
+fejlécek **élesbe is kikerültek** — a mérések viszont pontosan abban a
+sorrendben készültek, ahogy a terv előírja: előbb izolált nginx, aztán
+böngészős CSP-mérés, és csak utána az élő telepítés. A CSP **report-only**
+maradt, ahogy a terv kéri.
+
+### Amit tudni kell az `add_header`-ről, és amiért snippet lett belőle
+
+Az nginx `add_header` direktívái **nem halmozódnak**: ha egy `location` akár
+egyetlen sajátot deklarál, azzal **eldobja az összes örököltet** — csendben, és
+az `nginx -t` ettől még sikeres. Az élő vhost ezt eddig úgy oldotta meg, hogy
+ugyanazt a négy fejlécet **három helyen** megismételte. Ez helyes, és pontosan
+ez az a szerkezet, amiben egy ötödik fejléc kettőbe bekerül, a harmadikba nem.
+
+Most egy fájl a teljes készlet, és minden location, aminek saját fejléce van,
+**beemeli**, majd hozzáteszi a magáét. A location-specifikus `Cache-Control`
+sorok érintetlenek.
+
+### Mérés valódi nginxen, nem konfigolvasással
+
+`ops/nginx/verify-headers.sh` saját prefixben, `127.0.0.1:8099`-en indít egy
+külön nginxet, és végigméri a `/`, `/rounds`, `/admin`, egy content-hash-elt
+asset és **egy valódi 404** válaszát. A 404 azért kell, mert az `always`
+viselkedését böngészőből a főoldalon nem lehet látni.
+
+**Negatív kontroll:** kivettem az `include`-ot **egyetlen** locationből. Az
+`nginx -t` **továbbra is sikeres**, a szkript viszont pontosan ott bukik el:
+`FAIL: content-hashed asset: missing X-Robots-Tag`. Ez az a hiba, amit
+konfigszintaxis-ellenőrzés soha nem talál meg.
+
+### A CSP mérve lett, nem megtervezve
+
+Az egyetlen lazítás a `style-src 'unsafe-inline'`. Leszűkítettem
+`style-src 'self'`-re, és lefuttattam a **buildelt** appot: pontosan **egy**
+direktíva sértődött meg, a `style-src-attr` — és a Littől **semmi**. Vagyis az
+ok a 31 számolt `style=` attribútum (sávszélességek, flex-arányok), nem a Lit:
+az `adoptedStyleSheets`-et használó böngészőkben a `css` sablonokból
+constructable stylesheet lesz, amit a CSP nem vizsgál, és ezt a mérés mutatja.
+
+A szűkebb `style-src 'self'; style-src-attr 'unsafe-inline'` **itt elég lenne**,
+és szándékosan nem ezt használom: csendben bukik el olyan böngészőn, aminek
+nincs CSP3 `style-src-attr`-je, vagy nincs `adoptedStyleSheets`-je. Egyik sem
+mérhető abból az egy böngészőből, amit ez a suite hajt. **A valódi szigorítás a
+kliensben van, nem a fejlécben.**
+
+`client/e2e/csp.spec.ts` az **enforce** házirendet teszi a dokumentumra — a
+`csp-enforce.conf`-ból **kiolvasva**, nem lemásolva —, mert report-only alatt a
+„nincs jogsértés" és „a házirend hatástalan" egyformán néz ki. Van benne
+kontroll, ami inline scriptet injektál, és megköveteli a visszautasítást.
+
+**Mindkét bundle-on lemértem.** A `main` mai buildjén **és** a VPS-en
+ténylegesen kiszolgált (régebbi) bundle-on is tisztán fut az **enforce**
+házirend. Ezért van egyáltalán jogom azt mondani, hogy az élesen bekapcsolt
+report-only biztonságos.
+
+### Élő telepítés és az élő mérés
+
+Időbélyeges mentés a vhostról, két snippet a `/etc/nginx/snippets/`-be, a négy
+ismételt fejlécsor helyére `include`, `nginx -t`, `systemctl reload nginx`.
+Ezután **valódi válaszokon** mérve:
+
+| Útvonal | Státusz | CSP-RO | HSTS | a négy meglévő | Cache-Control |
+|---|---|---|---|---|---|
+| `/` | 200 | ✓ | ✓ | ✓ | `no-cache` |
+| `/rounds` | 200 | ✓ | ✓ | ✓ | `no-cache` |
+| `/admin` | 200 | ✓ | ✓ | ✓ | `no-cache` |
+| ismeretlen útvonal | 200 (SPA fallback) | ✓ | ✓ | ✓ | `no-cache` |
+| `/assets/*.js` | 200 | ✓ | ✓ | ✓ | `immutable` |
+| `/api/v1/health` | 200 | ✓ (a helmet sajátja mellett) | ✓ | — | — |
+
+### F07 production fele – lezárva, méréssel
+
+A 2. nap óta nyitott kérdés az volt, mit csinál az **éles** nginx a hibás
+percent-escape-ekkel. Megmérve:
+
+| URL | Válasz |
+|---|---|
+| `/round/%` | **400 Bad Request** |
+| `/tx/%E0%A4%A` | **400 Bad Request** |
+| `/block/%zz` | **400 Bad Request** |
+| `/round/7%3A7416%3A0` (szabályos) | 200 OK |
+
+Vagyis az nginx **a kliens előtt** visszautasítja: a 2. napon javított üres-oldal
+hiba **beírt/beillesztett URL-ből nem érhető el** production alatt. A kliensoldali
+javítás továbbra is az SPA-n belüli navigációra kell (link, `pushState`), és azt
+a böngészőtesztek fedik. A 400 az nginx saját hibalapja, nem a site „That link
+could not be read" oldala — ez helyes egy valóban hibás kérésre, és nem
+próbáltam `error_page`-dzsel elfedni.
+
+### Egy hajszál híján elkerült hiba, ami a naplóba való
+
+A CSP-konfig a fő Playwright-konfigot terjeszti ki. Amikor a fő konfigba
+betettem a `testIgnore: 'csp.spec.ts'`-t (hogy a dev szerveres suite **ne**
+futtassa, mert ott értelmetlen), a CSP-konfig **megörökölte** — és ezzel
+kihagyta azt az egyetlen tesztet, amiért létezik. A kimenet: `Total: 0 tests`,
+**exit 0**. Ugyanaz az osztály, mint a „zöld suite, ami semmit nem mér".
+Javítva (`testIgnore: []`), és mindkét irányban ellenőrizve.
+
+### Érintett fájlok
+
+Új: `ops/nginx/security-headers.conf`, `csp-report-only.conf`, `csp-enforce.conf`,
+`test-vhost.conf`, `verify-headers.sh`; `client/playwright.csp.config.ts`,
+`client/e2e/csp.spec.ts`; `docs/NGINX_HEADERS_RUNBOOK_HU.md`.
+Módosítva: `client/playwright.config.ts` (testIgnore), `client/package.json`
+(`test:csp`), `.github/workflows/ci.yml` (CSP-kapu).
+
+**Szerverkód nem változott.** Az éles vhost a szerveren él, a repóban **nincs**
+kitalált production konfiguráció.
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — 844 szerver + 154 kliens unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **119** böngészőteszt (a CSP-teszt már nem itt fut) |
+| CSP-kapu | exit 0 — 3 eset a **buildelt** kliensen; a deployolt bundle-on külön is lemérve |
+| izolált nginx | `nginx -t` ok; 6 fejléc mind az 5 mért válaszon; negatív kontroll bukik |
+| shellcheck 0.11.0 (a CI-vel azonos, pinelt) | exit 0 |
+| élő nginx | `nginx -t` ok, `reload` ok, `systemctl is-active` = active |
+
+**Valódi laborfutam:** NEM FUTOTT. **Éles deploy: MEGTÖRTÉNT** — csak nginx
+fejlécek, a kliens bundle **nem** lett újratelepítve.
+
+### Nyitott tételek
+
+1. **A CSP report-only marad.** Az enforce-ra váltás egyetlen fájlcsere
+   (`csp-enforce.conf` ugyanarra a snippet-névre), a bizonyíték megvan
+   mindkét bundle-ra. Szándékosan nem most: a report-only értelme az, hogy
+   valós forgalmat is lásson, és egy este egyetlen mérésre élesíteni pont az,
+   amiből csendes kiesés lesz.
+2. **`/api/` most két HSTS fejlécet küld** (a helmet 1 éve és az nginx 2 éve).
+   Az RFC szerint az első számít, tehát az API-válaszok 1 évre állítják a
+   hostot — nem romlott semmi a maihoz képest, de a szándékolt 2 év nem
+   érvényesül következetesen. A tiszta megoldás egy tulajdonos: mivel a TLS-t
+   az nginx zárja, a helmet HSTS-ét kellene kivenni. Szerverkód-változás, nem
+   ennek a napnak a köre.
+3. **A deployolt bundle régebbi, mint a `main`.** Ma szándékosan **nem**
+   telepítettem klienst — egy fejléces nap nem szállít UI-t mellékhatásként.
+4. **Nincs CSP report-collector** és **nincs HSTS preload**; mindkettő indoklása
+   a runbookban.
+
+---
+
+## 2. checkpoint – F04–F14 lefedettség (14. nap)
+
+| Pont | Állapot | Bizonyíték | Környezeti / telepítési korlát |
+|---|---|---|---|
+| F04 | Lezárva | E2E lapozás + HTTP-integrációs teszt | — |
+| F05 | Lezárva (J3) | 8 E2E eset, tickenkénti feloldás | — |
+| F06 | Lezárva (J3) | domén-unit + HTTP: a jelenlegi registry létszáma | — |
+| F07 | **Lezárva** | unit + E2E; **élő nginx: 400** a hibás escape-ekre | — |
+| F08 | Lezárva | router-unit + E2E | A szerveroldali SPA fallback szándékosan változatlan: ismeretlen útvonal 200-at ad |
+| F09 | Lezárva | descriptor/preset/capability, HTTP-integráció | Valódi laborfutamot nem bizonyít |
+| F10 | **Lezárva** | izolált nginx 5 válaszon + böngészős CSP mindkét bundle-on + **élő fejlécek lemérve** | A CSP report-only; az enforce külön lépés |
+| F11 | Lezárva | 22 E2E eset, 4 oldal vezérlői | Vezérlő nélküli oldalak szándékosan paraméter nélkül |
+| F12 | Lezárva | 15 E2E eset: címek, fókusz, skip link, zoom, reduced motion | Számított mérés, nem képernyőolvasós tanúsítás |
+| F13 | **Részben** | `npm audit` 3 → 2, mérve mindkét lockfile-lal | Elfogadott maradék: express saját `qs` pinje; express 5 kell hozzá |
+| F14 | Lezárva | unit gombpár + élő számított kontraszt mindkét témában | — |
+
+**Nyitott környezeti/telepítési korlátok a checkpointban:**
+
+- A CSP enforce-ra váltása és annak élő megfigyelése (1. pont fent).
+- A `/api/` duplikált HSTS-e (2. pont fent).
+- Az F13 elfogadott maradéka, és hogy az indoklását (`query parser` = `simple`,
+  nincs `urlencoded`) **semmi nem védi** — 20. nap.
+- A staking nézetváltóján nincs `aria-pressed` — 20. nap.
+- A deployolt kliens bundle régebbi a `main`-nél.
+
+```text
+Commit(ok), végső SHA: 5262482
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: MEGTÖRTÉNT (csak nginx fejlécek, tulajdonosi engedéllyel)
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -1745,10 +1931,10 @@ Napi státusz: ELLENŐRZÖTT
 | F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
 | F05 | 09, **J3** | `881df65`, `6913d1d` | E2E: 8 eset — a 4 eredeti plusz mozgó tip, átmeneti feloldási hiba utáni újrapróbálkozás, és az explicit profil + aggregát érinthetetlensége; HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): a feloldás `_resolved === null` mögött ült, és a „nem feloldható” sem null, ezért mindkét válasz beragadt. A J3 lezárta; a profil-registry cache-e indokoltként megmaradt |
 | F06 | 09, **J3** | `881df65`, `e860556` | unit: 4 eset a doménben, ebből egy dokumentált szerződéskorrekcióval; HTTP: 7/5 és 3/0 változatlanul, plusz egy az ablak után regisztrált host 1/0-val, amely nincs a `neverSelected`-ben; E2E: két oszlop, néma host, hiányzó mező `—` | **A review újranyitotta** (R6): a `currentRegisteredNodes` a történeti eligibility-vel szűrt, így nem a jelenlegi registry létszámát adta. A J3 lezárta; az eligibility a `neverSelected`-nél és a `roundsEligible`-nél maradt |
-| F07 | 02 | `db77551` | unit: 4 új eset a `router.test.ts`-ben; E2E: 3 eset böngészőben | **Részben.** A kliensoldali hiba javítva és mérve; dokumentumbetöltéskor ezek az URL-ek el sem jutnak a klienshez (dev szerver 404), a production nginx nem ellenőrzött → 14. nap |
+| F07 | 02, **14** | `db77551`, `5262482` | unit: 4 eset a `router.test.ts`-ben; E2E: 3 eset böngészőben; **élő nginx: `/round/%`, `/tx/%E0%A4%A`, `/block/%zz` mind 400**, a szabályos `/round/7%3A7416%3A0` 200 | **Lezárva.** A production nginx a kliens előtt visszautasít, tehát a hiba beírt URL-ből nem érhető el; a kliensoldali javítás az SPA-n belüli navigációra kell, és azt a böngészőtesztek fedik |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
-| F10 | 14 | Nyitott | — | — |
+| F10 | 14 | `5262482` | izolált nginx: 6 fejléc 5 válaszon, benne egy valódi 404, negatív kontrollal; böngésző: az **enforce** házirend tisztán fut a buildelt **és** a deployolt bundle-on; élő: a fejlécek `/`, `/rounds`, `/admin`, asset és ismeretlen útvonal valódi válaszán lemérve | **Élesen bekapcsolva** (tulajdonosi engedéllyel). A CSP **report-only**; az enforce-ra váltás egy fájlcsere, a bizonyíték megvan. `/api/` átmenetileg két HSTS-t küld — a helmet 1 éve nyer, a szándékolt 2 év nem érvényesül következetesen |
 | F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni |
 | F12 | 12 | `1828831` | E2E: 10 eset — egy h1 oldalanként, szekciók h2-ben, fókusz navigációkor és Backnél, fókusz megmaradása poll és szűrőváltás alatt, Back a szűrő fölött nem mozdítja, skip link kezelővel és láthatóan, teljes billentyűzetes útvonal, caption a táblázatában | Kliensoldalon lezárva. Számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás; a staking nézetváltóján továbbra sincs `aria-pressed` |
 | F13 | 13 | `5b8b5a7` | `npm audit` előtte/utána mérve: **3 moderate → 2**, a `body-parser` lekerült a listáról; `npm ci`, K1, K2, K3 mind exit 0 | **Részben — elfogadott maradék.** A body-parser útja lockfile-frissítéssel lezárva, manifest és override nélkül. A maradék kettő az express saját `qs@~6.15.1` pinje; a 4-es vonal nem lép le róla, az egyetlen felfelé út az express 5 (framework-major, a terv nem kéri). Nem elérhető kódút: `query parser` = `simple`, `urlencoded` nincs. **Hiányzó őrszem:** ezt a két konfigurációs tényt semmi nem védi — 20. nap |
@@ -1758,7 +1944,7 @@ Napi státusz: ELLENŐRZÖTT
 ## Review checkpointok
 
 - 07. nap: **elkészült**, lásd a checkpoint-összefoglalót a napi bejegyzések után.
-- 14. nap: még nem készült el.
+- 14. nap: **elkészült**, lásd a 14. napi bejegyzés végén.
 - 20. nap: még nem készült el.
 - **Független review az 01–10. napról: 2026-09-12, hét igazolt találat**
   ([jelentés](WEBSITE_REVIEW_DAYS_01_10_2026-09-12_HU.md),
