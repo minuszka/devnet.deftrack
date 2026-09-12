@@ -170,10 +170,29 @@ export function installLinkInterceptor(): void {
 
     const url = new URL(anchor.href);
     if (url.origin !== location.origin) return;
+    /*
+     * `/admin` is a different shell, chosen by `main.ts` from the pathname at
+     * load time. Intercepting a link to it would push the path without ever
+     * loading that shell, and this router does not know the route -- so the
+     * reader would get "page not found" for an address that works perfectly
+     * well when typed. Let the browser navigate.
+     */
+    if (isSeparateShell(url.pathname)) return;
 
     event.preventDefault();
     navigate(url.pathname + url.search);
   });
+}
+
+/**
+ * Paths served by their own shell rather than by this router.
+ *
+ * Kept beside the interceptor because that is the only place it matters, and
+ * spelled the same way `main.ts` spells it -- with and without the trailing
+ * slash, because a link may carry either.
+ */
+export function isSeparateShell(pathname: string): boolean {
+  return pathname === '/admin' || pathname === '/admin/';
 }
 
 /** Where a round row points. The key contains colons; they must be encoded. */

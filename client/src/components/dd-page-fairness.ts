@@ -2,6 +2,13 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { LlmqProfileView } from '@devnet-deftrack/shared';
 import type { SelectionFairness } from '../lib/api.js';
 import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
+import {
+  LLMQ_ALL,
+  LLMQ_PATTERN,
+  QueryStateController,
+  llmqApiName,
+  type ParamSpec,
+} from '../lib/queryState.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
@@ -11,7 +18,21 @@ import './dd-stat.js';
 const REFRESH_MS = 60_000;
 const WINDOWS = [20, 50, 100, 250];
 /** The explicit "every schedule at once" choice, never a silent default. */
-const AGGREGATE = '';
+const AGGREGATE = LLMQ_ALL;
+
+/**
+ * What this view's URL carries.
+ *
+ * `llmq` absent is not "every profile" here -- it is "the one signing at the
+ * tip", resolved from the chain. That distinction is the whole of F05: a link
+ * with no profile means "whatever is current", and `llmq=all` means somebody
+ * chose the aggregate. Writing the resolved name into the URL would freeze a
+ * link that was meant to follow the tip.
+ */
+const QUERY: Record<string, ParamSpec> = {
+  llmq: { kind: 'optional', pattern: LLMQ_PATTERN },
+  rounds: { kind: 'choice', values: WINDOWS, fallback: 50 },
+};
 
 export class DdPageFairness extends LitElement {
   static override properties = {
@@ -39,6 +60,30 @@ export class DdPageFairness extends LitElement {
   private _profiles: LlmqProfileView[] = [];
   /** How the current profile was arrived at: resolved, chosen, or not yet. */
   private _resolved: PrimaryProfile | null = null;
+  /** The address bar; the only thing that reacts to a filter change. */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    this._applyQuery(values);
+    this._d = null;
+    this._poll.refresh();
+  });
+
+  override connectedCallback(): void {
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  /**
+   * URL -> component state.
+   *
+   * `null` stays null: it means the profile has not been chosen and is to be
+   * resolved from the chain, which is a different state from any choice.
+   */
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const llmq = values['llmq'];
+    this._llmq = typeof llmq === 'string' ? llmq : null;
+    const rounds = values['rounds'];
+    if (typeof rounds === 'number') this._rounds = rounds;
+  }
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
     intervalMs: REFRESH_MS,
@@ -110,12 +155,13 @@ export class DdPageFairness extends LitElement {
           run.api.health().catch(() => null),
         ]);
         if (run.stale) return;
-        const resolved = primaryProfile({ signers: clocks?.signers, tipHeight: health?.chainTip });
-        this._resolved = resolved;
-        if (resolved.known) this._llmq = resolved.llmqName;
+        this._resolved = primaryProfile({
+          signers: clocks?.signers,
+          tipHeight: health?.chainTip,
+        });
       }
 
-      if (this._llmq === null && this._resolved?.known !== true) {
+      if (this._effective() === null) {
         // Undecided, and deliberately not loaded. Nothing is shown rather than
         // something that describes a sample nobody asked for.
         this._d = null;
@@ -123,10 +169,7 @@ export class DdPageFairness extends LitElement {
         return;
       }
 
-      const d = await run.api.selectionFairness(
-        this._rounds,
-        this._llmq === AGGREGATE || this._llmq === null ? undefined : this._llmq
-      );
+      const d = await run.api.selectionFairness(this._rounds, llmqApiName(this._effective()));
       if (run.stale) return;
       this._d = d;
       this._error = '';
@@ -136,16 +179,26 @@ export class DdPageFairness extends LitElement {
     }
   }
 
+  /**
+   * The profile these figures are about: what the URL asked for, or the one
+   * signing at the tip when it asked for nothing.
+   *
+   * Resolved on every read rather than latched into `_llmq` once. Latching it
+   * meant that going Back to a URL with no profile left the page holding the
+   * previously resolved name -- or, worse, holding null with the resolution
+   * already done, so it asked a question it had already answered.
+   */
+  private _effective(): string | null {
+    if (this._llmq !== null) return this._llmq;
+    return this._resolved?.known === true ? this._resolved.llmqName : null;
+  }
+
   private _setWindow(n: number): void {
-    this._rounds = n;
-    this._poll.refresh();
+    this._query.set({ rounds: n });
   }
 
   private _setProfile(value: string): void {
-    if (this._llmq === value) return;
-    this._llmq = value;
-    this._d = null;
-    this._poll.refresh();
+    this._query.set({ llmq: value });
   }
 
   override render(): TemplateResult {
@@ -176,7 +229,7 @@ export class DdPageFairness extends LitElement {
 
       ${this._profileControl()}
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
-      ${this._llmq === null && this._resolved?.known !== true
+      ${this._effective() === null
         ? html`<div class="note" role="status">
             The signing profile could not be determined
             ${this._resolved?.known === false && this._resolved.reason === 'no-signers'
@@ -215,7 +268,7 @@ export class DdPageFairness extends LitElement {
           ${options.map(
             (name) => html`
               <button
-                aria-pressed=${this._llmq === name ? 'true' : 'false'}
+                aria-pressed=${this._effective() === name ? 'true' : 'false'}
                 @click=${() => this._setProfile(name)}
               >
                 ${name === AGGREGATE ? 'All profiles · aggregate' : name}

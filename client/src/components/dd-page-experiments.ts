@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { ExperimentDetail, ExperimentOutcome, ExperimentRow } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
+import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, num, ratio } from '../lib/format.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
@@ -19,6 +20,12 @@ const REFRESH_MS = 60_000;
 const PAGE_SIZE = 25;
 
 type StatusFilter = '' | 'running' | 'closed';
+
+/** What this view's URL carries. Defaults are absent, so `/experiments` is plain. */
+const QUERY: Record<string, ParamSpec> = {
+  status: { kind: 'enum', values: ['', 'running', 'closed'], fallback: '' },
+  page: { kind: 'page', limit: PAGE_SIZE },
+};
 
 export class DdPageExperiments extends LitElement {
   static override properties = {
@@ -40,6 +47,11 @@ export class DdPageExperiments extends LitElement {
   private _status: StatusFilter = '';
   /** Loading is not empty: the two look identical and mean opposite things. */
   private _loading = true;
+  /** The address bar; the only thing that reacts to a filter change. */
+  private readonly _query = new QueryStateController(this, QUERY, (values) => {
+    this._applyQuery(values);
+    this._poll.refresh();
+  });
   private _detail: ExperimentDetail | null = null;
   private _error = '';
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
@@ -127,10 +139,27 @@ export class DdPageExperiments extends LitElement {
       this._detail = null;
       this._rows = [];
       this._total = 0;
-      this._offset = 0;
       this._error = '';
       this._poll.refresh();
     }
+  }
+
+  /** See dd-page-rounds: the URL is read before the first fetch goes out. */
+  override connectedCallback(): void {
+    this._applyQuery(this._query.values);
+    super.connectedCallback();
+  }
+
+  private _applyQuery(values: Record<string, string | number | null>): void {
+    const status = values['status'];
+    this._status = status === 'running' || status === 'closed' ? status : '';
+    const page = typeof values['page'] === 'number' ? values['page'] : 1;
+    this._offset = pageToOffset(page, PAGE_SIZE);
+  }
+
+  private _page(): number {
+    const page = this._query.values['page'];
+    return typeof page === 'number' ? page : 1;
   }
 
   private async _load(run: PollRun): Promise<void> {
@@ -162,17 +191,13 @@ export class DdPageExperiments extends LitElement {
   }
 
   private _setStatus(value: StatusFilter): void {
-    if (this._status === value) return;
-    this._status = value;
     // A filter change makes the old page number meaningless: page 2 of the
     // closed runs is not page 2 of all runs.
-    this._offset = 0;
-    this._poll.refresh();
+    this._query.set({ status: value, page: 1 });
   }
 
   private _move(delta: number): void {
-    this._offset = Math.max(0, this._offset + delta * PAGE_SIZE);
-    this._poll.refresh();
+    this._query.set({ page: Math.max(1, this._page() + delta) });
   }
 
   override render(): TemplateResult {

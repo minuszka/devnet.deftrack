@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchRoute, roundHref, ROUTES } from './router.js';
+import { isSeparateShell, matchRoute, roundHref, ROUTES } from './router.js';
 
 describe('matchRoute', () => {
   it('matches the sections', () => {
@@ -88,5 +88,26 @@ describe('matchRoute', () => {
 describe('roundHref', () => {
   it('encodes the colons a round key is built from', () => {
     expect(roundHref('7:7416:0')).toBe('/round/7%3A7416%3A0');
+  });
+});
+
+describe('separate shells', () => {
+  /*
+   * `/admin` is chosen by main.ts from the pathname at load time, so the link
+   * interceptor must leave it to the browser. Pushing the path instead would
+   * change the address without ever loading that shell, and this router has no
+   * route for it -- so a link that works when typed would answer "page not
+   * found" when clicked.
+   */
+  it('names the paths this router must not intercept', () => {
+    expect(isSeparateShell('/admin')).toBe(true);
+    expect(isSeparateShell('/admin/')).toBe(true);
+    expect(isSeparateShell('/admin/runs')).toBe(false);
+    expect(isSeparateShell('/rounds')).toBe(false);
+    expect(isSeparateShell('/')).toBe(false);
+  });
+
+  it('has no route of its own for it, which is why the rule is needed', () => {
+    expect(matchRoute('/admin').status).toBe('not-found');
   });
 });
