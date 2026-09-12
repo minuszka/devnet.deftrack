@@ -1,3 +1,4 @@
+import type { ScenarioFieldSpec } from '../../src/lib/admin-api.js';
 import { ok, type ApiStubs } from '../harness.js';
 import { healthSnapshot, pageOf } from './api.js';
 
@@ -20,6 +21,7 @@ export interface AdminScenarioStub {
   riskClass: 'low' | 'medium' | 'high';
   parameterTemplate?: Record<string, unknown>;
   templateNeedsTargetId?: boolean;
+  parameterFields?: ScenarioFieldSpec[];
 }
 
 /** A subset of the real allowlist, with the templates the server serves for it. */
@@ -32,6 +34,15 @@ export const SCENARIO_STUBS: AdminScenarioStub[] = [
     riskClass: 'medium',
     parameterTemplate: { count: 1, durationSeconds: 60 },
     templateNeedsTargetId: false,
+    // Copied from what the server serves. The bounds are the validator's own --
+    // server-side `scenarioFields.test.ts` proves that against
+    // `parseScenarioRequest`, so what is repeated here is a fixture of the
+    // wire, not a second source of truth about the limits.
+    parameterFields: [
+      { name: 'count', label: 'Masternodes to stop', kind: 'integer', required: true, min: 1, max: 20, unit: 'nodes' },
+      { name: 'durationSeconds', label: 'Duration', kind: 'integer', required: true, min: 5, max: 900, unit: 'seconds' },
+      { name: 'targetIds', label: 'Explicit target ids', kind: 'target-ids', required: false },
+    ],
   },
   {
     scenarioId: 'dsl-fault',
@@ -42,6 +53,28 @@ export const SCENARIO_STUBS: AdminScenarioStub[] = [
     // The one the panel had no entry for at all, so it offered `{}`.
     parameterTemplate: { faultKind: 'response-drop', count: 1, epochs: 1 },
     templateNeedsTargetId: false,
+    parameterFields: [
+      {
+        name: 'faultKind',
+        label: 'Fault',
+        kind: 'enum',
+        required: true,
+        values: ['response-drop', 'report-drop', 'response-delay', 'report-delay', 'commitment-skip'],
+      },
+      { name: 'count', label: 'Masternodes affected', kind: 'integer', required: true, min: 1, max: 20, unit: 'nodes' },
+      { name: 'epochs', label: 'Epochs', kind: 'integer', required: true, min: 1, max: 3, unit: 'epochs' },
+      {
+        name: 'param',
+        label: 'Delay',
+        kind: 'integer',
+        required: true,
+        min: 1,
+        max: 24,
+        unit: 'blocks',
+        onlyWhen: { field: 'faultKind', values: ['response-delay', 'report-delay'] },
+      },
+      { name: 'targetIds', label: 'Explicit target ids', kind: 'target-ids', required: false },
+    ],
   },
   {
     scenarioId: 'clear-recover',

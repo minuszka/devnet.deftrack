@@ -1602,6 +1602,125 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: MEGTÖRTÉNT (csak nginx fejlécek, tulajdonosi engedéllyel)
 ```
 
+## 15. nap – Egyszerű szimulátorűrlapok
+
+```text
+Nap / dátum / implementáló: 15 / 2026-09-12 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day15-scenario-forms @ 4e5dc81 (main, a 14. nap után)
+Napi feladat és előfeltételei: a négy target-választó nélküli scenario űrlapja.
+  Előfeltétel: 04. nap (descriptor, presetek) — megvan.
+Auditpontok: nincs önálló F-pont; a szimulátor-termékfolyamat 2. lépése
+```
+
+**Kiinduló állapot.** A panel egyetlen paraméterszerkesztője egy JSON-textarea
+volt. Az operátor egy mező nevét, mértékegységét és határait **abban a
+pillanatban** tudta meg, amikor a szerver visszautasította a kérést — a lehető
+legrosszabb pillanatban és a lehető leghaszontalanabb helyen.
+
+**Ami változott.** Az `mn-stop`, `staker-stop`, `quorum-member-outage` és
+`dsl-fault` valódi mezőket kap: egész számok a séma saját min/max-ával és
+mértékegységgel a képernyőn, enumok pontosan azokkal az értékekkel, amiket a
+séma elfogad. A metaadat a **scenario-descriptoron** utazik, tehát a kliens
+egyetlen limitet sem tart másolatban, és semmit nem importál a szerver
+registryből — ahogy a terv kéri.
+
+### Miért nem tud elcsúszni
+
+Egy validátor mellé kézzel vezetett határtábla elcsúszik — a projekt már
+látta ezt: a panel saját paraméteralapértékeinek a `dsl-fault`-ra egyáltalán
+nem volt bejegyzése. Ezért a `scenarioFields.test.ts` **soha nem olvassa vissza
+a táblát önmagának**: valódi kéréseket épít, és a `parseScenarioRequest`-en —
+ugyanazon a függvényen, amit a route hív — tolja át **minden deklarált
+határon**: min elfogadva, max elfogadva, egyel túl mindkettőn elutasítva, tört
+elutasítva, minden felsorolt enum érték elfogadva, egy ismeretlen elutasítva,
+és a `required` egyezik azzal, amit a séma hiányozni enged.
+
+**Negatív kontroll:** a `staker-stop` `max`-át egyel a séma fölé toltam — azonnal
+bukott (`max rejected`).
+
+**A saját tesztsegédem elsőre rossz volt.** Az első változat a feltételes mezők
+függőségét csak **egy irányban** rendezte: a `param` vizsgálatához adott
+megfelelő `faultKind`-et, de a `faultKind` vizsgálatához nem adta hozzá a
+késleltetéses fajták által **megkövetelt** `param`-ot. A suite az első
+futásra azt jelentette, hogy a tábla hibás — pedig a segéd volt az. Most
+szimmetrikus.
+
+### Egy objektum, két arc
+
+A paraméterek **egyetlen kanonikus objektum**, és az űrlap meg a JSON is abból
+renderelődik. A JSON egy „Advanced" nyitható panel mögé került. Egy
+**olvashatatlan** szerkesztés ott **szó szerint megmarad**, magyarázatot kap, és a
+Prepare visszautasítja — nem ugrik vissza csendben az utolsó olvasható
+objektumra, és nem megy ki.
+
+### A késleltetés mezője
+
+A `dsl-fault` `param`-ja az a szabály, amit egy űrlap **mindkét irányban**
+elronthat: a késleltetéses fajták **megkövetelik**, a többi **elutasítja**, tehát
+egy mindig látható mező olyan kérést küld, amit a szerver olyan okból utasít
+vissza, amit senki nem lát. Most csak a késleltetéses fajtáknál jelenik meg, a
+séma minimumával kitöltve érkezik, és a fajta elváltásakor **kikerül** az
+objektumból — nem nullázódik. Ugyanezért egy **üres számmező hiányzik, nem nulla**.
+
+### Seed
+
+Draftnál újragenerálható, máshol nem. A kiválasztott futam azt a seedet mutatja,
+amivel **ténylegesen** létrejött — a saját metaadatából, nem a mellette lévő
+draftból. A 6–7. napon szétválasztott draft és futam így szét is marad.
+
+### A harness egy valódi korlátja
+
+A stubfüggvények mostantól a **metódust** is megkapják az URL mellé. A
+`/admin/simulations/runs` GET-re a futamlista, POST-ra a létrehozás — egy stub,
+ami csak az URL-t látta, az egyiket biztosan rosszul válaszolta meg.
+
+### Érintett fájlok
+
+Szerver: `scenarioTypes.ts` (`ScenarioField`), `scenarioRegistry.ts`
+(`SCENARIO_FIELDS`, a katalógus kiszolgálja), új `scenarioFields.test.ts`
+(6 eset), `simulationScenarios.integration.test.ts` (+1 HTTP-eset).
+Kliens: `admin-api.ts` (`ScenarioFieldSpec`), `dd-simulation-control.ts`,
+`e2e/harness.ts` (metódus), `e2e/fixtures/admin.ts`, új
+`e2e/scenario-forms.spec.ts` (10 eset); a meglévő `simulation-control`,
+`run-status` és `run-selection` specek a textarea helyett a mezőre célozva.
+
+**Szerződésváltozás / kompatibilitás:** **additív** — a descriptor új,
+opcionális `parameterFields` mezőt kap. Egy régebbi szerver nem küldi, és a
+panel ilyenkor a JSON-nézetre esik vissza, nem talál ki mezőket. A szerver
+validációja **nem változott**.
+
+### Negatív kontrollok — négy, mind a saját tesztjén bukott
+
+| Kivett őrszem | Ami elpirult |
+|---|---|
+| a feltételes mező rendezése fajtaváltáskor | a két késleltetés-teszt |
+| az olvashatatlan JSON megtartása | „unreadable JSON is kept, explained, and cannot prepare a run" |
+| a deklarált határ a séma szerint | `scenarioFields.test.ts` — „max rejected" |
+| az üres mező hiányként | „an empty number box is absent, never zero" |
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **850** szerver (844 → 850) + 154 kliens unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **129** böngészőteszt (119 → 129), egy workerrel |
+| K3 | exit 0 — 14 fájl, **91** teszt (90 → 91): a katalógus HTTP-n tényleg kiszolgálja a mezőket, és a mező nélküli scenariónál a kulcs **hiányzik**, nem üres lista |
+| CSP-kapu | exit 0 — az új űrlap nem hozott új CSP-sértést |
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:** a **16. nap** (a maradék öt scenario:
+target-választó, hatáselőnézet) elkezdhető. A négy mai scenario `targetIds`
+mezője egyelőre vesszővel elválasztott szöveg — a valódi registry-választó a
+16. nap dolga, és a mai mező kifejezetten opcionálisnak van jelölve.
+
+```text
+Commit(ok), végső SHA: d7469ff
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text

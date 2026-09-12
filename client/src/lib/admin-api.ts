@@ -218,6 +218,29 @@ export interface SimulationHistory {
   audit: SimulationAuditEvent[];
 }
 
+/**
+ * How one scenario parameter should be drawn, as the server describes it.
+ *
+ * Display metadata only. The bounds are the validator's own -- the server
+ * proves its table against `parseScenarioRequest` -- and the panel keeps no
+ * copy of them, so a limit changed on the server changes the form without a
+ * client release. A server built before this field sends none, and the panel
+ * falls back to the JSON view rather than inventing inputs.
+ */
+export interface ScenarioFieldSpec {
+  name: string;
+  label: string;
+  kind: 'integer' | 'enum' | 'target-ids';
+  required: boolean;
+  min?: number;
+  max?: number;
+  unit?: string;
+  values?: string[];
+  help?: string;
+  /** Shown only while another field holds one of these values. */
+  onlyWhen?: { field: string; values: string[] };
+}
+
 export interface ScenarioSummary {
   scenarioId: string;
   version: number;
@@ -235,6 +258,8 @@ export interface ScenarioSummary {
   parameterTemplate?: Record<string, unknown>;
   /** The template names a placeholder target that no registry will resolve. */
   templateNeedsTargetId?: boolean;
+  /** The form fields for this scenario, in the order to show them. */
+  parameterFields?: ScenarioFieldSpec[];
 }
 
 /**

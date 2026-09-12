@@ -22,12 +22,24 @@ async function openAdmin(app: AppHarness, stubs: ApiStubs): Promise<void> {
   await app.goto('/admin');
 }
 
+/**
+ * The JSON is behind a disclosure since day 15: the parameters have real form
+ * fields now, and a JSON blob is not a form. These assertions are about what
+ * the panel was GIVEN, which is still what the JSON shows, so they open it
+ * rather than change what they check.
+ */
+async function openJson(page: import('@playwright/test').Page): Promise<void> {
+  const toggle = page.getByRole('button', { name: /Advanced: the parameters as JSON/ });
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+  await expect(page.locator(PARAMETERS)).toBeVisible();
+}
+
 test.describe('simulation control', () => {
   test('a scenario is seeded from the template the server serves for it', async ({ app, page }) => {
     await openAdmin(app, adminSessionStubs());
-    await expect(page.locator(PARAMETERS)).toBeVisible();
+    await openJson(page);
 
-    // mn-stop is selected first, so its template is what the field holds.
+    // mn-stop is selected first, so its template is what the object holds.
     expect(JSON.parse(await page.locator(PARAMETERS).inputValue())).toEqual({
       count: 1,
       durationSeconds: 60,
@@ -47,9 +59,11 @@ test.describe('simulation control', () => {
     await page.locator('select').first().selectOption('future-scenario');
 
     // Not `{}`: an empty object looks runnable and is refused by every scenario
-    // that requires a field. The textarea is `required`, so the form cannot be
-    // submitted until somebody types something.
-    await expect(page.locator(PARAMETERS)).toHaveValue('');
+    // that requires a field. A scenario the server describes no fields for also
+    // gets no invented inputs -- it says so and offers the JSON.
+    await expect(page.locator('.scenario-fields')).toHaveCount(0);
+    await openJson(page);
+    await expect(page.locator(PARAMETERS)).toHaveValue('{}');
     await expect(page.locator('.notes')).toContainText('offered no parameter template');
   });
 
@@ -57,6 +71,7 @@ test.describe('simulation control', () => {
     await openAdmin(app, adminSessionStubs());
     await page.locator('select').first().selectOption('clear-recover');
 
+    await openJson(page);
     await expect(page.locator(PARAMETERS)).toHaveValue(/replace-with-a-registered-target-id/);
     await expect(page.locator('.notes')).toContainText('the registry will not');
   });
@@ -175,12 +190,13 @@ test.describe('simulation control', () => {
     page,
   }) => {
     await openAdmin(app, adminSessionStubs());
+    await openJson(page);
 
     for (const scenario of SCENARIO_STUBS) {
       await page.locator('select').first().selectOption(scenario.scenarioId);
       const value = await page.locator(PARAMETERS).inputValue();
       if (scenario.parameterTemplate === undefined) {
-        expect(value, scenario.scenarioId).toBe('');
+        expect(value, scenario.scenarioId).toBe('{}');
         continue;
       }
       expect(JSON.parse(value), scenario.scenarioId).toEqual(scenario.parameterTemplate);

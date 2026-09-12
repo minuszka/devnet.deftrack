@@ -58,7 +58,8 @@ test.describe('run selection', () => {
 
     // The seed field: one character used to be enough to discard the run.
     await page.locator('input[type="text"]').first().fill('a-different-seed');
-    await page.locator('textarea').fill('{"count": 2, "durationSeconds": 90}');
+    // And a real parameter field, which is what a draft edit is since day 15.
+    await page.locator('#param-count').fill('2');
 
     await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
   });
