@@ -1,5 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
+import type { LlmqProfileView } from '@devnet-deftrack/shared';
 import type { SelectionFairness } from '../lib/api.js';
+import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
@@ -8,17 +10,35 @@ import './dd-stat.js';
 
 const REFRESH_MS = 60_000;
 const WINDOWS = [20, 50, 100, 250];
+/** The explicit "every schedule at once" choice, never a silent default. */
+const AGGREGATE = '';
 
 export class DdPageFairness extends LitElement {
   static override properties = {
     _d: { state: true },
     _rounds: { state: true },
     _error: { state: true },
+    _llmq: { state: true },
+    _profiles: { state: true },
+    _resolved: { state: true },
   };
 
   private _d: SelectionFairness | null = null;
   private _rounds = 50;
   private _error = '';
+  /**
+   * Which profile these figures are about.
+   *
+   * `null` means the question has not been settled yet -- not "all of them".
+   * The page used to ask the server with no profile at all, and the server does
+   * not filter without one, so every number here was computed across five
+   * interleaved schedules while the screen said nothing about it. Blending
+   * interleaved schedules is the one reading this project's own notes forbid.
+   */
+  private _llmq: string | null = null;
+  private _profiles: LlmqProfileView[] = [];
+  /** How the current profile was arrived at: resolved, chosen, or not yet. */
+  private _resolved: PrimaryProfile | null = null;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
     intervalMs: REFRESH_MS,
@@ -71,7 +91,42 @@ export class DdPageFairness extends LitElement {
 
   private async _load(run: PollRun): Promise<void> {
     try {
-      const d = await run.api.selectionFairness(this._rounds);
+      // The registry, once: it changes with the binary, not with the tip.
+      if (this._profiles.length === 0) {
+        const profiles = await run.api.llmqProfiles().catch(() => null);
+        if (run.stale) return;
+        if (profiles) this._profiles = profiles.items.filter((p) => p.tracked);
+      }
+
+      /*
+       * Which profile is signing ChainLocks at the tip -- the same rule the
+       * front page uses, from the same two reads. If it cannot be resolved the
+       * page asks for an explicit choice rather than quietly aggregating: a
+       * number covering five schedules looks like an answer without being one.
+       */
+      if (this._resolved === null) {
+        const [clocks, health] = await Promise.all([
+          run.api.chainlocks(50).catch(() => null),
+          run.api.health().catch(() => null),
+        ]);
+        if (run.stale) return;
+        const resolved = primaryProfile({ signers: clocks?.signers, tipHeight: health?.chainTip });
+        this._resolved = resolved;
+        if (resolved.known) this._llmq = resolved.llmqName;
+      }
+
+      if (this._llmq === null && this._resolved?.known !== true) {
+        // Undecided, and deliberately not loaded. Nothing is shown rather than
+        // something that describes a sample nobody asked for.
+        this._d = null;
+        this._error = '';
+        return;
+      }
+
+      const d = await run.api.selectionFairness(
+        this._rounds,
+        this._llmq === AGGREGATE || this._llmq === null ? undefined : this._llmq
+      );
       if (run.stale) return;
       this._d = d;
       this._error = '';
@@ -83,6 +138,13 @@ export class DdPageFairness extends LitElement {
 
   private _setWindow(n: number): void {
     this._rounds = n;
+    this._poll.refresh();
+  }
+
+  private _setProfile(value: string): void {
+    if (this._llmq === value) return;
+    this._llmq = value;
+    this._d = null;
     this._poll.refresh();
   }
 
@@ -112,8 +174,19 @@ export class DdPageFairness extends LitElement {
         </div>
       </div>
 
+      ${this._profileControl()}
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
-      ${!d
+      ${this._llmq === null && this._resolved?.known !== true
+        ? html`<div class="note" role="status">
+            The signing profile could not be determined
+            ${this._resolved?.known === false && this._resolved.reason === 'no-signers'
+              ? '(no ChainLock report)'
+              : '(no chain tip)'},
+            so nothing is shown until a profile is chosen above. These figures are about one LLMQ
+            schedule; computed across all of them at once they would look like an answer without
+            being one.
+          </div>`
+        : !d
         ? html`<div class="note">Loading…</div>`
         : d.roundsConsidered === 0
           ? html`<div class="note">
@@ -124,18 +197,55 @@ export class DdPageFairness extends LitElement {
     `;
   }
 
+  /**
+   * Which schedule these figures describe, said on the page and selectable.
+   *
+   * The server supports the filter and always did; the page simply never sent
+   * it, so the answer was every interleaved schedule at once with nothing
+   * saying so. The aggregate is still available -- as a choice somebody makes,
+   * under a name that says what it is.
+   */
+  private _profileControl(): TemplateResult {
+    const options = this._profiles.map((p) => p.llmqName);
+    const resolvedName = this._resolved?.known === true ? this._resolved.llmqName : null;
+    if (!options.includes(AGGREGATE)) options.unshift(AGGREGATE);
+    return html`
+      <div class="filters">
+        <div class="group" role="group" aria-label="LLMQ profile">
+          ${options.map(
+            (name) => html`
+              <button
+                aria-pressed=${this._llmq === name ? 'true' : 'false'}
+                @click=${() => this._setProfile(name)}
+              >
+                ${name === AGGREGATE ? 'All profiles · aggregate' : name}
+                ${name !== AGGREGATE && name === resolvedName ? ' · at the tip' : ''}
+              </button>
+            `
+          )}
+        </div>
+      </div>
+    `;
+  }
+
   private _tiles(d: SelectionFairness): TemplateResult {
-    const worst = d.nodes.find((n) => n.invalidRate !== null && n.invalidRate > 0);
-    const totalInvalid = d.nodes.reduce((sum, n) => sum + n.timesInvalid, 0);
+    /*
+     * From the server's own total, computed before the node list was truncated
+     * to 200 rows. Summing the rows on screen described a slice and printed it
+     * as the network's figure. A server that does not send it gets an em dash:
+     * the slice is not a fallback, it is a different number.
+     */
+    const totals = d.totals ?? null;
+    const truncated = totals !== null && totals.nodesCounted > d.nodes.length;
 
     return html`
       <section class="tiles">
         <dd-stat
           label="Formed rounds"
           value=${num(d.roundsConsidered)}
-          sub=${d.heightRange
-            ? `heights ${num(d.heightRange.from)}–${num(d.heightRange.to)}`
-            : 'no range'}
+          sub=${`${d.llmqName ?? 'all profiles'}${
+            d.heightRange ? ` · heights ${num(d.heightRange.from)}–${num(d.heightRange.to)}` : ''
+          }`}
         ></dd-stat>
         <dd-stat
           label="Expected selection"
@@ -150,9 +260,13 @@ export class DdPageFairness extends LitElement {
         ></dd-stat>
         <dd-stat
           label="Invalid members"
-          value=${num(totalInvalid)}
-          sub=${worst ? `worst node ${ratio(worst.invalidRate)}` : 'no member failed'}
-          tone=${totalInvalid > 0 ? 'crit' : 'good'}
+          value=${totals === null ? '—' : num(totals.timesInvalid)}
+          sub=${totals === null
+            ? 'not reported by this server'
+            : totals.worstInvalidRate === null
+              ? 'no node met the sample floor'
+              : `worst node ${ratio(totals.worstInvalidRate)}${truncated ? `, over all ${num(totals.nodesCounted)}` : ''}`}
+          tone=${totals === null ? '' : totals.timesInvalid > 0 ? 'crit' : 'good'}
         ></dd-stat>
       </section>
     `;
@@ -181,7 +295,12 @@ export class DdPageFairness extends LitElement {
               <thead>
                 <tr>
                   <th scope="col">Host</th>
-                  <th scope="col" class="r">Masternodes</th>
+                  <!-- Two numbers, because they are two facts. "Masternodes"
+                       used to print the count the window happened to select,
+                       so a host with seven registered nodes of which five were
+                       drawn read as a host with five. -->
+                  <th scope="col" class="r">Registered nodes</th>
+                  <th scope="col" class="r">Selected nodes</th>
                   <th scope="col" class="r">Selections</th>
                   <th scope="col">Share of the busiest</th>
                   <th scope="col" class="r">Invalid</th>
@@ -193,6 +312,14 @@ export class DdPageFairness extends LitElement {
                   (h) => html`
                     <tr>
                       <td class="mono">${h.host}</td>
+                      <!-- Undefined on a server built before the field, and
+                           null for a host no longer registered. Neither is
+                           zero, and neither may be printed as zero. -->
+                      <td class="r mono">
+                        ${h.currentRegisteredNodes === undefined || h.currentRegisteredNodes === null
+                          ? '—'
+                          : num(h.currentRegisteredNodes)}
+                      </td>
                       <td class="r mono">${num(h.nodes)}</td>
                       <td class="r mono">${num(h.timesSelected)}</td>
                       <td>

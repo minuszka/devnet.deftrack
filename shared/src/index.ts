@@ -734,13 +734,46 @@ export interface SelectionFairness {
   }>;
   hosts: Array<{
     host: string;
+    /**
+     * How many of this host's masternodes the window SELECTED at least once.
+     *
+     * Kept under its original name for compatibility, and it is not the host's
+     * size: the table called it "Masternodes", so a host with seven registered
+     * nodes of which five were drawn read as a host with five. The other two had
+     * not gone anywhere -- they had not been picked, which is the finding this
+     * page exists to show.
+     */
     nodes: number;
+    /**
+     * How many the host has registered and active right now, from the registry
+     * rather than from the sample.
+     *
+     * Absent on a server built before this field, and `null` for a host that is
+     * no longer registered -- for which no historical size can be invented.
+     */
+    currentRegisteredNodes?: number | null;
     timesSelected: number;
     timesInvalid: number;
     invalidRate: number | null;
   }>;
   neverSelected: string[];
   neverSelectedCount: number;
+  /**
+   * Totals over EVERY node in the window, computed before the node list is
+   * truncated for display.
+   *
+   * The page summed the rows it had been sent, which are the first 200. On a
+   * network larger than that the headline figure quietly described a slice and
+   * called it the network. Absent from a server built before this field, and
+   * the page says "unknown" rather than falling back to the slice.
+   */
+  totals?: {
+    nodesCounted: number;
+    timesSelected: number;
+    timesInvalid: number;
+    /** The worst per-node failure rate, over all nodes that met `minSamples`. */
+    worstInvalidRate: number | null;
+  };
 }
 
 export interface DslSummary {

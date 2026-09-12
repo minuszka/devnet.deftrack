@@ -128,8 +128,14 @@ function makeApi(signal?: AbortSignal) {
     peerPropagation: (topic: 'block' | 'chainlock', events: number) =>
       get<PeerPropagation>('/peers/propagation', { topic, events }),
 
-    selectionFairness: (rounds: number) =>
-      get<SelectionFairness>('/fairness/selection', { rounds }),
+    /**
+     * Without `llmqName` the server does not filter, and the answer is computed
+     * across every interleaved schedule at once. That is a defensible reading
+     * of its own sample, but it is not the profile anybody asked about, and
+     * the page must say which one it is showing.
+     */
+    selectionFairness: (rounds: number, llmqName?: string) =>
+      get<SelectionFairness>('/fairness/selection', { rounds, llmqName }),
 
     experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
       get<Page<ExperimentRow>>('/experiments', params),

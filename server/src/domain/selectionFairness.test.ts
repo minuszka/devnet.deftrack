@@ -127,3 +127,96 @@ describe('selection fairness', () => {
     expect(hi).toBeLessThan(0.8);
   });
 });
+
+/**
+ * F06: the host table's node count was the count of nodes the sample selected,
+ * under a column called "Masternodes".
+ *
+ * The live reading that found it: a host with seven registered masternodes
+ * showed five, because the window had drawn five of them. The other two had not
+ * gone anywhere -- they had been passed over, which is the finding this page
+ * exists to surface, and the table erased it by reporting a smaller host.
+ */
+describe('host node counts', () => {
+  const sevenNodes = new Map(
+    Array.from({ length: 7 }, (_unused, i) => [
+      `mn-${i}`,
+      { host: 'host-a', operatorLabel: null, registeredHeight: 1 },
+    ])
+  );
+
+  it('reports the registry size and the selected count as two numbers', () => {
+    // Five of the seven drawn, twice each.
+    const members = Array.from({ length: 5 }, (_unused, i): [string, boolean] => [`mn-${i}`, true]);
+    const f = selectionFairness(
+      [round(members, 5), round(members, 5)],
+      sevenNodes
+    );
+    const host = f.hosts.find((h) => h.host === 'host-a')!;
+    expect(host.currentRegisteredNodes).toBe(7);
+    expect(host.nodes).toBe(5);
+    expect(host.timesSelected).toBe(10);
+  });
+
+  it('lists a currently-registered host the window never drew from', () => {
+    const nodes = new Map([
+      ['mn-a', { host: 'host-a', operatorLabel: null, registeredHeight: 1 }],
+      ['mn-b', { host: 'host-quiet', operatorLabel: null, registeredHeight: 1 }],
+    ]);
+    const f = selectionFairness([round([['mn-a', true]], 1)], nodes);
+    const quiet = f.hosts.find((h) => h.host === 'host-quiet');
+    // Absent from the table would read as absent from the network.
+    expect(quiet).toBeDefined();
+    expect(quiet?.currentRegisteredNodes).toBe(1);
+    expect(quiet?.nodes).toBe(0);
+    expect(quiet?.timesSelected).toBe(0);
+  });
+
+  /*
+   * The same rule eligibility already follows: a masternode registered after
+   * every round in the window was not passed over, it was not there. Counting
+   * it would manufacture a starved host out of a new one.
+   */
+  it('does not count a node the window could not have reached', () => {
+    const nodes = new Map([
+      ['mn-old', { host: 'host-a', operatorLabel: null, registeredHeight: 100 }],
+      ['mn-new', { host: 'host-a', operatorLabel: null, registeredHeight: 9_000 }],
+    ]);
+    const f = selectionFairness(
+      [
+        { ...round([['mn-old', true]], 1), expectedHeight: 200 },
+        { ...round([['mn-old', true]], 1), expectedHeight: 300 },
+      ],
+      nodes
+    );
+    const host = f.hosts.find((h) => h.host === 'host-a')!;
+    expect(host.currentRegisteredNodes).toBe(1);
+  });
+});
+
+/**
+ * The page summed the rows it had been sent, and the route sends the first 200.
+ * On a larger network that headline described a slice and called it the
+ * network.
+ */
+describe('totals', () => {
+  it('counts every node, whatever a caller later truncates', () => {
+    const members = Array.from({ length: 300 }, (_unused, i): [string, boolean] => [
+      `mn-${i}`,
+      i % 10 !== 0,
+    ]);
+    const f = selectionFairness([round(members, 300)], new Map(), 1);
+    expect(f.nodes).toHaveLength(300);
+    expect(f.totals.nodesCounted).toBe(300);
+    expect(f.totals.timesSelected).toBe(300);
+    // Every tenth member invalid.
+    expect(f.totals.timesInvalid).toBe(30);
+    expect(f.totals.worstInvalidRate).toBe(1);
+  });
+
+  it('reports no worst rate when nothing met the sample floor', () => {
+    const f = selectionFairness([round([['a', false]])], new Map(), 5);
+    expect(f.totals.timesInvalid).toBe(1);
+    expect(f.totals.worstInvalidRate).toBeNull();
+  });
+});

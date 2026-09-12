@@ -24,6 +24,7 @@ import type {
   Page as PageEnvelope,
   QuorumRoundDetail,
   QuorumRoundListItem,
+  SelectionFairness,
 } from '@devnet-deftrack/shared';
 
 /** A fixed instant, so nothing in a fixture depends on the wall clock. */
@@ -250,6 +251,53 @@ export function pageOf<T>(items: T[], overrides: Partial<PageEnvelope<T>> = {}):
     total: items.length,
     limit: 25,
     offset: 0,
+    ...overrides,
+  };
+}
+
+/** A fairness answer, shaped like the route's. */
+export function selectionFairness(
+  overrides: Partial<SelectionFairness> = {}
+): SelectionFairness {
+  const nodes = Array.from({ length: 5 }, (_unused, i) => ({
+    proTxHash: `${'e'.repeat(15)}${i}`,
+    operatorLabel: 'op-fixture-1',
+    host: 'host-fixture-1',
+    timesSelected: 20 - i,
+    timesInvalid: i === 0 ? 2 : 0,
+    selectionRate: (20 - i) / 50,
+    invalidRate: i === 0 ? 0.1 : null,
+  }));
+  return {
+    roundsConsidered: 50,
+    expectedSelectionRate: 0.3947,
+    minSamples: 5,
+    llmqName: V2_PROFILE,
+    heightRange: { from: 10_224, to: 11_400 },
+    nodes,
+    hosts: [
+      {
+        host: 'host-fixture-1',
+        // Seven registered, five of them drawn by this window: the two numbers
+        // the table used to conflate.
+        currentRegisteredNodes: 7,
+        nodes: 5,
+        timesSelected: 90,
+        timesInvalid: 2,
+        invalidRate: 2 / 90,
+      },
+      {
+        host: 'host-fixture-quiet',
+        currentRegisteredNodes: 3,
+        nodes: 0,
+        timesSelected: 0,
+        timesInvalid: 0,
+        invalidRate: null,
+      },
+    ],
+    neverSelected: [],
+    neverSelectedCount: 0,
+    totals: { nodesCounted: 5, timesSelected: 90, timesInvalid: 2, worstInvalidRate: 0.1 },
     ...overrides,
   };
 }
