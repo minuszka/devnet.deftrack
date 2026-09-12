@@ -83,10 +83,12 @@ test.describe('filters in the URL', () => {
     await app.goto(`/rounds?llmq=${V2_PROFILE}&status=failed&page=2`);
 
     await expect(page.locator('dd-page-rounds')).toHaveCount(1);
-    const calls = app.callsTo(ROUNDS);
     // One fetch, carrying everything the URL said: `page` is 1-based for the
-    // reader, `offset` is what the API takes.
-    expect(calls).toHaveLength(1);
+    // reader, `offset` is what the API takes. Polled, because the element
+    // existing is not the request having been made -- see the note on the
+    // clamping test below.
+    await expect.poll(() => app.callsTo(ROUNDS).length).toBe(1);
+    const calls = app.callsTo(ROUNDS);
     expect(calls[0]).toContain(`llmqName=${V2_PROFILE}`);
     expect(calls[0]).toContain('status=failed');
     expect(calls[0]).toContain('offset=50');
@@ -160,7 +162,16 @@ test.describe('filters in the URL', () => {
 
     // 100000 / 50 + 1
     await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('2001');
-    expect(app.callsTo(ROUNDS).at(-1) ?? '').toContain('offset=100000');
+    /*
+     * Polled, not read once.
+     *
+     * The URL settles before the request it causes has been issued, so reading
+     * the call list the moment the address bar is right reads it too early.
+     * This passed on a fast machine for two days and failed the first time CI
+     * ran it on a slower one -- the assertion was about timing, not about the
+     * behaviour it names.
+     */
+    await expect.poll(() => app.callsTo(ROUNDS).at(-1) ?? '').toContain('offset=100000');
   });
 
   test('fairness carries its profile and window', async ({ app, page }) => {
@@ -219,7 +230,7 @@ test.describe('filters in the URL', () => {
     await page.getByRole('button', { name: 'closed', exact: true }).click();
 
     await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBeNull();
-    expect(app.callsTo(EXPERIMENTS).at(-1) ?? '').toContain('offset=0');
+    await expect.poll(() => app.callsTo(EXPERIMENTS).at(-1) ?? '').toContain('offset=0');
   });
 
   /**
@@ -342,7 +353,7 @@ test.describe('filters in the URL: the remaining pages', () => {
     await page.reload();
 
     await expect(page.locator('dd-page-peers')).toHaveCount(1);
-    expect(app.callsTo(PEERS).at(-1) ?? '').toContain('topic=chainlock');
+    await expect.poll(() => app.callsTo(PEERS).at(-1) ?? '').toContain('topic=chainlock');
   });
 
   /* ── Staking: a window that refetches, and a view that must not ─────────── */
@@ -399,7 +410,7 @@ test.describe('filters in the URL: the remaining pages', () => {
     await app.goto('/staking?blocks=200&view=keys');
 
     await expect(page.locator('dd-page-staking')).toHaveCount(1);
-    expect(app.callsTo(STAKING).at(-1) ?? '').toContain('blocks=200');
+    await expect.poll(() => app.callsTo(STAKING).at(-1) ?? '').toContain('blocks=200');
     // And the view really is the chosen one, not merely a parameter nobody read.
     await expect(page.locator('.toggle button.on')).toHaveText(/payout keys/i);
   });
