@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { expect, ok, test } from './harness.js';
 import { healthSnapshot } from './fixtures/api.js';
 import { overviewStubs } from './fixtures/stubs.js';
@@ -36,5 +37,111 @@ test.describe('harness guards', () => {
     await expect.poll(() => app.violations).toEqual([
       expect.stringContaining('external request refused:'),
     ]);
+  });
+});
+
+/**
+ * Held responses, and the one promise `release()` makes: when it returns, the
+ * page has read the answer. Every assertion right after a release below is
+ * deliberately NOT polled -- a poll would pass against a release that returned
+ * too early, and hide exactly the defect these tests exist to catch.
+ */
+test.describe('held responses', () => {
+  const PROBE = '/api/v1/harness-probe';
+
+  async function inPage<T>(page: Page, key: string): Promise<T | undefined> {
+    return page.evaluate((name) => (window as unknown as Record<string, unknown>)[name], key) as Promise<
+      T | undefined
+    >;
+  }
+
+  test('release returns only once the page has read the answer', async ({ app, page }) => {
+    const gate = app.gate();
+    app.stub({ ...overviewStubs(), [PROBE]: { body: ok({ n: 1 }), gate } });
+    await app.goto('/');
+    // The page waits a real 300 ms between receiving the response and reading
+    // it. A release() that returned on delivery alone comes back inside that
+    // window, and the read below finds nothing.
+    await page.evaluate((path) => {
+      const target = window as unknown as Record<string, unknown>;
+      void fetch(path).then(async (response) => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        target['probed'] = await response.json();
+      });
+    }, PROBE);
+    await gate.waitForHeld(1);
+    expect(gate.held).toEqual([PROBE]);
+    expect(await inPage(page, 'probed')).toBeUndefined();
+
+    await gate.release();
+    expect(await inPage(page, 'probed')).toEqual(ok({ n: 1 }));
+    expect(gate.held).toEqual([]);
+  });
+
+  test('held answers land in the order the test releases them, not the order they were asked', async ({
+    app,
+    page,
+  }) => {
+    const gate = app.gate();
+    app.stub({
+      ...overviewStubs(),
+      [PROBE]: (url) => ({ body: ok({ n: Number(url.searchParams.get('n')) }), gate }),
+    });
+    await app.goto('/');
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>)['landed'] = [];
+    });
+    const ask = (n: number): Promise<void> =>
+      page.evaluate(
+        ({ path, n }) => {
+          const target = window as unknown as { landed: number[] };
+          void fetch(`${path}?n=${n}`)
+            .then((response) => response.json())
+            .then((body: { data: { n: number } }) => {
+              target.landed.push(body.data.n);
+            });
+        },
+        { path: PROBE, n }
+      );
+    // Asked one after the other, so "oldest first" would answer 1 then 2.
+    await ask(1);
+    await gate.waitForHeld(1);
+    await ask(2);
+    await gate.waitForHeld(2);
+
+    await gate.release(`${PROBE}?n=2`);
+    expect(await inPage(page, 'landed')).toEqual([2]);
+    await gate.release(`${PROBE}?n=1`);
+    expect(await inPage(page, 'landed')).toEqual([2, 1]);
+  });
+
+  test('releasing what is not held is an error, not a silent pass', async ({ app }) => {
+    const gate = app.gate();
+    app.stub(overviewStubs());
+    await app.goto('/');
+    await expect(gate.release()).rejects.toThrow('nothing to release; held: nothing');
+    await expect(gate.release(PROBE)).rejects.toThrow(`nothing to release for ${PROBE}; held: nothing`);
+  });
+
+  test('release works while the page clock is paused', async ({ app, page }) => {
+    // Measured: an installed clock alone keeps the page's timers running, so
+    // that case proves nothing here. A PAUSED clock stops them, and waiting
+    // for the read must not depend on one firing.
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-09-11T09:00:01Z'));
+    const gate = app.gate();
+    app.stub({ ...overviewStubs(), [PROBE]: { body: ok({ n: 7 }), gate } });
+    await app.goto('/');
+    await page.evaluate((path) => {
+      const target = window as unknown as Record<string, unknown>;
+      void fetch(path)
+        .then((response) => response.json())
+        .then((body) => {
+          target['probed'] = body;
+        });
+    }, PROBE);
+    await gate.waitForHeld(1);
+    await gate.release();
+    expect(await inPage(page, 'probed')).toEqual(ok({ n: 7 }));
   });
 });
