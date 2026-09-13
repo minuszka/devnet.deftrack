@@ -15,7 +15,7 @@ import {
 import { num } from '../lib/format.js';
 import { canonicalJson, draftScope } from '../lib/draftIdentity.js';
 import { eligibility } from '../lib/targetEligibility.js';
-import { acceptsRunUpdate, runSafety } from '../lib/simulationRunState.js';
+import { acceptsRunUpdate, runSafety, type EvidenceRead } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
 type Network = 'regtest' | 'devnet';
@@ -107,6 +107,7 @@ export class DdSimulationControl extends LitElement {
     recovery: { attribute: false },
     preflight: { attribute: false },
     planError: { attribute: false },
+    evidenceRead: { attribute: false },
     _scenarioId: { state: true },
     _network: { state: true },
     _mode: { state: true },
@@ -148,6 +149,11 @@ export class DdSimulationControl extends LitElement {
   preflight: SimulationPreflight | null = null;
   /** Set when the dashboard's read of the saved plan failed; null while it is loading or loaded. */
   planError: string | null = null;
+  /**
+   * Whether `recovery` is an answer at all. Until the dashboard says it has been
+   * read, a null there means "not read", never "none recorded".
+   */
+  evidenceRead: EvidenceRead = { state: 'loading' };
   private _scenarioId = 'mn-stop';
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
@@ -1062,16 +1068,26 @@ export class DdSimulationControl extends LitElement {
    */
   private _safetyLine(run: SimulationControlRun): TemplateResult {
     const safety = runSafety(run, this.recovery);
+    const read = this.evidenceRead;
+    // What the evidence says is only asked once it has been read: before that,
+    // and after a read that failed, a null here is not the server's "none".
     const proof =
-      safety.allClear === 'unknown'
-        ? html`<span class="state-line">
-            No recovery proof has been recorded for this run yet.
+      read.state === 'unavailable'
+        ? html`<span class="state-line evidence-unread">
+            The recovery evidence for this run could not be read (${read.message}). That says nothing
+            either way about whether a proof has been recorded.
           </span>`
-        : html`<span class=${safety.allClear === 'yes' ? 'recovery-ok' : 'recovery-bad'}>
-            Recovery proof:
-            ${safety.allClear === 'yes' ? 'all targets clear' : 'manual attention required'}
-            (${num(this.recovery?.targets.length ?? 0)} targets checked)
-          </span>`;
+        : read.state === 'loading'
+          ? html`<span class="state-line">The recovery evidence for this run is still being read.</span>`
+          : safety.allClear === 'unknown'
+            ? html`<span class="state-line">
+                No recovery proof has been recorded for this run yet.
+              </span>`
+            : html`<span class=${safety.allClear === 'yes' ? 'recovery-ok' : 'recovery-bad'}>
+                Recovery proof:
+                ${safety.allClear === 'yes' ? 'all targets clear' : 'manual attention required'}
+                (${num(this.recovery?.targets.length ?? 0)} targets checked)
+              </span>`;
     return html`
       <div class=${safety.faultMayBeActive ? 'recovery-bad' : ''}>
         ${safety.faultMayBeActive
@@ -1079,7 +1095,18 @@ export class DdSimulationControl extends LitElement {
           : 'No fault outstanding. '}
         ${proof}
       </div>
+      ${read.state === 'unavailable'
+        ? html`<div class="actions">
+            <!-- A read, not the "Retry recovery proof" command below it: that one
+                 runs recovery on the lab, and a failed read is never a reason to. -->
+            <button class="btn" @click=${this._requestEvidenceReread}>Read the evidence again</button>
+          </div>`
+        : nothing}
     `;
+  }
+
+  private _requestEvidenceReread(): void {
+    this.dispatchEvent(new CustomEvent('evidence-reread-requested', { bubbles: true, composed: true }));
   }
 
   /**

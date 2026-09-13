@@ -362,6 +362,11 @@ test.describe('run status', () => {
       },
     });
     await page.clock.fastForward(5_000);
+    // The failed read has to have been READ before anything is asserted. Without
+    // this the assertions below ran against the state from before the refresh,
+    // passed whatever the refresh did, and a negative control on V7 (2026-09-13)
+    // stayed green with the rule it guards removed.
+    await app.waitUntilRead(`/api/v1/admin/simulations/runs/${RUN_A}/recovery`, 2);
 
     await expect(page.locator('.approval')).toContainText('all targets clear');
     await expect(page.locator('.approval')).not.toContainText('No recovery proof has been recorded');
@@ -897,5 +902,149 @@ test.describe('run status', () => {
     await expect(page.locator('.approval')).toContainText('all targets clear');
     await expect(page.locator('.approval')).not.toContainText('No recovery proof has been recorded');
     await expect(page.locator('.timeline')).toContainText('recovery_proven');
+  });
+
+  const NONE_RECORDED = 'No recovery proof has been recorded';
+  const EVIDENCE_UNREAD = 'The recovery evidence for this run could not be read';
+  const EVIDENCE_LOADING = 'The recovery evidence for this run is still being read';
+  const READ_AGAIN = 'Read the evidence again';
+
+  /**
+   * V7. The first read of the evidence turned "could not be read" into "none
+   * recorded".
+   *
+   * J2 separated the two for a refresh -- a failed read writes nothing, the
+   * server's "no proof" writes null -- but the first read of a selection still
+   * caught its own failure into null. So a 503 there printed "No recovery proof
+   * has been recorded for this run yet": a statement about the lab that the
+   * server never made. Evidence that could not be read says nothing either way,
+   * and the panel has to say exactly that.
+   */
+  for (const [label, answer, shown, notShown] of [
+    ['cannot be read', { status: 503, body: fail('the evidence store did not answer') }, EVIDENCE_UNREAD, NONE_RECORDED],
+    ['says there is none', { body: ok(evidence(null)) }, NONE_RECORDED, EVIDENCE_UNREAD],
+  ] as const) {
+    test(`evidence that ${label} is said as such on the first read`, async ({ app, page }) => {
+      app.stub({
+        ...adminSessionStubs(),
+        ...runStubs({ runKey: RUN_A, status: 'recovery', live: true, faultMayBeActive: true }),
+        [`${A}/recovery`]: answer,
+      });
+      await stoppedClock(page);
+      await app.goto(`/admin?run=${RUN_A}`);
+      await app.waitUntilRead(`${A}/recovery`, 1);
+
+      await expect(page.locator(STATUS)).toContainText('recovery');
+      await expect(page.locator('.approval')).toContainText(shown);
+      await expect(page.locator('.approval')).not.toContainText(notShown);
+      await expect(page.locator('.approval')).not.toContainText('all targets clear');
+      // Either way the run's own controls stay: an unreadable document is not a
+      // reason to take away the way out of a fault.
+      await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Retry recovery proof' })).toBeVisible();
+    });
+  }
+
+  /**
+   * V7: reading the evidence again is a read.
+   *
+   * The panel already has a "Retry recovery proof" button, and it is a command:
+   * it asks the server to run recovery on the lab. A failed READ must never be
+   * retried through it. The read-again control sends GETs and nothing else.
+   */
+  test('unreadable evidence can be read again, and reading it again asks the server to do nothing', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'recovery', live: true, faultMayBeActive: true }),
+      [`${A}/recovery`]: { status: 503, body: fail('the evidence store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+    await expect(page.locator('.approval')).toContainText(EVIDENCE_UNREAD);
+
+    const retry = app.gate();
+    app.stub({ [`${A}/recovery`]: { body: ok(evidence(CLEAR)), gate: retry } });
+    const before = app.requests.length;
+    await page.getByRole('button', { name: READ_AGAIN }).click();
+    await retry.waitForHeld(1);
+    // While it is out: being read, and no second read-again on top of it.
+    await expect(page.locator('.approval')).toContainText(EVIDENCE_LOADING);
+    await expect(page.getByRole('button', { name: READ_AGAIN })).toHaveCount(0);
+
+    await retry.release();
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+    await expect(page.getByRole('button', { name: READ_AGAIN })).toHaveCount(0);
+
+    const sent = app.requests.slice(before);
+    expect(sent.map((entry) => entry.path)).toContain(`${A}/recovery`);
+    expect(sent.filter((entry) => entry.method !== 'GET')).toEqual([]);
+  });
+
+  /** V7 under V2's rule: a read-again that answers late cannot replace newer evidence. */
+  test('a read-again that answers late cannot replace newer evidence', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'recovery', revision: 4, live: true, faultMayBeActive: true }),
+      [`${A}/recovery`]: { status: 503, body: fail('the evidence store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+    await expect(page.locator('.approval')).toContainText(EVIDENCE_UNREAD);
+
+    const older = app.gate();
+    let proofs = 0;
+    app.stub({
+      [`${A}/recovery`]: () => {
+        proofs += 1;
+        return proofs === 1 ? { body: ok(evidence(null)), gate: older } : { body: ok(evidence(CLEAR)) };
+      },
+      [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'completed', revision: 5, live: true })) },
+    });
+    await page.getByRole('button', { name: READ_AGAIN }).click();
+    await older.waitForHeld(1);
+
+    // The run completes, and the refresh that follows brings the proof at once.
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(`${A}/recovery`, 2);
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+
+    await older.release(`${A}/recovery`);
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+    await expect(page.locator('.approval')).not.toContainText(NONE_RECORDED);
+  });
+
+  /**
+   * V7: the fourth state. Since V1 the panel can show a run before its evidence
+   * has been read at all, and "not read yet" is no more "none recorded" than
+   * "could not be read" is.
+   */
+  test('evidence still being read is said as such, not as none recorded', async ({ app, page }) => {
+    const proof = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+      [`${A}/recovery`]: { body: ok(evidence(null)), gate: proof },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await proof.waitForHeld(1);
+
+    // The poll describes the run; the first read and the poll's refresh are both still waiting on the evidence.
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+    await proof.waitForHeld(2);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+    await expect(page.locator('.approval')).toContainText(EVIDENCE_LOADING);
+    await expect(page.locator('.approval')).not.toContainText(NONE_RECORDED);
+
+    await proof.release();
+    await proof.release();
+    await expect(page.locator('.approval')).toContainText(NONE_RECORDED);
+    await expect(page.locator('.approval')).not.toContainText(EVIDENCE_LOADING);
   });
 });

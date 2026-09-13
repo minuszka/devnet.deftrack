@@ -94,6 +94,21 @@ export function runSafety(
   };
 }
 
+/**
+ * Whether the recovery evidence has been READ -- a separate question from
+ * what it says.
+ *
+ * `null` evidence is the server saying no proof has been recorded. It is only
+ * that once a read has actually answered: before the first answer it is "not
+ * read yet", and after a read that failed it is "could not be read". Both say
+ * nothing either way about the lab, and printing "none recorded" for either is
+ * a statement the server never made.
+ */
+export type EvidenceRead =
+  | { state: 'loading' }
+  | { state: 'read' }
+  | { state: 'unavailable'; message: string };
+
 /** What the panel holds about one selected run. */
 export interface SelectedRun {
   runKey: string;
