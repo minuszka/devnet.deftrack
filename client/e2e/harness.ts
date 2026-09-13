@@ -20,8 +20,11 @@ import { test as base, expect, type Page } from '@playwright/test';
  * correctly for a given response. It is not evidence about the server, the
  * database, the node, or the devnet.
  *
- * It also notes every JSON body the page reads, as pathname and query, so a
- * test can wait until a response has been USED rather than merely sent. That
+ * It also notes every JSON body the page reads -- as pathname and query, and
+ * as the number the harness gave that answer in a test-only
+ * `x-harness-response-id` header -- so a test can wait until a response has
+ * been USED rather than merely sent, and until THAT response has been used
+ * rather than another one for the same URL. That
  * is an observer and nothing more: the page gets back the very promise it
  * asked for, and the note is taken in a reaction registered before the page's
  * own. See `ResponseGate`, which is what needs it.
@@ -114,6 +117,8 @@ export class AppHarness {
   private stubs: ApiStubs = {};
   private violationsExpected = false;
   private readonly gates: ResponseGate[] = [];
+  /** Numbers every API answer, so a read can be tied to the response it read. */
+  private responseSeq = 0;
 
   constructor(
     private readonly page: Page,
@@ -193,6 +198,23 @@ export class AppHarness {
       .toBeGreaterThanOrEqual(count);
   }
 
+  /** Whether the page has read, as JSON, the one response the harness numbered `responseId`. */
+  async hasRead(responseId: string): Promise<boolean> {
+    const found = await this.page.evaluate((wanted) => {
+      const ids = (window as unknown as { __ddHarnessReadIds?: Array<string | null> }).__ddHarnessReadIds;
+      return ids === undefined ? null : ids.includes(wanted);
+    }, responseId);
+    if (found === null) throw new Error('no read log on this page: it was not loaded through the harness');
+    return found;
+  }
+
+  /** Wait until the page has read that very response. See `waitUntilRead` for what "read" covers. */
+  async waitUntilResponseRead(responseId: string, path: string): Promise<void> {
+    await expect
+      .poll(() => this.hasRead(responseId), { message: `the page read the response it was given for ${path}` })
+      .toBe(true);
+  }
+
   /** Teardown: a request still held when the test ends is abandoned, not answered. */
   abandonHeld(): void {
     for (const gate of this.gates) gate.abandon();
@@ -200,10 +222,12 @@ export class AppHarness {
 
   async install(): Promise<void> {
     await this.page.addInitScript(() => {
-      const target = window as unknown as { __ddHarnessRead?: string[] };
+      const target = window as unknown as { __ddHarnessRead?: string[]; __ddHarnessReadIds?: Array<string | null> };
       if (target.__ddHarnessRead !== undefined) return;
       const read: string[] = [];
+      const readIds: Array<string | null> = [];
       target.__ddHarnessRead = read;
+      target.__ddHarnessReadIds = readIds;
       const original = Response.prototype.json;
       Response.prototype.json = function json(this: Response): Promise<unknown> {
         const promise = original.call(this) as Promise<unknown>;
@@ -214,10 +238,14 @@ export class AppHarness {
         } catch {
           // A response with no URL is noted as it is.
         }
+        // Which answer this is, as the harness numbered it. A URL cannot say:
+        // two answers for the same path and query are two different reads.
+        const responseId = this.headers.get('x-harness-response-id');
         // Registered before the caller's own reaction, so the note is taken
         // first and the caller's continuation runs in the same checkpoint.
         const note = (): void => {
           read.push(path);
+          readIds.push(responseId);
         };
         promise.then(note, note);
         return promise;
@@ -268,7 +296,9 @@ export class AppHarness {
           return;
         }
         const stub = typeof handler === 'function' ? handler(url, request.method()) : handler;
-        const ticket = stub.gate?.hold(path, () => request.failure() !== null);
+        this.responseSeq += 1;
+        const responseId = `r${this.responseSeq}`;
+        const ticket = stub.gate?.hold(path, () => request.failure() !== null, responseId);
         if (ticket !== undefined && !(await ticket.released)) {
           // Abandoned at teardown. Aborted rather than answered: an answer
           // delivered while the test is being torn down could set off requests
@@ -285,6 +315,9 @@ export class AppHarness {
           await route.fulfill({
             status: stub.status ?? 200,
             contentType: stub.contentType ?? 'application/json',
+            // Test-only: names this answer for the read log. The body, the
+            // status and the promise the page gets back are untouched.
+            headers: { 'x-harness-response-id': responseId },
             body: stub.raw ?? JSON.stringify(stub.body ?? null),
           });
           delivered = true;
@@ -339,6 +372,8 @@ export class AppHarness {
 
 interface HeldRequest {
   path: string;
+  /** The number the harness gives this answer; its read is looked up by it. */
+  responseId: string;
   letGo: (answer: boolean) => void;
   delivered: Promise<boolean>;
   /** Whether the page gave up on this request while it was held. */
@@ -375,7 +410,7 @@ export class ResponseGate {
   }
 
   /** Called by the harness when a request reaches a stub carrying this gate. */
-  hold(path: string, cancelled: () => boolean = () => false): HeldTicket {
+  hold(path: string, cancelled: () => boolean = () => false, responseId = `unnumbered-${path}`): HeldTicket {
     let letGo: (answer: boolean) => void = () => undefined;
     let settle: (delivered: boolean) => void = () => undefined;
     const released = new Promise<boolean>((resolve) => {
@@ -384,7 +419,7 @@ export class ResponseGate {
     const delivered = new Promise<boolean>((resolve) => {
       settle = resolve;
     });
-    this.queue.push({ path, letGo, delivered, cancelled });
+    this.queue.push({ path, responseId, letGo, delivered, cancelled });
     return { released, settle };
   }
 
@@ -427,12 +462,14 @@ export class ResponseGate {
       entry.letGo(false);
       throw new Error(`the page cancelled its request to ${entry.path} while it was held`);
     }
-    const before = await this.app.readCount(entry.path);
     entry.letGo(true);
     if (!(await entry.delivered)) {
       throw new Error(`the answer to ${entry.path} did not reach the page: it navigated away while held`);
     }
-    await this.app.waitUntilRead(entry.path, before + 1);
+    // This very answer, not "one more read of this URL": another response for
+    // the same path, read first, used to satisfy a count while this body was
+    // still unread (W3 of the re-review).
+    await this.app.waitUntilResponseRead(entry.responseId, entry.path);
   }
 
   /** Let every waiting request go unanswered. For teardown. */
