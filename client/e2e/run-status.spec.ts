@@ -1047,4 +1047,112 @@ test.describe('run status', () => {
     await expect(page.locator('.approval')).toContainText(NONE_RECORDED);
     await expect(page.locator('.approval')).not.toContainText(EVIDENCE_LOADING);
   });
+
+  const SIGN_IN = 'Continue to admin dashboard';
+
+  async function expectSignedOut(page: Page): Promise<void> {
+    await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+    await expect(page.locator(STATUS)).toHaveCount(0);
+  }
+
+  /**
+   * W2 of the re-review. A 401 on the evidence read was an evidence outage.
+   *
+   * The evidence helper V7 introduced turned every failure into "could not be
+   * read", 401 included -- as the refresh's history read had long turned it
+   * into nothing at all. So an expired session left the private panel open,
+   * offering to read the evidence again, and on a finished run no status poll
+   * would come along to notice. A 401 is the session ending, on every read.
+   */
+  test('a 401 on the first evidence read ends the session', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'completed', revision: 9, live: true }),
+      [`${A}/recovery`]: { status: 401, body: fail('no admin session') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+
+    await expectSignedOut(page);
+    await expect(page.getByText(EVIDENCE_UNREAD)).toHaveCount(0);
+  });
+
+  test('a 401 on reading the evidence again ends the session, and still asks for nothing else', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'recovery', live: true, faultMayBeActive: true }),
+      [`${A}/recovery`]: { status: 503, body: fail('the evidence store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+    await expect(page.locator('.approval')).toContainText(EVIDENCE_UNREAD);
+
+    app.stub({ [`${A}/recovery`]: { status: 401, body: fail('no admin session') } });
+    const before = app.requests.length;
+    await page.getByRole('button', { name: READ_AGAIN }).click();
+    await app.waitUntilRead(`${A}/recovery`, 2);
+
+    await expectSignedOut(page);
+    expect(app.requests.slice(before).filter((entry) => entry.method !== 'GET')).toEqual([]);
+  });
+
+  test('a 401 on a refreshed timeline ends the session', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+
+    // The run moves, and the refresh that follows finds the session gone.
+    app.stub({
+      [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'recovery', revision: 4, live: true, faultMayBeActive: true })) },
+      [`${A}/history`]: { status: 401, body: fail('no admin session') },
+    });
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(`${A}/history`, 2);
+
+    await expectSignedOut(page);
+  });
+
+  /**
+   * W2's other half: a 401 belongs to the read that got it. One that arrives
+   * for a run the operator has already left says nothing the reads for the
+   * current run will not say themselves, and must not throw them out.
+   */
+  test('a late 401 for a run the operator has left does not end the session', async ({ app, page }) => {
+    const late = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+      ...runStubs({ runKey: RUN_B, status: 'cooldown', revision: 3, live: true }),
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+
+    app.stub({
+      [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'recovery', revision: 4, live: true, faultMayBeActive: true })) },
+      [`${A}/recovery`]: { status: 401, body: fail('no admin session'), gate: late },
+    });
+    await page.clock.fastForward(5_000);
+    await late.waitForHeld(1);
+
+    await page.evaluate((key) => {
+      history.pushState(null, '', `/admin?run=${key}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, RUN_B);
+    await expect(page.locator(STATUS)).toContainText(RUN_B);
+
+    await late.release();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+    await expect(page.locator(STATUS)).toContainText(RUN_B);
+  });
 });

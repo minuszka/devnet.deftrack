@@ -72,12 +72,28 @@ function messageOf(error: unknown): string {
 }
 
 /** One read of a run's recovery evidence: what it says, or why it could not be read. */
-type EvidenceAnswer = { read: true; recovery: RecoveryReportView | null } | { read: false; message: string };
+type EvidenceAnswer =
+  | { read: true; recovery: RecoveryReportView | null }
+  | { read: false; message: string; sessionEnded: boolean };
 
+const SESSION_ENDED = 'Your session ended. Sign in again to view the private dashboard.';
+
+/** A 401 from the admin API is the session ending, whichever read received it. */
+function endsSession(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+/**
+ * One read of a run's recovery evidence: what it says, or why it could not be
+ * read -- and whether "why" is that the session has ended.
+ *
+ * That last part was folded into "could not be read" (W2 of the re-review):
+ * an expired session left the private panel open and offering to read again.
+ */
 function readEvidence(runKey: string): Promise<EvidenceAnswer> {
   return adminApi.recovery(runKey).then(
     (answer): EvidenceAnswer => ({ read: true, recovery: answer.recovery }),
-    (error: unknown): EvidenceAnswer => ({ read: false, message: messageOf(error) })
+    (error: unknown): EvidenceAnswer => ({ read: false, message: messageOf(error), sessionEnded: endsSession(error) })
   );
 }
 
@@ -586,6 +602,12 @@ export class DdAdminShell extends LitElement {
       readEvidence(runKey),
     ]);
     if (generation !== this._selectionGeneration) return;
+    // After the generation check, not before: a 401 for a selection the
+    // operator has already left is not this selection's news.
+    if (!recovery.read && recovery.sessionEnded) {
+      this._endSession(SESSION_ENDED);
+      return;
+    }
     /*
      * The plan is immutable and is always taken. The run that comes with it is
      * a snapshot like any other, and goes through the same revision rule as the
@@ -723,7 +745,9 @@ export class DdAdminShell extends LitElement {
   private async _refreshSelectionDetail(runKey: string, generation: number): Promise<void> {
     const request = ++this._detailRequests;
     const [history, recovery] = await Promise.all([
-      adminApi.history(runKey).catch(() => null),
+      // A failed timeline refresh keeps the timeline -- unless it failed
+      // because the session ended, which a null here used to hide.
+      adminApi.history(runKey).catch((error: unknown) => (endsSession(error) ? SESSION_ENDED : null)),
       /*
        * A failed read and "the server says there is no proof" are different
        * answers. Collapsing the two would let a timed-out request report that a
@@ -734,6 +758,10 @@ export class DdAdminShell extends LitElement {
       readEvidence(runKey),
     ]);
     if (generation !== this._selectionGeneration || this._selectedRunKey !== runKey) return;
+    if (history === SESSION_ENDED || (!recovery.read && recovery.sessionEnded)) {
+      this._endSession(SESSION_ENDED);
+      return;
+    }
     if (history !== null) this._takeHistory(history, request);
     this._takeEvidence(recovery, request);
   }
