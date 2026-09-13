@@ -51,6 +51,8 @@ export class DdHealthChart extends LitElement {
   private _hover: number | null = null;
   private _ro: ResizeObserver | null = null;
   private _raf = 0;
+  /** The pending width change from the resize observer, if any. */
+  private _resizeFrame = 0;
   private _pendingHover: number | null = null;
 
   static override styles = [
@@ -178,7 +180,21 @@ export class DdHealthChart extends LitElement {
     this._width = Math.max(600, this.clientWidth || 900);
     this._ro = new ResizeObserver((entries) => {
       const w = Math.floor(entries[0]?.contentRect.width ?? 0);
-      if (w > 0 && w !== this._width) this._width = Math.max(600, w);
+      if (w <= 0) return;
+      /*
+       * A frame later, not inside the callback. This chart's height follows its
+       * width (heightFor), so taking a new width inside the observer resized the
+       * very element being observed during its own delivery -- the browser's
+       * "ResizeObserver loop completed with undelivered notifications", seven
+       * times in one resize sweep of the front page. The other chart has a
+       * fixed height and never looped.
+       */
+      if (this._resizeFrame !== 0) cancelAnimationFrame(this._resizeFrame);
+      this._resizeFrame = requestAnimationFrame(() => {
+        this._resizeFrame = 0;
+        const next = Math.max(600, w);
+        if (next !== this._width) this._width = next;
+      });
     });
     this._ro.observe(this);
   }
@@ -188,6 +204,8 @@ export class DdHealthChart extends LitElement {
     this._ro?.disconnect();
     this._ro = null;
     if (this._raf) cancelAnimationFrame(this._raf);
+    if (this._resizeFrame) cancelAnimationFrame(this._resizeFrame);
+    this._resizeFrame = 0;
   }
 
   private _x(i: number): number {
