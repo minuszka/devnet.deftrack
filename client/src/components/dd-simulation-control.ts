@@ -337,6 +337,27 @@ export class DdSimulationControl extends LitElement {
   /** Non-empty while the Advanced text cannot be read. Blocks Prepare. */
   private _paramsError = '';
 
+  /**
+   * The Advanced text cannot be read, so the structured editors are locked.
+   *
+   * Every field edit, and a change of scenario, writes the object and used to
+   * drop the text with it: a half-finished JSON edit vanished the moment Count
+   * was touched, replaced without a word by the last object that parsed. The
+   * text is left only by finishing it or by discarding it on purpose. The
+   * network, the mode and the selected run's own controls do not touch the
+   * parameters and stay usable.
+   */
+  private get _paramsLocked(): boolean {
+    return this._paramsError !== '';
+  }
+
+  /** Throw the unreadable text away, back to the last parameters that could be read. */
+  private _discardParamsText(): void {
+    this._paramsText = null;
+    this._paramsError = '';
+    this._draftChanged();
+  }
+
   /** The Advanced JSON view is collapsed until somebody asks for it. */
   private _advanced = false;
 
@@ -743,7 +764,7 @@ export class DdSimulationControl extends LitElement {
         <div class="card-head"><h3 class="card-title">1. Prepare and preview</h3><div class="page-sub mono">no remote action</div></div>
         <div class="form-grid">
           <label><span>Scenario</span>
-            <select .value=${this._scenarioId} @change=${this._selectScenario} ?disabled=${this._busy}>
+            <select .value=${this._scenarioId} @change=${this._selectScenario} ?disabled=${this._busy || this._paramsLocked}>
               ${this.scenarios.map((scenario) => html`<option value=${scenario.scenarioId}>${scenario.title} · ${scenario.riskClass}</option>`)}
             </select>
           </label>
@@ -823,7 +844,7 @@ export class DdSimulationControl extends LitElement {
             id=${id}
             .value=${String(value ?? '')}
             @change=${(e: Event) => this._setParam(field.name, (e.target as HTMLSelectElement).value)}
-            ?disabled=${this._busy}
+            ?disabled=${this._busy || this._paramsLocked}
           >
             ${(field.values ?? []).map((v: string) => html`<option value=${v}>${v}</option>`)}
           </select>
@@ -855,7 +876,7 @@ export class DdSimulationControl extends LitElement {
             // a half-typed number into a refused request.
             this._setParam(field.name, raw === '' ? undefined : Number(raw));
           }}
-          ?disabled=${this._busy}
+          ?disabled=${this._busy || this._paramsLocked}
           required=${field.required ? true : nothing}
         />
         <small class="field-range"
@@ -895,7 +916,7 @@ export class DdSimulationControl extends LitElement {
     const usable = rows.filter((r) => r.verdict.ok).length;
 
     return html`
-      <fieldset class="wide target-chooser" ?disabled=${this._busy}>
+      <fieldset class="wide target-chooser" ?disabled=${this._busy || this._paramsLocked}>
         <legend>
           ${field.label}
           ${field.required ? nothing : html`<em class="optional">optional</em>`}
@@ -999,7 +1020,12 @@ export class DdSimulationControl extends LitElement {
         ${this._paramsError
           ? html`<div class="alert" role="alert">
               The parameters cannot be read: ${this._paramsError}. What you typed is kept; nothing
-              will be prepared until it parses.
+              will be prepared until it parses, and the fields above and the scenario are locked so
+              that nothing replaces it.
+              <div class="actions" style="margin-top:var(--sp-3)">
+                <button type="button" class="btn" @click=${this._discardParamsText}>Discard the unreadable JSON</button>
+                <small>Discarding returns to the last parameters that could be read.</small>
+              </div>
             </div>`
           : nothing}
       </div>

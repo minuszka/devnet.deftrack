@@ -1,5 +1,5 @@
 import { expect, ok, test, type ApiStubs, type AppHarness } from './harness.js';
-import { adminSessionStubs, controlRun, runStubs, savedPlan, SCENARIO_STUBS } from './fixtures/admin.js';
+import { adminSessionStubs, controlRun, labRegistry, runStubs, savedPlan, SCENARIO_STUBS } from './fixtures/admin.js';
 
 /**
  * Day 15: the four scenarios that need no target chooser, as forms.
@@ -113,6 +113,97 @@ test.describe('scenario forms', () => {
     await page.getByRole('button', { name: PREPARE, exact: true }).click();
     await expect.poll(() => app.requestsTo(RUNS, 'POST').length).toBe(1);
     expect(lastCreate(app)).toEqual({ count: 2, durationSeconds: 60 });
+  });
+
+  /**
+   * V5 of the final review. The text was kept -- until the next form edit.
+   *
+   * Any structured field, and a change of scenario, wrote the object and
+   * dropped the Advanced text with it: type `{"count": 7, "durationSeconds":`,
+   * touch Count, and the half-finished edit was gone, replaced without a word by
+   * JSON built from the last object that had parsed. So the structured editors
+   * are locked while the text cannot be read, and leaving that state is either
+   * finishing the JSON or saying, with a button, to throw it away.
+   */
+  test('an unreadable edit locks the fields and the scenario, and keeps the text through what stays usable', async ({
+    app,
+    page,
+  }) => {
+    await openAdmin(app);
+    await page.getByRole('button', { name: /Advanced: the parameters as JSON/ }).click();
+    const unfinished = '{"count": 7, "durationSeconds":';
+    await page.locator('textarea').fill(unfinished);
+    await expect(page.locator('.alert[role="alert"]')).toContainText('cannot be read');
+
+    await expect(page.locator('#param-count')).toBeDisabled();
+    await expect(page.locator('#param-durationSeconds')).toBeDisabled();
+    await expect(page.getByRole('combobox', { name: /^Scenario/ })).toBeDisabled();
+
+    // Network and mode do not touch the parameters, so they stay usable -- and
+    // using them keeps the text exactly as typed.
+    await page.getByRole('combobox', { name: /^Network/ }).selectOption('devnet');
+    await page.getByRole('combobox', { name: /^Mode/ }).selectOption('live');
+    await expect(page.locator('textarea')).toHaveValue(unfinished);
+  });
+
+  test('an unreadable edit locks an enum field too', async ({ app, page }) => {
+    await openAdmin(app);
+    await page.getByRole('combobox', { name: /^Scenario/ }).selectOption('dsl-fault');
+    await expect(page.locator('#param-faultKind')).toBeEnabled();
+
+    await page.getByRole('button', { name: /Advanced: the parameters as JSON/ }).click();
+    await page.locator('textarea').fill('{"faultKind": ');
+    await expect(page.locator('#param-faultKind')).toBeDisabled();
+  });
+
+  test('an unreadable edit locks a target chooser too', async ({ app, page }) => {
+    await openAdmin(app, adminSessionStubs({ targets: labRegistry() }));
+    await page.getByRole('combobox', { name: /^Scenario/ }).selectOption('clear-recover');
+    // A control inside it, not the fieldset: Playwright never calls a fieldset
+    // itself disabled, so asserting on it measured nothing -- the first version
+    // of this test did, and passed on the unfixed panel's enabled chooser too.
+    const eligible = page.locator('#target-targetIds-lab-mn-1');
+    await expect(eligible).toBeEnabled();
+
+    await page.getByRole('button', { name: /Advanced: the parameters as JSON/ }).click();
+    await page.locator('textarea').fill('{"targetIds": [');
+    await expect(eligible).toBeDisabled();
+  });
+
+  test('discarding the unreadable text returns to the last parameters that could be read', async ({
+    app,
+    page,
+  }) => {
+    await openAdmin(app);
+    await page.getByRole('button', { name: /Advanced: the parameters as JSON/ }).click();
+    await page.locator('textarea').fill('{"count": 3, "durationSeconds": 60}');
+    await expect(page.locator('#param-count')).toHaveValue('3');
+
+    await page.locator('textarea').fill('{"count": 9,');
+    const discard = page.getByRole('button', { name: 'Discard the unreadable JSON', exact: true });
+    // What discarding does is said beside the button, before anyone presses it.
+    await expect(page.locator('.alert[role="alert"]')).toContainText('last parameters that could be read');
+
+    await discard.click();
+    expect(JSON.parse(await page.locator('textarea').inputValue())).toEqual({ count: 3, durationSeconds: 60 });
+    await expect(page.locator('#param-count')).toBeEnabled();
+    await expect(page.locator('#param-count')).toHaveValue('3');
+    await expect(page.getByRole('combobox', { name: /^Scenario/ })).toBeEnabled();
+    await expect(page.locator('.alert[role="alert"]')).toHaveCount(0);
+  });
+
+  test('the selected run keeps its controls while the draft is unreadable', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: CREATED, status: 'fault_active', live: true, faultMayBeActive: true }),
+    });
+    await app.goto(`/admin?run=${CREATED}`);
+    await expect(page.getByRole('button', { name: 'Abort & recover' })).toBeEnabled();
+
+    await page.getByRole('button', { name: /Advanced: the parameters as JSON/ }).click();
+    await page.locator('textarea').fill('{"count": 2,');
+    await expect(page.locator('#param-count')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Abort & recover' })).toBeEnabled();
   });
 
   test('each of the four scenarios sends the payload its schema takes', async ({ app, page }) => {
