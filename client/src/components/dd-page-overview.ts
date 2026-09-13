@@ -15,6 +15,7 @@ import { roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
 import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
+import './dd-copy.js';
 import './dd-stat.js';
 import './dd-health-chart.js';
 
@@ -36,7 +37,6 @@ export class DdPageOverview extends LitElement {
     _runningRead: { state: true },
     _error: { state: true },
     _loading: { state: true },
-    _copied: { state: true },
   };
 
   private _timeline: HealthTimeline | null = null;
@@ -61,7 +61,6 @@ export class DdPageOverview extends LitElement {
   };
   private _error = '';
   private _loading = true;
-  private _copied: string | null = null;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
     intervalMs: REFRESH_MS,
@@ -370,26 +369,6 @@ export class DdPageOverview extends LitElement {
         align-items: center;
         gap: var(--sp-1);
       }
-      .copy {
-        font: inherit;
-        font-family: var(--font-mono);
-        font-size: var(--fs-xs);
-        background: none;
-        color: var(--ink-3);
-        border: 1px solid transparent;
-        border-radius: var(--radius);
-        padding: 2px 6px;
-        cursor: pointer;
-        transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
-      }
-      .copy:hover {
-        color: var(--accent);
-        border-color: var(--line-strong);
-      }
-      .copy.done {
-        color: var(--accent);
-      }
-
       /* Compact round timeline, shown while a health-ratio chart would be an
          empty grid with nothing plotted on it. */
       .timeline {
@@ -902,14 +881,7 @@ export class DdPageOverview extends LitElement {
         ${r.quorumHash
           ? html`<span class="hashcell">
               <span class="hash" title=${r.quorumHash}>${shortHash(r.quorumHash, 10, 8)}</span>
-              <button
-                class="copy ${this._copied === r.roundKey ? 'done' : ''}"
-                type="button"
-                aria-label="Copy quorum hash ${r.quorumHash}"
-                @click=${() => void this._copy(r.quorumHash ?? '', r.roundKey)}
-              >
-                ${this._copied === r.roundKey ? 'copied' : 'copy'}
-              </button>
+              <dd-copy .value=${r.quorumHash} label="Copy quorum hash ${r.quorumHash}"></dd-copy>
             </span>`
           : html`<span class="subtle">—</span>`}
       </td>
@@ -929,18 +901,6 @@ export class DdPageOverview extends LitElement {
     return status.state === 'bootstrap' && status.minSize > 0
       ? `no quorum possible: ${status.enabledMasternodes}/${status.minSize} MN`
       : 'no commitment mined';
-  }
-
-  private async _copy(hash: string, key: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(hash);
-      this._copied = key;
-      window.setTimeout(() => {
-        if (this._copied === key) this._copied = null;
-      }, 1200);
-    } catch {
-      // No clipboard here; the full hash is still in the cell's title.
-    }
   }
 
   private _healthClass(r: QuorumRoundListItem): string {

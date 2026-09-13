@@ -119,6 +119,7 @@ test.describe('semantics and focus', () => {
       '/', '/rounds', '/pose', '/masternodes', '/chainlocks', '/dsl', '/staking', '/peers', '/operators',
       '/fairness', '/blocks', '/txs', '/experiments', '/simulations', '/round/7%3A11400%3A0', `/block/${HASH}`,
       `/tx/${HASH}`, `/experiments/${LONG_RUN_KEY}`, `/simulations/${SIM_A}`, '/no-such-page',
+      `/search?q=${HASH}`, '/methodology',
     ];
     const states: Array<[string, ApiStubs]> = [
       ['loaded', loadedLayoutStubs()],

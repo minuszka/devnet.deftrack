@@ -100,6 +100,13 @@ export const ROUTES: Route[] = [
   { path: '/txs', tag: 'dd-page-txs', label: 'Transactions', group: 'blockchain' },
   { path: '/operators', tag: 'dd-page-operators', label: 'Operators', group: 'network' },
   { path: '/fairness', tag: 'dd-page-fairness', label: 'Fairness', group: 'network' },
+  /*
+   * Two pages that belong to no section: search results, and how the figures
+   * are measured. Reached from the header, never from the grouped menu -- the
+   * groups are fixed -- and they light nothing in it.
+   */
+  { path: '/search', tag: 'dd-page-search', label: 'Search', hidden: true },
+  { path: '/methodology', tag: 'dd-page-methodology', label: 'How we measure', hidden: true },
   {
     path: '/experiments',
     tag: 'dd-page-experiments',
@@ -234,10 +241,17 @@ export function matchRoute(pathname: string): Match {
   return { route: NOT_FOUND_ROUTE, param: null, status: 'not-found', path: pathname };
 }
 
-export function navigate(href: string): void {
+/**
+ * `replace` swaps the current history entry instead of adding one. For a page
+ * that forwards on its own -- a search with exactly one match goes straight to
+ * it -- pushing would put the search back under Back, and Back would search and
+ * forward again: a reader who pressed Back could never leave.
+ */
+export function navigate(href: string, options: { replace?: boolean } = {}): void {
   const url = new URL(href, location.origin);
   if (url.pathname === location.pathname && url.search === location.search) return;
-  history.pushState(null, '', url.pathname + url.search);
+  if (options.replace) history.replaceState(null, '', url.pathname + url.search);
+  else history.pushState(null, '', url.pathname + url.search);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
