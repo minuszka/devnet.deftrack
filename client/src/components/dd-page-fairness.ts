@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { LlmqProfileView } from '@devnet-deftrack/shared';
 import type { SelectionFairness } from '../lib/api.js';
-import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
+import { primaryProfile, profileUnknownReason, type PrimaryProfile, type ProfileReadFailures } from '../lib/primaryProfile.js';
 import {
   LLMQ_ALL,
   LLMQ_PATTERN,
@@ -63,6 +63,8 @@ export class DdPageFairness extends LitElement {
   private _profiles: LlmqProfileView[] = [];
   /** How the current profile was arrived at: resolved, chosen, or not yet. */
   private _resolved: PrimaryProfile | null = null;
+  /** Which of the two profile inputs failed to read, as opposed to reading empty. */
+  private _resolveFailures: ProfileReadFailures = {};
   /** The address bar; the only thing that reacts to a filter change. */
   private readonly _query = new QueryStateController(this, QUERY, (values) => {
     this._applyQuery(values);
@@ -197,11 +199,19 @@ export class DdPageFairness extends LitElement {
    * tip.
    */
   private async _resolveProfile(run: PollRun): Promise<void> {
+    const failures: ProfileReadFailures = {};
     const [clocks, health] = await Promise.all([
-      run.api.chainlocks(50).catch(() => null),
-      run.api.health().catch(() => null),
+      run.api.chainlocks(50).catch((error: unknown) => {
+        failures.signers = errorMessage(error);
+        return null;
+      }),
+      run.api.health().catch((error: unknown) => {
+        failures.tip = errorMessage(error);
+        return null;
+      }),
     ]);
     if (run.stale) return;
+    this._resolveFailures = failures;
     this._resolved = primaryProfile({
       signers: clocks?.signers,
       tipHeight: health?.chainTip,
@@ -258,12 +268,12 @@ export class DdPageFairness extends LitElement {
 
       ${this._profileControl()}
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
-      ${this._effective() === null
+      ${this._effective() === null && this._resolved === null
+        ? html`<div class="note">Loading…</div>`
+        : this._effective() === null
         ? html`<div class="note" role="status">
             The signing profile could not be determined
-            ${this._resolved?.known === false && this._resolved.reason === 'no-signers'
-              ? '(no ChainLock report)'
-              : '(no chain tip)'},
+            (${this._resolved?.known === false ? profileUnknownReason(this._resolved, this._resolveFailures) : ''}),
             so nothing is shown until a profile is chosen above. These figures are about one LLMQ
             schedule; computed across all of them at once they would look like an answer without
             being one.

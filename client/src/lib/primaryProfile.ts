@@ -41,3 +41,27 @@ export function primaryProfile(input: {
     ? { known: true, llmqName: signers.v2, reason: 'after-activation' }
     : { known: true, llmqName: signers.v1, reason: 'before-activation' };
 }
+
+/** What went wrong reading the two inputs, when a read failed rather than came back empty. */
+export interface ProfileReadFailures {
+  signers?: string;
+  tip?: string;
+}
+
+/**
+ * Why the profile is unknown, in words that keep "absent" and "unreadable" apart.
+ *
+ * Both pages that resolve the profile swallowed a failed read into null, so a
+ * ChainLock report that answered 500 was described as "no ChainLock report" --
+ * a claim about the chain, made from a failed request. Found by the day-20
+ * regression sweep.
+ */
+export function profileUnknownReason(
+  profile: Extract<PrimaryProfile, { known: false }>,
+  failures: ProfileReadFailures
+): string {
+  if (profile.reason === 'no-signers') {
+    return failures.signers ? `the ChainLock report could not be read: ${failures.signers}` : 'no ChainLock report';
+  }
+  return failures.tip ? `the chain tip could not be read: ${failures.tip}` : 'no chain tip';
+}

@@ -1,6 +1,6 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import type { OperatorReliabilityRow } from '@devnet-deftrack/shared';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
 import { TableScrollController } from '../lib/tableScroll.js';
@@ -22,6 +22,8 @@ export class DdPageOperators extends LitElement {
   private _rounds = 0;
   private _error = '';
   private _loading = true;
+  /** The report has arrived at least once; until then its round count is not known. */
+  private _loaded = false;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
     intervalMs: REFRESH_MS,
@@ -36,6 +38,7 @@ export class DdPageOperators extends LitElement {
       if (run.stale) return;
       this._rows = d.operators;
       this._rounds = d.roundsConsidered;
+      this._loaded = true;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -63,7 +66,9 @@ export class DdPageOperators extends LitElement {
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Operators</h2>
-          <div class="page-sub mono">7 days · ${num(this._rounds)} formed rounds</div>
+          <div class="page-sub mono">
+            7 days · ${this._loaded ? `${num(this._rounds)} formed rounds` : this._error ? 'rounds unknown' : '…'}
+          </div>
         </div>
         <div class="card-body flush">
           <div class="twrap">
@@ -82,8 +87,8 @@ export class DdPageOperators extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${this._loading && this._rows.length === 0
-                  ? html`<tr><td class="empty" colspan="8">Loading…</td></tr>`
+                ${!this._loaded
+                  ? html`<tr><td class="empty" colspan="8">${this._error ? COULD_NOT_LOAD : 'Loading…'}</td></tr>`
                   : this._rows.length === 0
                     ? html`<tr>
                         <td class="empty" colspan="8">

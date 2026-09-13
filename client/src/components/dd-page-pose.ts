@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { BanWaveReport, MasternodeEventRow, MasternodeTimelinePoint } from '@devnet-deftrack/shared';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
 import { TableScrollController } from '../lib/tableScroll.js';
@@ -33,6 +33,13 @@ export class DdPagePose extends LitElement {
   private _events: MasternodeEventRow[] = [];
   private _error = '';
   private _loading = true;
+  /**
+   * All three reads have arrived at least once. Until then the cards are not
+   * drawn: each has an empty-state sentence -- "No bans recorded in this
+   * window" -- and they printed it while the page was still loading, and again
+   * beside the error banner when the load failed.
+   */
+  private _loaded = false;
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
   private readonly _poll = new PollController(this, {
     intervalMs: REFRESH_MS,
@@ -84,6 +91,7 @@ export class DdPagePose extends LitElement {
       this._points = timeline.points;
       this._waves = waves;
       this._events = events.items;
+      this._loaded = true;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -107,12 +115,12 @@ export class DdPagePose extends LitElement {
       </div>
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
-      ${this._loading && this._points.length === 0 ? html`<div class="note">Loading…</div>` : nothing}
-
-      ${latest ? this._tiles(latest) : nothing}
-      ${this._chart()}
-      ${this._waveTable()}
-      ${this._eventTable()}
+      ${!this._loaded
+        ? html`<div class="note" role="status">${this._error ? COULD_NOT_LOAD : 'Loading…'}</div>`
+        : html`
+            ${latest ? this._tiles(latest) : nothing} ${this._chart()} ${this._waveTable()}
+            ${this._eventTable()}
+          `}
     `;
   }
 
