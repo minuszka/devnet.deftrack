@@ -211,7 +211,7 @@ export class DdSimulationControl extends LitElement {
       textarea { width: 100%; min-height: 156px; resize: vertical; line-height: 1.5; }
       .form-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding: 0 var(--sp-4) var(--sp-4); }
       .warning { color: var(--warn); font-size: var(--fs-sm); }
-      .alert { padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--crit) 45%, transparent); background: var(--crit-wash); color: var(--ink); font-size: var(--fs-sm); }
+      .alert { padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--crit) 45%, transparent); background: var(--crit-wash); color: var(--ink); font-size: var(--fs-sm); overflow-wrap: anywhere; }
       .notice { padding: var(--sp-3) var(--sp-4); border: 1px solid color-mix(in srgb, var(--info) 45%, transparent); background: var(--info-wash); color: var(--ink-2); font-size: var(--fs-sm); }
       .impact { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
       .impact > div { padding: var(--sp-3) var(--sp-4); background: var(--surface); }

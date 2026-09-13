@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { expect, fail, ok, test, type ApiStubs } from './harness.js';
 import { healthSnapshot, masternodeTimelinePoint } from './fixtures/api.js';
 import { emptyLayoutStubs, HASH, loadedLayoutStubs, LONG_RUN_KEY, LONG_TOKEN, SIM_A } from './fixtures/layout.js';
+import { adminSessionStubs, labRegistry, RUN_A, runStubs } from './fixtures/admin.js';
 
 /**
  * Day 18: the document never scrolls sideways; a table that is wider than the
@@ -256,6 +257,63 @@ test('an experiment’s declared facts stack on a phone and sit side by side on 
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect.poll(async () => ((await value.boundingBox())?.x ?? 0) - ((await term.boundingBox())?.x ?? 0)).toBeGreaterThan(100);
+});
+
+/*
+ * Day 20: the admin panel holds its width too.
+ *
+ * Day 18 measured the public shell and left /admin out, as a separate surface.
+ * Day 20's regression pass measured it: below 1000 px its two-column grid
+ * collapsed to a bare 1fr column, which is never narrower than the run table
+ * inside it -- +568 px on a 360 px screen and +160 px on a 768 px one -- and a
+ * session error quoting a long token pushed the sign-in gate 423 px wide.
+ */
+test('the admin panel does not scroll sideways, signed out, failing or working', async ({ app, page }) => {
+  test.setTimeout(120_000);
+  const long = `session store unavailable ${LONG_TOKEN}`;
+  const states: Array<[string, string, ApiStubs]> = [
+    ['signed out', '/admin', { '/api/v1/admin/session': { status: 401, body: fail('no admin session') } }],
+    ['session unavailable', '/admin', { '/api/v1/admin/session': { status: 500, body: fail(long) } }],
+    ['dashboard', '/admin', adminSessionStubs({ targets: labRegistry() })],
+    [
+      'run selected',
+      `/admin?run=${RUN_A}`,
+      { ...adminSessionStubs({ targets: labRegistry() }), ...runStubs({ runKey: RUN_A, status: 'fault_active', live: true, faultMayBeActive: true }) },
+    ],
+    ['runs rate-limited', '/admin', { ...adminSessionStubs(), '/api/v1/admin/simulations/runs': { status: 429, body: fail('rate limited') } }],
+    ['runs failing', '/admin', { ...adminSessionStubs(), '/api/v1/admin/simulations/runs': { status: 500, body: fail('run store unavailable') } }],
+  ];
+  const failures: string[] = [];
+  for (const [name, path, stubs] of states) {
+    for (const key of ['/api/v1/admin/session', '/api/v1/admin/simulations/runs']) app.unstub(key);
+    app.stub(stubs);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(path);
+    await page.waitForLoadState('networkidle');
+    for (const width of WIDTHS) {
+      await page.setViewportSize({ width, height: 800 });
+      await nextFrame(page);
+      const overflow = await documentOverflow(page);
+      if (overflow.px > 0) failures.push(`${name} @${width}px: ${overflow.px}px (${overflow.culprits.join(', ')})`);
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
+// The control panel's own error box, reached the way an operator reaches it: an
+// action the server refused, with a reason that quotes an identifier.
+test('an admin action refused with a long reason holds its width on a phone', async ({ app, page }) => {
+  app.stub({
+    ...adminSessionStubs({ targets: labRegistry() }),
+    ...runStubs({ runKey: RUN_A, status: 'fault_active', live: true, faultMayBeActive: true }),
+    [`/api/v1/admin/simulations/runs/${RUN_A}/abort`]: { status: 503, body: fail(`the lab executor did not answer ${LONG_TOKEN}`) },
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto(`/admin?run=${RUN_A}`);
+  await page.getByRole('button', { name: 'Abort & recover' }).click();
+  await expect(page.locator('dd-simulation-control .alert[role="alert"]').first()).toContainText('did not answer');
+  await nextFrame(page);
+  expect((await documentOverflow(page)).px).toBe(0);
 });
 
 /*

@@ -238,6 +238,8 @@ export class DdAdminShell extends LitElement {
         background: var(--crit-wash);
         color: var(--ink);
         font-size: var(--fs-sm);
+        /* An error quotes what failed, and that rarely has a space to break at. */
+        overflow-wrap: anywhere;
       }
       .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-3); }
       .metric {
@@ -293,7 +295,12 @@ export class DdAdminShell extends LitElement {
       .run-button:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 3px; }
       .run-button[aria-current='true'] { color: var(--ink); font-weight: 700; }
       .empty { white-space: normal; }
-      @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+      /* minmax(0, 1fr), not 1fr: a bare 1fr column is never narrower than its
+         content's minimum, and the run table's is several hundred pixels -- so
+         below 1000 px the whole panel was as wide as the table (768 px screen,
+         +160 px; 360 px, +568 px), and the table's own scrolling box never had
+         anything to scroll. Measured in the day-20 admin sweep. */
+      @media (max-width: 1000px) { .grid { grid-template-columns: minmax(0, 1fr); } }
       @media (max-width: 640px) {
         .timeline li { grid-template-columns: 12px 1fr; }
         .timeline .when { grid-column: 2; grid-row: 2; }
