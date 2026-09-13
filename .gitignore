@@ -23,6 +23,9 @@ coverage/
 # artifact -- which is where they are meant to be read, not in git.
 client/playwright-report/
 client/test-results/
+# Review screenshots, regenerated on demand (npm run review:shots -w client).
+client/review-shots/
+client/test-results-shots/
 
 # editors & OS
 .vscode/
