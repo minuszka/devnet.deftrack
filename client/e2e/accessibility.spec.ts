@@ -331,6 +331,48 @@ test.describe('semantics and focus', () => {
   });
 });
 
+/*
+ * Day 20: a toggle says which of its buttons is pressed.
+ *
+ * Every button group that picks one view out of several marks the choice with
+ * an "on" class, which is a colour -- and until day 20 the staking
+ * leaderboard's machines / payout keys pair carried nothing else, so a screen
+ * reader heard two buttons and no choice. Swept over every page with such a
+ * group, so the next one added without aria-pressed fails here.
+ */
+test('every toggle group says which of its buttons is pressed, and only one is', async ({ app, page }) => {
+  test.setTimeout(90_000);
+  app.stub(loadedLayoutStubs());
+  const wrong: string[] = [];
+  let groups = 0;
+  for (const path of ['/rounds', '/experiments', '/fairness', '/peers', '/staking']) {
+    await app.goto(path);
+    await page.waitForLoadState('networkidle');
+    const found = await page.locator('main .group, main .seg, main .toggle').evaluateAll((els) =>
+      els
+        .map((el) => Array.from(el.querySelectorAll('button')))
+        .filter((buttons) => buttons.length > 1)
+        .map((buttons) =>
+          buttons.map((b) => ({ text: (b.textContent ?? '').trim(), pressed: b.getAttribute('aria-pressed'), on: b.classList.contains('on') }))
+        )
+    );
+    for (const buttons of found) {
+      groups += 1;
+      const label = `${path} [${buttons.map((b) => b.text).join(' | ')}]`;
+      if (buttons.some((b) => b.pressed !== 'true' && b.pressed !== 'false')) wrong.push(`${label}: a button without aria-pressed`);
+      if (buttons.filter((b) => b.pressed === 'true').length !== 1) wrong.push(`${label}: not exactly one pressed`);
+      // Some groups are coloured by aria-pressed itself ([aria-pressed='true']
+      // in the shared styles); the ones coloured by an "on" class must agree
+      // with it.
+      const usesOn = buttons.some((b) => b.on);
+      if (usesOn && buttons.some((b) => b.on !== (b.pressed === 'true'))) wrong.push(`${label}: the colour and aria-pressed disagree`);
+    }
+  }
+  expect(wrong).toEqual([]);
+  // The sweep found the groups it is about, including the staking view pair.
+  expect(groups).toBeGreaterThanOrEqual(7);
+});
+
 test.describe('contrast, motion and zoom', () => {
   /**
    * F14, measured on the button rather than on the tokens.

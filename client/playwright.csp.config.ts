@@ -19,7 +19,10 @@ export default defineConfig({
   // this made the config ignore the one test it exists to run -- and report
   // "0 tests" as a success.
   testIgnore: [],
-  outputDir: 'test-results',
+  // Its own directory. Sharing test-results with the browser suite meant a
+  // CSP run after a failed suite deleted that suite's traces and screenshots --
+  // which is how the evidence for one day-20 failure was lost.
+  outputDir: 'test-results-csp',
   use: {
     ...baseline.use,
     baseURL: 'http://127.0.0.1:5192',

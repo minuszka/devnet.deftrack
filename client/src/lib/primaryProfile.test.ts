@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { primaryProfile } from './primaryProfile.js';
+import { primaryProfile, profileUnknownReason } from './primaryProfile.js';
 
 const signers = { v1: 'llmq_400_60', v2: 'llmq_defcon', activationHeight: 3_240 };
 
@@ -49,5 +49,25 @@ describe('which profile the overview is about', () => {
       known: false,
       reason: 'no-tip',
     });
+  });
+});
+
+describe('why the profile is unknown', () => {
+  it('keeps a report that could not be read apart from a report with no signers', () => {
+    const noSigners = { known: false as const, reason: 'no-signers' as const };
+    expect(profileUnknownReason(noSigners, {})).toBe('no ChainLock report');
+    expect(profileUnknownReason(noSigners, { signers: 'HTTP 503' })).toBe('the ChainLock report could not be read: HTTP 503');
+  });
+
+  it('does the same for the chain tip', () => {
+    const noTip = { known: false as const, reason: 'no-tip' as const };
+    expect(profileUnknownReason(noTip, {})).toBe('no chain tip');
+    expect(profileUnknownReason(noTip, { tip: 'timed out' })).toBe('the chain tip could not be read: timed out');
+  });
+
+  it('names the failure that decided the answer, not another one', () => {
+    // The signers are asked about first; a failed tip read beside a missing
+    // signer list is not the reason the profile is unknown.
+    expect(profileUnknownReason({ known: false, reason: 'no-signers' }, { tip: 'timed out' })).toBe('no ChainLock report');
   });
 });

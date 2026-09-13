@@ -527,12 +527,25 @@ export class DdPageStaking extends LitElement {
                   ? ''
                   : ` · gini ${d.gini.toFixed(2)}`}</span
             >
-            <span class="toggle">
-              <button class=${machines ? 'on' : ''} @click=${() => this._setView('machines')}>
+            <!-- aria-pressed, like every other toggle on the site: the "on"
+                 class told a sighted reader which view was showing and told a
+                 screen reader nothing. -->
+            <span class="toggle" role="group" aria-label="Leaderboard view">
+              <button
+                type="button"
+                class=${machines ? 'on' : ''}
+                aria-pressed=${machines ? 'true' : 'false'}
+                @click=${() => this._setView('machines')}
+              >
                 machines
               </button>
-              <span>/</span>
-              <button class=${!machines ? 'on' : ''} @click=${() => this._setView('keys')}>
+              <span aria-hidden="true">/</span>
+              <button
+                type="button"
+                class=${!machines ? 'on' : ''}
+                aria-pressed=${!machines ? 'true' : 'false'}
+                @click=${() => this._setView('keys')}
+              >
                 payout keys
               </button>
             </span>

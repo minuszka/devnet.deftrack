@@ -270,8 +270,14 @@ test.describe('selection fairness', () => {
      * this test restored the endpoint before the 503 had been handled at all,
      * so it passed with the fix removed -- it was measuring the first read, not
      * the retry.
+     *
+     * Day 20: the reason now says the report could not be READ, with the
+     * server's message, where it used to say there was no report -- a failed
+     * request described as an absence. Still only shown once the 503 has landed.
      */
-    await expect(page.locator('.note[role="status"]')).toContainText('no ChainLock report');
+    await expect(page.locator('.note[role="status"]')).toContainText(
+      'the ChainLock report could not be read: chainlock report unavailable'
+    );
     expect(app.callsTo(FAIRNESS)).toHaveLength(0);
 
     app.stub({ '/api/v1/chainlocks': { body: ok(chainLockReport()) } });

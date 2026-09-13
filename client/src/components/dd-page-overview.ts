@@ -5,12 +5,17 @@ import type {
   QuorumRoundListItem,
 } from '@devnet-deftrack/shared';
 import type { ChainLockReport, ExperimentRow, HealthSnapshot } from '../lib/api.js';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { FreshnessTracker, freshnessNote } from '../lib/freshness.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
-import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
+import {
+  primaryProfile,
+  profileUnknownReason,
+  type PrimaryProfile,
+  type ProfileReadFailures,
+} from '../lib/primaryProfile.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
 import { TableScrollController } from '../lib/tableScroll.js';
@@ -47,6 +52,10 @@ export class DdPageOverview extends LitElement {
   private _clocks: ChainLockReport | null = null;
   /** Which profile every figure on this page is about, or why that is unknown. */
   private _profile: PrimaryProfile = { known: false, reason: 'no-signers' };
+  /** Which of the two profile inputs failed to read, as opposed to reading empty. */
+  private _profileFailures: ProfileReadFailures = {};
+  /** The round list has arrived at least once; until then its count is not known. */
+  private _roundsLoaded = false;
   private _running: ExperimentRow[] = [];
   /**
    * Whether the running-experiment list was actually read.
@@ -438,13 +447,23 @@ export class DdPageOverview extends LitElement {
       // -- llmq_50_60 every 24 blocks, llmq_60_75 every 48, llmq_400_60 every
       // 72, llmq_400_85 every 576 which can never form here, and llmq_defcon.
       // Blending them invents streaks no type ever had.
+      const failures: ProfileReadFailures = {};
       const [clocks, health] = await Promise.all([
         // Both feed the profile decision, so neither failing may be swallowed
-        // into a blended answer; `primaryProfile` reports what it could not do.
-        run.api.chainlocks(50).catch(() => null),
-        run.api.health().catch(() => null),
+        // into a blended answer; `primaryProfile` reports what it could not do,
+        // and the failure is kept so the note can say "could not be read"
+        // rather than "there is none".
+        run.api.chainlocks(50).catch((error: unknown) => {
+          failures.signers = errorMessage(error);
+          return null;
+        }),
+        run.api.health().catch((error: unknown) => {
+          failures.tip = errorMessage(error);
+          return null;
+        }),
       ]);
       if (run.stale) return;
+      this._profileFailures = failures;
       const profile = primaryProfile({
         signers: clocks?.signers,
         tipHeight: health?.chainTip,
@@ -465,6 +484,7 @@ export class DdPageOverview extends LitElement {
       if (run.stale) return;
       this._timeline = profile.known ? timeline : null;
       this._rounds = rounds.items;
+      this._roundsLoaded = true;
       this._total = rounds.total;
       this._mn = mn.points.at(-1) ?? null;
       this._health = health;
@@ -530,7 +550,7 @@ export class DdPageOverview extends LitElement {
     if (!this._profile.known) {
       return html`<div class="note" role="status">
         The signing profile could not be determined
-        ${this._profile.reason === 'no-signers' ? '(no ChainLock report)' : '(no chain tip)'}, so no
+        (${profileUnknownReason(this._profile, this._profileFailures)}), so no
         round figures are shown. A number covering every schedule at once would look like an answer
         without being one.
       </div>`;
@@ -917,7 +937,9 @@ export class DdPageOverview extends LitElement {
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Latest DKG rounds</h2>
-          <div class="page-sub mono">${num(this._total)} recorded</div>
+          <div class="page-sub mono">
+            ${this._roundsLoaded ? `${num(this._total)} recorded` : this._error ? 'count unknown' : '…'}
+          </div>
         </div>
         <div class="card-body flush">
           <div class="twrap">
@@ -937,7 +959,9 @@ export class DdPageOverview extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${this._rounds.length === 0
+                ${!this._roundsLoaded
+                  ? html`<tr><td class="empty" colspan="9">${this._error ? COULD_NOT_LOAD : 'Loading…'}</td></tr>`
+                  : this._rounds.length === 0
                   ? html`<tr><td class="empty" colspan="9">No rounds recorded yet.</td></tr>`
                   : this._rounds.map((r) => this._roundRow(r, status))}
               </tbody>

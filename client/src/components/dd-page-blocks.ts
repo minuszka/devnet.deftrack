@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { txKindLabel, type BlockDetail, type BlockRow } from '@devnet-deftrack/shared';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
@@ -56,6 +56,8 @@ export class DdPageBlocks extends LitElement {
 
   private _rows: BlockRow[] = [];
   private _total = 0;
+  /** A page of blocks has arrived at least once; until then a count is not known. */
+  private _loaded = false;
   private _offset = 0;
   private _error = '';
   private _loading = true;
@@ -96,6 +98,7 @@ export class DdPageBlocks extends LitElement {
       if (run.stale) return;
       this._rows = p.items;
       this._total = p.total;
+      this._loaded = true;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -127,7 +130,9 @@ export class DdPageBlocks extends LitElement {
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Latest blocks</h2>
-          <div class="page-sub mono">${num(this._total)} indexed</div>
+          <div class="page-sub mono">
+            ${this._loaded ? `${num(this._total)} indexed` : this._error ? 'count unknown' : '…'}
+          </div>
         </div>
         <div class="card-body flush">
           <div class="twrap">
@@ -147,16 +152,24 @@ export class DdPageBlocks extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${this._loading && this._rows.length === 0
-                  ? html`<tr><td class="empty" colspan="9">Loading…</td></tr>`
-                  : this._rows.map((b) => this._row(b))}
+                ${!this._loaded
+                  ? html`<tr><td class="empty" colspan="9">${this._error ? COULD_NOT_LOAD : 'Loading…'}</td></tr>`
+                  : this._rows.length === 0
+                    ? html`<tr><td class="empty" colspan="9">No blocks indexed yet.</td></tr>`
+                    : this._rows.map((b) => this._row(b))}
               </tbody>
             </table>
           </div>
           <div class="pager">
-            <button ?disabled=${this._offset === 0} @click=${() => this._move(-1)}>Newer</button>
-            <button ?disabled=${to >= this._total} @click=${() => this._move(1)}>Older</button>
-            <span>${num(this._offset + 1)}–${num(to)} of ${num(this._total)}</span>
+            <button ?disabled=${this._offset === 0 || !this._loaded} @click=${() => this._move(-1)}>Newer</button>
+            <button ?disabled=${to >= this._total || !this._loaded} @click=${() => this._move(1)}>Older</button>
+            <span>
+              ${!this._loaded
+                ? '—'
+                : this._total === 0
+                  ? 'nothing to page through'
+                  : `${num(this._offset + 1)}–${num(to)} of ${num(this._total)}`}
+            </span>
           </div>
         </div>
       </section>

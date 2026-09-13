@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { LlmqProfileView, QuorumRoundListItem } from '@devnet-deftrack/shared';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import {
   LLMQ_ALL,
@@ -57,6 +57,8 @@ export class DdPageRounds extends LitElement {
 
   private _rounds: QuorumRoundListItem[] = [];
   private _total = 0;
+  /** A page of rounds has arrived at least once; until then a count is not known. */
+  private _loaded = false;
   private _offset = 0;
   private _status = '';
   private _llmq = '';
@@ -215,6 +217,7 @@ export class DdPageRounds extends LitElement {
       if (run.stale) return;
       this._rounds = p.items;
       this._total = p.total;
+      this._loaded = true;
       if (profiles) this._profiles = profiles.items;
       if (runs) {
         this._runs = runs.items.map((r) => ({
@@ -315,7 +318,9 @@ export class DdPageRounds extends LitElement {
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Rounds</h2>
-          <div class="page-sub mono">${num(this._total)} recorded</div>
+          <div class="page-sub mono">
+            ${this._loaded ? `${num(this._total)} recorded` : this._error ? 'count unknown' : '…'}
+          </div>
         </div>
         <div class="card-body flush">
           <div class="twrap">
@@ -338,8 +343,8 @@ export class DdPageRounds extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${this._loading && this._rounds.length === 0
-                  ? html`<tr><td class="empty" colspan="12">Loading…</td></tr>`
+                ${!this._loaded
+                  ? html`<tr><td class="empty" colspan="12">${this._error ? COULD_NOT_LOAD : 'Loading…'}</td></tr>`
                   : this._rounds.length === 0
                     ? html`<tr><td class="empty" colspan="12">No rounds match this filter.</td></tr>`
                     : this._rounds.map((r) => this._row(r))}
@@ -347,9 +352,9 @@ export class DdPageRounds extends LitElement {
             </table>
           </div>
           <div class="pager">
-            <button ?disabled=${this._offset === 0} @click=${() => this._move(-1)}>Newer</button>
-            <button ?disabled=${to >= this._total} @click=${() => this._move(1)}>Older</button>
-            <span>${num(from)}–${num(to)} of ${num(this._total)}</span>
+            <button ?disabled=${this._offset === 0 || !this._loaded} @click=${() => this._move(-1)}>Newer</button>
+            <button ?disabled=${to >= this._total || !this._loaded} @click=${() => this._move(1)}>Older</button>
+            <span>${this._loaded ? `${num(from)}–${num(to)} of ${num(this._total)}` : '—'}</span>
           </div>
         </div>
       </section>

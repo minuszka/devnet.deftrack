@@ -2428,6 +2428,120 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 20. nap – Regresszió és review-csomag
+
+```text
+Nap / dátum / implementáló: 20 / 2026-09-13 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day20-regression-handover @ 5aae3e4 (main, a 19. nap után)
+Napi feladat és előfeltételei: friss checkoutban K0–K4, F01–F14 újraellenőrzés, hibás
+  API-utak és admin desktop/mobil, átadási csomag. Nincs új funkció.
+Auditpontok: mind (újraellenőrzés); F10, F12, F13 érdemi javítással
+```
+
+Az átadási csomag: [WEBSITE_HANDOVER_2026-09-13_HU.md](WEBSITE_HANDOVER_2026-09-13_HU.md).
+Ez a bejegyzés arról szól, mit találtam és mit javítottam a regressziós körben.
+
+### Mi fut élesben — és ami ebből következik
+
+Csak olvasással mérve a VPS-en: a szerver és a kliens a `83b8710`-ből fut (a #163 merge,
+2026-09-12 16:17). Ebben a #162 (**1–10. nap**) benne van, a #164 (**J1–J3, az R1–R7
+review-javítások**) és minden későbbi **nincs**. A korábbi bejegyzések „a VPS kliense a
+11. nap előtti" mondata igaz volt, de kevesebbet mondott a kelleténél: **élesben ma is a
+review által talált hibák futnak**. A 14. napi nginx-fejlécek élnek (a host
+konfigurációjában). Mindez az átadási csomag 3. pontjában, és a mátrix „élesben"
+státuszában.
+
+### Hét célzott javítás, mindegyik külön commitban
+
+| Commit | Lelet → javítás | Negatív kontroll |
+|---|---|---|
+| `694d5cc` | **F13 hézag:** a labor-szerver (`labServer.ts`) nem állította a simple query parsert, tehát a `qs`-t, amit az F13 elfogadása „nem elérhetőnek" nevezett, ott hitelesítés előtt feldolgozta minden kérés (alapból `127.0.0.1`). Közös `hardenHttpApp()` mindkét szervernek; a helmet HSTS-e kikerül (egy tulajdonos: az nginx). Tesztek valódi kérésen és a forrás sweepjével | a labor-szerver hardening nélkül; a parser beállítása az első `app.use` után (**bizonyítja, hogy a sorrend számít**); a helmet alap-HSTS-e; egy urlencoded parser — mind bukik |
+| `5d04fce` | **Integrációs szivárgás:** 167 hátrahagyott adatbázis, mind csak üres gyűjtemény indexekkel — a Mongoose háttér-indexépítése a drop után újra létrehozta őket. A drop előtt minden modell `init()`-jét várjuk; egy futás végi globális ellenőrzés bukik, ha maradt adatbázis. Mérve: a vitest a teardownban dobott hibát kiírja és **0-val lép ki**, ezért `process.exitCode = 1` is | a várakozás nélkül a futás 1-gyel bukik, 8 adatbázist megnevezve; független számlálás a mongodban: a javított három futás egyet sem hagyott |
+| `611fdde` | `aria-pressed` a staking nézetváltón (a 12. nap óta nyitott); sweep minden toggle-csoportra | a javítás nélkül a sweep pontosan azon a páron bukik |
+| `ecea0ec` | a health-grafikon `ResizeObserver loop` hibája (egy méretezési körben 7); a PoSe-grafikon fix magasságú, sosem loopolt, nem nyúltam hozzá | a javítás előtt 7 hiba a főoldalon, 0 a PoSe-n |
+| `f8354e6` | a publikus mérési riport **teljes mezőleltára** tesztben; a `byProfile` sorok `rounds`-a és a `hostGrouping` név szerint | mindkét név szerinti másolás spreadre visszaállítva bukik; a leltár a saját tesztjén bukik egy hozzáadott mezővel |
+| `56e85f3` | **Egy sikertelen betöltés üres rekordnak látszott** — lásd lent | a régi kódon 15-ből 10 teszt bukik |
+| `a436d6b` | **Az admin panel túlfolyt:** 768 px-en +160, 360 px-en +568 (a `1fr` oszlop nem lehet keskenyebb a táblázatnál); a sessionhiba +423, az abort-hiba +814 hosszú tokennel | a `1fr` visszaállítva a működő állapotok bukik; a tördelés nélkül mindkét hibadoboz |
+
+### A hibás API-utak mérése, és amit találtam
+
+Minden publikus útvonal 401, 404, 429 és 500 mögött. A legtöbb oldal kiírja a szerver
+üzenetét — de **hat a hibasáv mellett az üres állapot mondatait is**: „0 indexed", „No
+bans recorded in this window", „No operator mapping loaded yet", „No rounds recorded
+yet". Egy sikertelen kérés így üres rekordnak olvasódott, és ez ezen az oldalon pont az
+az olvasat, aminek lehetetlennek kell lennie. A PoSe Watch **betöltés közben** is ezeket
+írta. A Fairness és a főoldali profilmegjegyzés egy 500-at adó ChainLock-riportot „nincs
+ChainLock report"-nak nevezett.
+
+A javítás: minden érintett lista tudja, betöltődött-e már egyszer. Addig a számláló
+„count unknown", a táblázat „Could not be loaded, so what exists is unknown."; üres
+állapotot csak sikeres válasz mondhat. Sikeres betöltés után egy hibás frissítés
+megtartja az utolsó jó oldalt (a 3. napi döntés). A profilmegjegyzés: „the ChainLock
+report could not be read: <ok>". Egy meglévő Fairness-teszt a régi mondatot várta
+jelzésként; az új, pontosabb mondatra vár.
+
+### Admin desktop és mobil
+
+A 18. nap a publikus shellt mérte, az admint szándékosan nem. Ma mérve: kijelentkezve,
+elérhetetlen sessionnel, működve, kiválasztott futammal, rate-limitelt és hibás
+futamlistával, 360/390/768/1440 px-en — és egy elutasított aborttal telefonon. Javítva,
+teszt mögött.
+
+### Friss, tiszta checkout
+
+| Kapu | Parancs | Eredmény |
+|---|---|---|
+| K0 | Node/npm, lockfile, git | Node v24.7.0, npm 11.5.1; `.node-version` 24; `package-lock.json` sha256 `2f72d372cf5d6dac7bc2e68a656971236a9791fe5cd163f80173f9a3177ffb78`; a munkafa a klón után és a build után is tiszta; `npm ci` exit 0 |
+| K1 | `npm run build -w shared`, `npm run typecheck`, `npm test`, `npm run build`, `git diff --check` | mind exit 0 — **864** szerver (92 fájl) + **202** kliens (18 fájl) unit teszt |
+| K2 | `CI=1 npm run test:e2e -w client` | **nem tiszta.** 1. futás (5,4 perc): 230 zöld, 1 bukott — `accessibility.spec.ts` „the target table carries its caption": az oldal JavaScriptje 10 s alatt el sem indult (a futás naplójában ennél a tesztnél hiányzik a minden oldalbetöltéskor megjelenő Lit-figyelmeztetés); önmagában 8/8-szor zöld. 2. futás (25,3 perc — közben a másik checkoutban buildet és CSP-kaput futtattam): 229 zöld, 2 bukott, mindkettő navigációs időtúllépés a két nagy elrendezésmérésben. **Egyik futásban sem bukott viselkedési állítás.** Az első futás hibaképét a CSP-kapu törölte (ugyanaz a kimeneti mappa volt) — ezt a `46ac9da` javítja |
+| K3 | `MONGODB_TEST_URI=mongodb://127.0.0.1:27018 npm run test:integration` | exit 0 — 15 fájl, 98 teszt (8 kihagyott: az adatbázis nélküli párdarabok); a futás végi szivárgás-ellenőrzés nem talált hátrahagyott adatbázist |
+| CSP | `CI=1 npm run test:csp -w client` | exit 0 — 4 eset |
+| audit | `npm audit --omit=dev` | 2 moderate (az elfogadott F13-maradék) |
+
+### Képek
+
+`npm run review:shots -w client` — 17 kép a `client/review-shots/`-ba, szintetikus
+fixtúrából: a hibás, betöltési, üres, elutasított, kijelentkezett és telefonos utakról
+is. Nincs a repóban; a reviewer a vizsgált commitból generálja.
+
+### Érintett fájlok
+
+Szerver: új `httpHardening.ts` (+ teszt), `index.ts`, `labServer.ts`, `package.json`,
+új `vitest.integration.config.ts`, új `integration/leakCheck.globalSetup.ts`,
+`integration/mongo.ts`, `simulator/simulationMeasurementPublicDto.ts` (+ teszt).
+Kliens: `dd-page-{blocks,txs,rounds,pose,operators,overview,fairness,staking}.ts`,
+`dd-health-chart.ts`, `dd-admin-shell.ts`, `dd-simulation-control.ts`, `lib/errors.ts`,
+`lib/primaryProfile.ts` (+ teszt), `package.json`, új `playwright.shots.config.ts`; tesztek:
+új `e2e/failure-states.spec.ts`, új `e2e/review-shots.shots.ts`, `responsive.spec.ts`,
+`accessibility.spec.ts`, `fairness.spec.ts`. Dokumentáció: új átadási csomag, ez a napló.
+
+**Szerződésváltozás / kompatibilitás:** a szerver nem küld HSTS-t (az nginx küldi; a
+deploy után az `/api/` egy fejlécet kap). A mérési riport publikus mezőkészlete változatlan.
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | a friss klónban mind exit 0 — **864** szerver (855 → 864) + **202** kliens (199 → 202) |
+| K2 | a javítások célzott specjei helyben zöldek (a hibaállapot-, elrendezés-, navigáció-, akadálymentesség-, fairness- és overview-spec); a **teljes** suite a friss klónban két futásban futott le, és **nem volt tiszta** (lásd fent) — viselkedési állítás nem bukott; a tiszta környezetű teljes K2 a #174 CI-ja |
+| K3 | exit 0 — 15 fájl, 98 teszt, **0** hátrahagyott adatbázis (helyben háromszor egymás után, és a friss klónban) |
+| CSP-kapu | exit 0 — 4 eset, helyben és a friss klónban |
+| `npm audit` | 2 moderate (F13, változatlan) |
+
+**Valódi laborfutam:** NEM FUTOTT — nem futtatott labor-elfogadás (átadási csomag, 11. pont).
+
+**Nyitott probléma / következő lépés:**
+
+- a független végső review; utána, külön döntéssel, a deploy (átadási csomag, 10. pont), majd a CSP enforce-ra váltása;
+- a friss klón K2-je két futásban sem volt tiszta (egy nem induló oldal, két navigációs időtúllépés, viselkedési hiba nélkül) — figyelni kell, megjelenik-e a CI-ban is.
+
+```text
+Commit(ok), végső SHA: 694d5cc, 5d04fce, 611fdde, ecea0ec, f8354e6, 56e85f3, a436d6b, cc304bd, 46ac9da; dokumentáció: a #174 PR dokumentációs commitja; a CSP-mappa: `46ac9da`
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT — independent review még nem történt
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -2749,6 +2863,11 @@ Napi státusz: ELLENŐRZÖTT
 
 ## Auditpontok lezárási mátrixa
 
+**Élesben, mérve 2026-09-13:** a VPS a `83b8710`-et futtatja (a #163 merge, 2026-09-12 16:17): ebben
+az 1–10. nap (#162) benne van, a J1–J3 (#164, az R1–R7 review-javítások) és a 11–20. nap
+**nincs**. Az F01, F02, F05 és F06 sorában a J-javítások tehát **csak kódban és tesztben** zártak.
+A 14. napi nginx-fejlécek élnek. Részletesen: [átadási csomag](WEBSITE_HANDOVER_2026-09-13_HU.md), 3–4. pont.
+
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
 | F01 | 05–06, **J1** | `8735d1d`, `5fd3307`, `4972341` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 13 eset — a 9 eredeti plusz a review R1/R2/R4 ellenpróbái és a panel őrszemének fehér dobozos esete | **A review újranyitotta** (R1, R2, R4): futamváltás közben a régi futamra ment volna az abort, késői hiba törölte az újat, a megerősítés átvándorolt. A J1 mindhármat lezárta, őrszemenként külön negatív kontrollal |
@@ -2760,10 +2879,10 @@ Napi státusz: ELLENŐRZÖTT
 | F07 | 02, **14** | `db77551`, `5262482` | unit: 4 eset a `router.test.ts`-ben; E2E: 3 eset böngészőben; **élő nginx: `/round/%`, `/tx/%E0%A4%A`, `/block/%zz` mind 400**, a szabályos `/round/7%3A7416%3A0` 200 | **Lezárva.** A production nginx a kliens előtt visszautasít, tehát a hiba beírt URL-ből nem érhető el; a kliensoldali javítás az SPA-n belüli navigációra kell, és azt a böngészőtesztek fedik |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04 | `127e53d` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja |
-| F10 | 14 | `5262482` | izolált nginx: 6 fejléc 5 válaszon, benne egy valódi 404, negatív kontrollal; böngésző: az **enforce** házirend tisztán fut a buildelt **és** a deployolt bundle-on; élő: a fejlécek `/`, `/rounds`, `/admin`, asset és ismeretlen útvonal valódi válaszán lemérve | **Élesen bekapcsolva** (tulajdonosi engedéllyel). A CSP **report-only**; az enforce-ra váltás egy fájlcsere, a bizonyíték megvan. `/api/` átmenetileg két HSTS-t küld — a helmet 1 éve nyer, a szándékolt 2 év nem érvényesül következetesen |
+| F10 | 14, **20** | `5262482`, `694d5cc` | izolált nginx: 6 fejléc 5 válaszon, benne egy valódi 404, negatív kontrollal; böngésző: az **enforce** házirend tisztán fut a buildelt **és** a deployolt bundle-on; élő: a fejlécek `/`, `/rounds`, `/admin`, asset és ismeretlen útvonal valódi válaszán lemérve; 20. nap: `httpHardening.test.ts` — a szerver nem küld HSTS-t | **Élesen bekapcsolva** (tulajdonosi engedéllyel). A CSP **report-only**; az enforce-ra váltás egy fájlcsere, a bizonyíték megvan. A kettős HSTS a 20. napon kódban megszűnt (egy tulajdonos: az nginx), **de nincs telepítve** — élesben az `/api/` ma is kettőt küld |
 | F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni |
-| F12 | 12 | `1828831` | E2E: 10 eset — egy h1 oldalanként, szekciók h2-ben, fókusz navigációkor és Backnél, fókusz megmaradása poll és szűrőváltás alatt, Back a szűrő fölött nem mozdítja, skip link kezelővel és láthatóan, teljes billentyűzetes útvonal, caption a táblázatában | Kliensoldalon lezárva. Számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás; a staking nézetváltóján továbbra sincs `aria-pressed` |
-| F13 | 13 | `5b8b5a7` | `npm audit` előtte/utána mérve: **3 moderate → 2**, a `body-parser` lekerült a listáról; `npm ci`, K1, K2, K3 mind exit 0 | **Részben — elfogadott maradék.** A body-parser útja lockfile-frissítéssel lezárva, manifest és override nélkül. A maradék kettő az express saját `qs@~6.15.1` pinje; a 4-es vonal nem lép le róla, az egyetlen felfelé út az express 5 (framework-major, a terv nem kéri). Nem elérhető kódút: `query parser` = `simple`, `urlencoded` nincs. **Hiányzó őrszem:** ezt a két konfigurációs tényt semmi nem védi — 20. nap |
+| F12 | 12, **18**, **20** | `1828831`, `fc4652d`, `611fdde` | E2E: 10 eset — egy h1 oldalanként, szekciók h2-ben, fókusz navigációkor és Backnél, fókusz megmaradása poll és szűrőváltás alatt, Back a szűrő fölött nem mozdítja, skip link kezelővel és láthatóan, teljes billentyűzetes útvonal, caption a táblázatában; 18. nap: pontosan egy h1 mind a 20 útvonalon négy állapotban, a fókusz megmarad a részletoldal címén adatérkezéskor; 20. nap: `aria-pressed` sweep minden toggle-csoporton | Kliensoldalon lezárva, **nincs telepítve**. Számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás; a staking nézetváltó `aria-pressed`-je a 20. napon pótolva |
+| F13 | 13 | `5b8b5a7` | `npm audit` előtte/utána mérve: **3 moderate → 2**, a `body-parser` lekerült a listáról; `npm ci`, K1, K2, K3 mind exit 0 | **Részben — elfogadott maradék.** A body-parser útja lockfile-frissítéssel lezárva, manifest és override nélkül. A maradék kettő az express saját `qs@~6.15.1` pinje; a 4-es vonal nem lép le róla, az egyetlen felfelé út az express 5 (framework-major, a terv nem kéri). Nem elérhető kódút: `query parser` = `simple`, `urlencoded` nincs. **A 20. napon kiderült, hogy ez csak a fő szerverre volt igaz** — a labor-szerver nem állította a parsert. Közös `hardenHttpApp()` mindkettőnek (`694d5cc`), és az őrszem megvan: `httpHardening.test.ts` valódi kéréssel és a forrás sweepjével. **Nincs telepítve** (a VPS a 13. nap előtti lockfile-lal fut) |
 | F14 | 12 | `1828831` | unit: a tényleges gombpár 4,5:1 mindkét témában + a régi kompozíció mérésként rögzítve; E2E: a gomb valódi számított szín-párja a lapon, mindkét témában | Lezárva. Saját `--btn-danger-bg`/`--btn-danger-fg` pár (7,29:1 sötét, 5,61:1 világos); a `--crit` szövegszínként változatlan, a keret is az maradt |
 | R7 (nem audit) | **J2** | `4261e06` | unit: `draftIdentity.test.ts` 12 eset; E2E: változatlan retry ugyanaz a kulcs, megváltozott payload új kulcs, és egy draftszerkesztés nem nyúl a futam még tartozó kulcsához | Lezárva. A kliens kanonikus formája szándékosan azonos a szerverével, így a kettő nem tud másképp gondolkodni arról, mi „ugyanaz a kérés” |
 
@@ -2771,7 +2890,7 @@ Napi státusz: ELLENŐRZÖTT
 
 - 07. nap: **elkészült**, lásd a checkpoint-összefoglalót a napi bejegyzések után.
 - 14. nap: **elkészült**, lásd a 14. napi bejegyzés végén.
-- 20. nap: még nem készült el.
+- 20. nap: **elkészült** — [átadási csomag](WEBSITE_HANDOVER_2026-09-13_HU.md) és a 20. napi bejegyzés.
 - **Független review az 01–10. napról: 2026-09-12, hét igazolt találat**
   ([jelentés](WEBSITE_REVIEW_DAYS_01_10_2026-09-12_HU.md),
   [ellenpróbák](review-2026-09-12/regressions.spec.ts)). Mind a hét lezárva a

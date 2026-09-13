@@ -18,7 +18,15 @@ function dkg(value: DkgMeasurementSnapshot): DkgMeasurementSnapshot {
   const copyStats = (row: DkgMeasurementSnapshot['byProfile'][number]) => ({
     llmqName: row.llmqName,
     dkgInterval: row.dkgInterval,
-    rounds: { ...row.rounds },
+    // By name, like hostGrouping below: the inventory test cannot reach inside
+    // an empty byProfile array or a null hostGrouping, so these two are not
+    // left to a spread.
+    rounds: {
+      formed: row.rounds.formed,
+      failed: row.rounds.failed,
+      pending: row.rounds.pending,
+      impossible: row.rounds.impossible,
+    },
     formationRate: row.formationRate,
     medianHealthRatio: row.medianHealthRatio,
     worstHealthRatio: row.worstHealthRatio,
@@ -85,7 +93,15 @@ function snapshot(value: SimulationMeasurementSnapshot): SimulationMeasurementSn
       scriptHhi: value.staking.scriptHhi,
       scriptGini: value.staking.scriptGini,
       topStakerShare: value.staking.topStakerShare,
-      hostGrouping: value.staking.hostGrouping === null ? null : { ...value.staking.hostGrouping },
+      hostGrouping:
+        value.staking.hostGrouping === null
+          ? null
+          : {
+              distinctHosts: value.staking.hostGrouping.distinctHosts,
+              hhi: value.staking.hostGrouping.hhi,
+              topHostShare: value.staking.hostGrouping.topHostShare,
+              unattributedBlocks: value.staking.hostGrouping.unattributedBlocks,
+            },
     },
     dataQuality: quality(value.dataQuality),
   };
@@ -94,14 +110,15 @@ function snapshot(value: SimulationMeasurementSnapshot): SimulationMeasurementSn
 /**
  * Explicit allowlist projection.
  *
- * What it guarantees, stated precisely because the previous one-line claim here
+ * What it guarantees, stated precisely because an earlier one-line claim here
  * ("future unknown fields cannot escape") was not true: fields outside the
  * report -- the record's own and the anchor's -- are copied by name. Fields
  * INSIDE the report are verified against its fingerprint first, so a field
- * planted in storage makes the report fail closed rather than publish; the
- * small aggregate sub-objects in there are still spread, which means a field
- * the GENERATOR adds to one of them in future is published with it. That is a
- * code change somebody makes, not data somebody plants, and it is a residual.
+ * planted in storage makes the report fail closed rather than publish. The
+ * small aggregate sub-objects in there are still spread; a field the GENERATOR
+ * adds to one of them would be published with it -- and since day 20 not
+ * silently: the DTO test pins the complete public field inventory, and a new
+ * field fails it until somebody decides it is public.
  */
 export function toPublicSimulationMeasurementResult(
   source: SimulationMeasurementRecord

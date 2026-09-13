@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import { txKindLabel, type TxDetail, type TxRow } from '@devnet-deftrack/shared';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
@@ -60,6 +60,8 @@ export class DdPageTxs extends LitElement {
 
   private _rows: TxRow[] = [];
   private _total = 0;
+  /** A page of transactions has arrived at least once; until then a count is not known. */
+  private _loaded = false;
   private _offset = 0;
   private _error = '';
   private _loading = true;
@@ -100,6 +102,7 @@ export class DdPageTxs extends LitElement {
       if (run.stale) return;
       this._rows = p.items;
       this._total = p.total;
+      this._loaded = true;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -131,7 +134,9 @@ export class DdPageTxs extends LitElement {
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Latest transactions</h2>
-          <div class="page-sub mono">${num(this._total)} indexed</div>
+          <div class="page-sub mono">
+            ${this._loaded ? `${num(this._total)} indexed` : this._error ? 'count unknown' : '…'}
+          </div>
         </div>
         <div class="card-body flush">
           <div class="twrap">
@@ -150,9 +155,11 @@ export class DdPageTxs extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${this._loading && this._rows.length === 0
-                  ? html`<tr><td class="empty" colspan="8">Loading…</td></tr>`
-                  : this._rows.map(
+                ${!this._loaded
+                  ? html`<tr><td class="empty" colspan="8">${this._error ? COULD_NOT_LOAD : 'Loading…'}</td></tr>`
+                  : this._rows.length === 0
+                    ? html`<tr><td class="empty" colspan="8">No transactions indexed yet.</td></tr>`
+                    : this._rows.map(
                       (t) => html`
                         <tr>
                           <td class="mono"><a href="/tx/${t.txid}">${shortHash(t.txid, 12, 8)}</a></td>
@@ -174,9 +181,15 @@ export class DdPageTxs extends LitElement {
             </table>
           </div>
           <div class="pager">
-            <button ?disabled=${this._offset === 0} @click=${() => this._move(-1)}>Newer</button>
-            <button ?disabled=${to >= this._total} @click=${() => this._move(1)}>Older</button>
-            <span>${num(this._offset + 1)}–${num(to)} of ${num(this._total)}</span>
+            <button ?disabled=${this._offset === 0 || !this._loaded} @click=${() => this._move(-1)}>Newer</button>
+            <button ?disabled=${to >= this._total || !this._loaded} @click=${() => this._move(1)}>Older</button>
+            <span>
+              ${!this._loaded
+                ? '—'
+                : this._total === 0
+                  ? 'nothing to page through'
+                  : `${num(this._offset + 1)}–${num(to)} of ${num(this._total)}`}
+            </span>
           </div>
         </div>
       </section>

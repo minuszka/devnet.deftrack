@@ -1,6 +1,6 @@
 import express from 'express';
-import helmet from 'helmet';
 import { config } from './config.js';
+import { hardenHttpApp } from './httpHardening.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './db.js';
 import { initializeHostLabelPolicy } from './services/hostLabel.service.js';
@@ -128,8 +128,10 @@ async function main(): Promise<void> {
   zmqService.start();
 
   const app = express();
-  app.disable('x-powered-by');
-  app.use(helmet());
+  // The same hardening as the API. This server used to skip the simple query
+  // parser, so the qs advisories F13 accepted as unreachable were reachable
+  // here, before authentication, by anything that could reach the port.
+  hardenHttpApp(app);
   app.use(express.json({ limit: '64kb' }));
   // No CORS: the lab API is driven by the CLI on the lab host, never a browser
   // on another origin.
