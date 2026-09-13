@@ -143,6 +143,7 @@ jobs:
           name: client-browser-tests
           path: |
             client/playwright-report
+            client/playwright-report-csp
             client/test-results
             client/test-results-csp
           retention-days: 7
