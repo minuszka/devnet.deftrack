@@ -217,6 +217,10 @@ helyreállítási bizonyítéka hiányzik.
   (sha256 `6e3c03440ef964a19fc6f674cc9915da0691a915d643e5ecc1533879f2e4756a`). Ellenőrzés:
   `sha256sum -c SHA256SUMS` a mappában. A jelentés eredetileg a `client/test-results/review-final/`
   mappára hivatkozik, de azt a böngésző-suite következő futása kiüríti.
+- Az **ismételt review** ([jelentés](WEBSITE_REVIEW_V1_V7_2026-09-13_HU.md)) mellékletei:
+  [review-2026-09-13-followup/](review-2026-09-13-followup/); a futásainak trace-ei a repón kívül:
+  `D:\www\devnet .deftrack-review-artefacts\2026-09-13-followup\`, 22 fájl, `SHA256SUMS` sha256
+  `de50d0ac8fbda907df031a80b07819a8947679e0196c3d253fc517e41d47259a`.
 
 ## 13. Amit a review-nak külön érdemes néznie
 

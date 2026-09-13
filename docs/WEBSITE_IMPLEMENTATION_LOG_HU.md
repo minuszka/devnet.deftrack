@@ -3152,6 +3152,17 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   V7 zöld. A V5-próba a letiltott Count mezőbe gépelésen időtúllépésre fut — a reviewer a
   zárolt űrlapot előre elfogadta, és a locator igazítását megengedte; a szövegmegőrzést a
   `scenario-forms.spec.ts` állítja. **Független újra-review: még nem történt meg.**
+- **Ismételt független review a J4–J6-ról: 2026-09-13, a `72fec82`-n** ([jelentés](WEBSITE_REVIEW_V1_V7_2026-09-13_HU.md),
+  [hibajegyek és ellenpróbák](review-2026-09-13-followup/)). V1, V2, V3, V5, V6, V7 lezárva; V4 részben.
+  Új P1 nincs; négy P2 hibajegy: W1 (Simulations lista pollhibája), W2 (recovery-401 nem zárja le a
+  sessiont), W3 (a `ResponseGate` URL szerint azonosított olvasást — új harness-hiba), W4 (Fairness
+  automatikus profilváltása). Az ellenpróbák a mainen az implementáló gépén is reprodukálódtak: W1–W4
+  piros, C2 zöld. A javítás a `web/review-fixes-2026-09-13-2` ágon, a J7 munkanapon.
+  A reviewer `client/test-results/` alatti trace-ei (`followup-review`, `negative-followup`,
+  `negative-followup-editor`, `review-final` — 22 fájl) a repón kívül megőrizve:
+  `D:\www\devnet .deftrack-review-artefacts\2026-09-13-followup\`, `SHA256SUMS` sha256
+  `de50d0ac8fbda907df031a80b07819a8947679e0196c3d253fc517e41d47259a`; `sha256sum -c` a másolaton és az
+  eredetin is teljes egyezés, negatív kontroll (egy átírt bájt) exit 1.
 - **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
   böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
   jelentés által hivatkozott `client/test-results/review-final/`-t is:
