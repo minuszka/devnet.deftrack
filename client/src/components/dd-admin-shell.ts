@@ -157,6 +157,27 @@ export class DdAdminShell extends LitElement {
    * still let the older answer land last.
    */
   private _selectionGeneration = 0;
+  /**
+   * Reads of a selection's moving parts -- its timeline and its recovery
+   * evidence -- numbered in the order they were asked for, and the number each
+   * of those two fields was last written from.
+   *
+   * The generation above tells a read for this selection from a read for
+   * another; it cannot order two reads for the SAME selection, and the moving
+   * parts are read again on every transition, every mutation and every
+   * Refresh. So whichever answer arrived last won: the poll saw `recovery` and
+   * asked for the evidence, saw `completed` a moment later and asked again, the
+   * second answer ("all targets clear") landed first, and the first -- written
+   * before the recovery had finished -- replaced it.
+   *
+   * A field takes an answer only from a request newer than the one it holds.
+   * An older answer that arrives first is still shown: it is the freshest thing
+   * known until the newer one lands. A failed read writes nothing, so it holds
+   * no place either.
+   */
+  private _detailRequests = 0;
+  private _historyFrom = 0;
+  private _recoveryFrom = 0;
   private _onPopState = (): void => {
     void this._applyUrlSelection();
   };
@@ -520,6 +541,7 @@ export class DdAdminShell extends LitElement {
    * The status poll below renews the part that moves.
    */
   private async _loadHistory(runKey: string, generation: number): Promise<void> {
+    const request = ++this._detailRequests;
     const [detail, history, recovery] = await Promise.all([
       adminApi.dryRun(runKey),
       adminApi.history(runKey),
@@ -540,9 +562,23 @@ export class DdAdminShell extends LitElement {
      */
     this._acceptRun(detail.run);
     this._selectedPlan = detail.plan;
-    this._selectedRecovery = recovery;
     this._selectedPreflight = null;
+    // The timeline and the evidence are as old as this request, and a refresh
+    // issued after it may already have brought newer ones.
+    this._takeHistory(history, request);
+    this._takeRecovery(recovery, request);
+  }
+
+  private _takeHistory(history: SimulationHistory, request: number): void {
+    if (request <= this._historyFrom) return;
     this._history = history;
+    this._historyFrom = request;
+  }
+
+  private _takeRecovery(recovery: RecoveryReportView | null, request: number): void {
+    if (request <= this._recoveryFrom) return;
+    this._selectedRecovery = recovery;
+    this._recoveryFrom = request;
   }
 
   /**
@@ -634,6 +670,7 @@ export class DdAdminShell extends LitElement {
    * left writes nothing.
    */
   private async _refreshSelectionDetail(runKey: string, generation: number): Promise<void> {
+    const request = ++this._detailRequests;
     const [history, recovery] = await Promise.all([
       adminApi.history(runKey).catch(() => null),
       /*
@@ -646,8 +683,8 @@ export class DdAdminShell extends LitElement {
       adminApi.recovery(runKey).then((r) => r.recovery).catch(() => undefined),
     ]);
     if (generation !== this._selectionGeneration || this._selectedRunKey !== runKey) return;
-    if (history !== null) this._history = history;
-    if (recovery !== undefined) this._selectedRecovery = recovery;
+    if (history !== null) this._takeHistory(history, request);
+    if (recovery !== undefined) this._takeRecovery(recovery, request);
   }
 
   private _clearSelection(): void {

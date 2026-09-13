@@ -1,5 +1,13 @@
 import type { Page } from '@playwright/test';
-import { expect, fail, ok, test } from './harness.js';
+import {
+  expect,
+  fail,
+  ok,
+  test,
+  type AppHarness,
+  type ResponseGate,
+  type StubResponse,
+} from './harness.js';
 import { adminSessionStubs, controlRun, runStubs, savedPlan, RUN_A, RUN_B } from './fixtures/admin.js';
 
 /**
@@ -698,5 +706,196 @@ test.describe('run status', () => {
     await plan.release();
     await expect(page.getByRole('heading', { name: 'Admin access', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: ABORT })).toHaveCount(0);
+  });
+
+  const NOT_CLEAR = {
+    required: true,
+    allClear: false,
+    targets: [
+      {
+        targetId: 'lab-mn-1',
+        faultStateClear: false,
+        expectedServiceRunning: true,
+        observerFresh: true,
+        checkedAtMs: 1_500,
+      },
+    ],
+  };
+
+  /** The run's timeline as the server would serve it after these events. */
+  function timelineOf(status: string, revision: number, events: string[]): Record<string, unknown> {
+    return {
+      run: controlRun({ runKey: RUN_A, status, revision, live: true }),
+      audit: events.map((eventType, index) => ({
+        sequence: index + 1,
+        stream: 'run',
+        eventType,
+        atMs: 2_000 + index * 1_000,
+        fromStatus: null,
+        toStatus: null,
+      })),
+      artifacts: [],
+    };
+  }
+
+  function evidence(recovery: typeof CLEAR | typeof NOT_CLEAR | null): Record<string, unknown> {
+    return { recovery: recovery === null ? null : { startedAtMs: 1_000, finishedAtMs: 2_000, ...recovery } };
+  }
+
+  /**
+   * Two reads of the moving parts for the same run: `older` holds the first
+   * one's answers, `newer` the second's. Anything else answers at once.
+   */
+  function twoDetailReads(
+    first: { recovery: typeof CLEAR | typeof NOT_CLEAR | null; events: string[] },
+    second: { recovery: typeof CLEAR | typeof NOT_CLEAR | null; events: string[] },
+    gates: { older: ResponseGate; newer: ResponseGate }
+  ): Record<string, () => StubResponse> {
+    let timelines = 0;
+    let proofs = 0;
+    return {
+      [`${A}/history`]: () => {
+        timelines += 1;
+        return timelines === 1
+          ? { body: ok(timelineOf('recovery', 4, first.events)), gate: gates.older }
+          : { body: ok(timelineOf('completed', 5, second.events)), gate: gates.newer };
+      },
+      [`${A}/recovery`]: () => {
+        proofs += 1;
+        return proofs === 1
+          ? { body: ok(evidence(first.recovery)), gate: gates.older }
+          : { body: ok(evidence(second.recovery)), gate: gates.newer };
+      },
+    };
+  }
+
+  /** Open run A with its fault active, then let the poll issue two detail reads. */
+  async function twoRefreshesInFlight(
+    app: AppHarness,
+    page: Page,
+    stubs: ReturnType<typeof twoDetailReads>,
+    gates: { older: ResponseGate; newer: ResponseGate }
+  ): Promise<void> {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+
+    app.stub({ ...stubs, [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'recovery', revision: 4, live: true, faultMayBeActive: true })) } });
+    await page.clock.fastForward(5_000);
+    await gates.older.waitForHeld(2);
+
+    app.stub({ [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'completed', revision: 5, live: true })) } });
+    await page.clock.fastForward(5_000);
+    await gates.newer.waitForHeld(2);
+  }
+
+  async function releaseBoth(gate: ResponseGate): Promise<void> {
+    await gate.release(`${A}/history`);
+    await gate.release(`${A}/recovery`);
+  }
+
+  /**
+   * V2. Refreshes of the same run were not ordered among themselves.
+   *
+   * Each checked only that it still belonged to the selection, and two
+   * refreshes for the same selection both do -- so whichever answered LAST
+   * won. The status poll moves the run to `recovery` and asks for the
+   * evidence; a moment later it moves to `completed` and asks again. The
+   * second answer, "all targets clear", arrives first; the first, written
+   * before the recovery finished, arrives after it and took its place.
+   */
+  for (const [label, older] of [
+    ['no proof yet', null],
+    ['an earlier proof', NOT_CLEAR],
+  ] as const) {
+    test(`a late refresh carrying ${label} cannot replace newer proof, or the newer timeline`, async ({ app, page }) => {
+      const gates = { older: app.gate(), newer: app.gate() };
+      const stubs = twoDetailReads(
+        { recovery: older, events: ['dry_run_completed'] },
+        { recovery: CLEAR, events: ['dry_run_completed', 'recovery_proven'] },
+        gates
+      );
+      await twoRefreshesInFlight(app, page, stubs, gates);
+
+      await releaseBoth(gates.newer);
+      await expect(page.locator('.approval')).toContainText('all targets clear');
+      await expect(page.locator('.timeline')).toContainText('recovery_proven');
+
+      await releaseBoth(gates.older);
+      // Both of the older answers have been read, and they changed nothing.
+      await expect(page.locator('.approval')).toContainText('all targets clear');
+      await expect(page.locator('.approval')).not.toContainText('manual attention required');
+      await expect(page.locator('.approval')).not.toContainText('No recovery proof has been recorded');
+      await expect(page.locator('.timeline')).toContainText('recovery_proven');
+    });
+  }
+
+  /**
+   * V2, the rule's other half. "Never go backwards" is not "only the latest
+   * request counts": an older answer that arrives first is still the freshest
+   * thing known, and showing nothing until the newest lands would be a panel
+   * that is behind for no reason.
+   */
+  test('refreshes answering in order are each shown, the newer last', async ({ app, page }) => {
+    const gates = { older: app.gate(), newer: app.gate() };
+    const stubs = twoDetailReads(
+      { recovery: NOT_CLEAR, events: ['dry_run_completed'] },
+      { recovery: CLEAR, events: ['dry_run_completed', 'recovery_proven'] },
+      gates
+    );
+    await twoRefreshesInFlight(app, page, stubs, gates);
+
+    await releaseBoth(gates.older);
+    await expect(page.locator('.approval')).toContainText('manual attention required');
+
+    await releaseBoth(gates.newer);
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+    await expect(page.locator('.timeline')).toContainText('recovery_proven');
+  });
+
+  /**
+   * V2, where V1 left it: the first read of a selection brings a timeline and
+   * evidence too, and they are as old as that read's request. If the status
+   * poll has already moved the run on and refreshed both, the first read's
+   * late answers must not put the older ones back.
+   */
+  test('the first read of a run cannot replace evidence a later refresh brought', async ({ app, page }) => {
+    const first = app.gate();
+    let timelines = 0;
+    let proofs = 0;
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+      [`${A}/history`]: () => {
+        timelines += 1;
+        return timelines === 1
+          ? { body: ok(timelineOf('fault_active', 3, ['dry_run_completed'])), gate: first }
+          : { body: ok(timelineOf('cooldown', 9, ['dry_run_completed', 'recovery_proven'])) };
+      },
+      [`${A}/recovery`]: () => {
+        proofs += 1;
+        return proofs === 1 ? { body: ok(evidence(null)), gate: first } : { body: ok(evidence(CLEAR)) };
+      },
+      [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'cooldown', revision: 9, live: true })) },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await first.waitForHeld(2);
+
+    // The poll moves the run on and refreshes its evidence before the first read lands.
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+    await app.waitUntilRead(`${A}/history`, 1);
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+
+    await releaseBoth(first);
+    await expect(page.getByText('Target preview')).toBeVisible();
+    await expect(page.locator('.approval')).toContainText('all targets clear');
+    await expect(page.locator('.approval')).not.toContainText('No recovery proof has been recorded');
+    await expect(page.locator('.timeline')).toContainText('recovery_proven');
   });
 });
