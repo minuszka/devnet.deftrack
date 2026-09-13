@@ -298,16 +298,51 @@ export function readSimulation(run: PublicSimulationRunView, report: ReportState
 
 /* ── export ──────────────────────────────────────────────────────────────── */
 
-/** Bumped when the envelope below changes shape, not when the API's does. */
-export const SIMULATION_EXPORT_SCHEMA_VERSION = 1;
+/**
+ * Bumped when the envelope below changes shape, not when the API's does.
+ *
+ * 2: `reportRead`. A version-1 file carries `report: null` for both "no
+ * measurement exists" and "the measurement could not be read", and cannot be
+ * told apart after the fact.
+ */
+export const SIMULATION_EXPORT_SCHEMA_VERSION = 2;
+
+/** A report read that has finished, one way or the other. What an export is built from. */
+export type SettledReportState = Exclude<ReportState, { kind: 'loading' }>;
+
+/**
+ * What asking for the measurement produced, as the file's reader needs it.
+ *
+ * Classified, not quoted: an HTTP status or a server's error text is not part
+ * of the public record, and "could not be read" is what the reader has to act
+ * on.
+ */
+export type ExportReportRead = 'present' | 'absent' | 'unavailable';
 
 export interface SimulationExport {
   schemaVersion: number;
   fetchedAt: string;
   source: { run: string; report: string };
   run: PublicSimulationRunView;
-  /** Null when no measurement exists; the export never fills one in. */
+  /**
+   * `present`: `report` is the measurement. `absent`: the server says none has
+   * been recorded. `unavailable`: the report could not be read when the file
+   * was made, which says nothing about whether one exists.
+   */
+  reportRead: ExportReportRead;
+  /** The measurement when `reportRead` is `present`, and null otherwise; never filled in. */
   report: PublicSimulationReport | null;
+}
+
+function reportReadOf(report: SettledReportState): ExportReportRead {
+  switch (report.kind) {
+    case 'present':
+      return 'present';
+    case 'absent':
+      return 'absent';
+    case 'error':
+      return 'unavailable';
+  }
 }
 
 /**
@@ -320,7 +355,7 @@ export interface SimulationExport {
  */
 export function buildSimulationExport(
   run: PublicSimulationRunView,
-  report: ReportState,
+  report: SettledReportState,
   fetchedAtMs: number
 ): SimulationExport {
   const base = `/api/v1/simulations/${encodeURIComponent(run.runKey)}`;
@@ -329,6 +364,7 @@ export function buildSimulationExport(
     fetchedAt: new Date(fetchedAtMs).toISOString(),
     source: { run: base, report: `${base}/report` },
     run,
+    reportRead: reportReadOf(report),
     report: report.kind === 'present' ? report.report : null,
   };
 }

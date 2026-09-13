@@ -167,9 +167,31 @@ describe('the export', () => {
     expect(buildSimulationExport(run('completed'), { kind: 'error', message: 'x' }, 0).report).toBeNull();
   });
 
+  /**
+   * V6 of the final review. The two nulls above are different answers, and the
+   * file said them identically: an export taken while the report endpoint was
+   * failing was byte-for-byte the export of a run nobody had measured, and the
+   * envelope documented null as "no measurement exists". The reader of the file
+   * could not tell a gap in the record from a gap in the fetch.
+   */
+  it('says whether the report was read, and a report that could not be read is not one that does not exist', () => {
+    const at = Date.UTC(2026, 8, 12, 9);
+    const measured = buildSimulationExport(run('completed'), present(report('matched', true, true)), at);
+    const absent = buildSimulationExport(run('completed'), { kind: 'absent' }, at);
+    const unavailable = buildSimulationExport(run('completed'), { kind: 'error', message: 'HTTP 503' }, at);
+
+    expect(measured.reportRead).toBe('present');
+    expect(absent.reportRead).toBe('absent');
+    expect(unavailable.reportRead).toBe('unavailable');
+    expect(unavailable).not.toEqual(absent);
+    // The failure is classified, not quoted: no status line and no server text.
+    expect(JSON.stringify(unavailable)).not.toContain('503');
+    expect(SIMULATION_EXPORT_SCHEMA_VERSION).toBe(2);
+  });
+
   it('adds nothing to the public responses but the envelope', () => {
     const exported = buildSimulationExport(run('completed'), { kind: 'absent' }, 0);
-    expect(Object.keys(exported).sort()).toEqual(['fetchedAt', 'report', 'run', 'schemaVersion', 'source']);
+    expect(Object.keys(exported).sort()).toEqual(['fetchedAt', 'report', 'reportRead', 'run', 'schemaVersion', 'source']);
     expect(exported.run).toEqual(run('completed'));
   });
 });

@@ -10,7 +10,7 @@ import {
   RUN_KEY_PATTERN,
   type PublicSimulationRunView,
   type Reading,
-  type ReportState,
+  type SettledReportState,
 } from '../lib/simulations.js';
 import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
@@ -35,7 +35,7 @@ type DetailState =
   | { kind: 'malformed' }
   | { kind: 'missing' }
   | { kind: 'error'; message: string }
-  | { kind: 'loaded'; run: PublicSimulationRunView; report: ReportState; fetchedAtMs: number };
+  | { kind: 'loaded'; run: PublicSimulationRunView; report: SettledReportState; fetchedAtMs: number };
 
 /**
  * The public simulation results: every run, and what its measurement says.
@@ -221,7 +221,7 @@ export class DdPageSimulations extends LitElement {
       return;
     }
 
-    let report: ReportState;
+    let report: SettledReportState;
     try {
       report = { kind: 'present', report: await run.api.simulationReport(runKey) };
     } catch (error) {
@@ -350,7 +350,7 @@ export class DdPageSimulations extends LitElement {
     }
   }
 
-  private _loaded(run: PublicSimulationRunView, report: ReportState, fetchedAtMs: number): TemplateResult {
+  private _loaded(run: PublicSimulationRunView, report: SettledReportState, fetchedAtMs: number): TemplateResult {
     const reading = readSimulation(run, report);
     return html`
       ${run.state.live
@@ -393,7 +393,7 @@ export class DdPageSimulations extends LitElement {
    * adapter's material is prior modelling, and a page that put it beside a
    * measured result would present a model as a forecast.
    */
-  private _measurement(run: PublicSimulationRunView, report: ReportState): TemplateResult {
+  private _measurement(run: PublicSimulationRunView, report: SettledReportState): TemplateResult {
     if (report.kind !== 'present') {
       if (run.state.status !== 'completed') return html`${nothing}`;
       return html`<section class="card">
@@ -448,7 +448,7 @@ export class DdPageSimulations extends LitElement {
    * new tab and does not need revoking. The page is public, so is every byte in
    * the file, and the envelope says where each came from.
    */
-  private _export(run: PublicSimulationRunView, report: ReportState, fetchedAtMs: number): TemplateResult {
+  private _export(run: PublicSimulationRunView, report: SettledReportState, fetchedAtMs: number): TemplateResult {
     const exported = buildSimulationExport(run, report, fetchedAtMs);
     const href = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(exported, null, 2))}`;
     return html`

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, fail, ok, test, type ApiStubs, type AppHarness } from './harness.js';
 import { overviewStubs, shellStubs } from './fixtures/stubs.js';
 import { pageOf } from './fixtures/api.js';
@@ -190,10 +191,12 @@ test.describe('the export', () => {
     expect(href).toMatch(/^data:application\/json/);
     const exported = JSON.parse(decodeURIComponent(href!.slice(href!.indexOf(',') + 1)));
 
-    expect(exported.schemaVersion).toBe(1);
+    // 2 since V6 of the final review: the envelope gained `reportRead`.
+    expect(exported.schemaVersion).toBe(2);
     expect(Date.parse(exported.fetchedAt)).not.toBeNaN();
     expect(exported.source).toEqual({ run: one(), report: report() });
-    expect(Object.keys(exported).sort()).toEqual(['fetchedAt', 'report', 'run', 'schemaVersion', 'source']);
+    expect(Object.keys(exported).sort()).toEqual(['fetchedAt', 'report', 'reportRead', 'run', 'schemaVersion', 'source']);
+    expect(exported.reportRead).toBe('present');
     // Exactly what the public API returned, not a re-assembly of it.
     expect(exported.run).toEqual(simRun({ status: 'completed' }));
     expect(exported.report).toEqual(simReport('matched'));
@@ -205,5 +208,31 @@ test.describe('the export', () => {
     const href = await page.getByRole('link', { name: 'Download JSON' }).getAttribute('href');
     const exported = JSON.parse(decodeURIComponent(href!.slice(href!.indexOf(',') + 1)));
     expect(exported.report).toBeNull();
+    expect(exported.reportRead).toBe('absent');
+  });
+
+  /**
+   * V6 of the final review, through a real download rather than the link's
+   * attribute: the file a reader saves while the measurement store is failing
+   * says the report could not be read. It used to be identical to the file of
+   * a run with no measurement at all.
+   */
+  test('a report that could not be read is said so in the downloaded file', async ({ app, page }) => {
+    await openRun(app, 'completed', { status: 503, body: fail('measurement store unavailable') });
+    await expect(page.locator('[data-reading]')).toHaveAttribute('data-reading', 'report-unavailable');
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('link', { name: 'Download JSON' }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe(`${SIM_A}.json`);
+    const saved = await download.path();
+    const exported = JSON.parse(readFileSync(saved, 'utf8'));
+
+    expect(exported.reportRead).toBe('unavailable');
+    expect(exported.report).toBeNull();
+    expect(exported.schemaVersion).toBe(2);
+    // Classified, not quoted: the server's words do not travel into the file.
+    expect(JSON.stringify(exported)).not.toContain('measurement store unavailable');
   });
 });
