@@ -94,16 +94,16 @@ napra bontva a naplóban.
 | Pont | Javító commit | Automatikus teszt (böngésző / unit / HTTP) | Kód kész | Ellenőrzött | Élesben | Ami nincs bizonyítva / korlát |
 |---|---|---|---|---|---|---|
 | F01 futamkiválasztás | 05–06. nap `8735d1d` `5fd3307`; J1 `4972341`; J4 `96e6e30` (V1) `451e3e8` (V3) | `run-selection.spec.ts` (13), `adminRunSelection.test.ts` (10); J4: `run-status.spec.ts` V1-esetek (6), `admin.spec.ts` belépés (3) | igen | igen, mindkét review ellenpróbáival | **részben** — a 05–06. napi változat; az R1/R2/R4 és a V1/V3 javítás nem | valódi laborfutamon nem mérve |
-| F02 frissülő futamállapot | 05–07. nap `c1e3605`; J2 `4261e06`; J4 `2e2d56c` (V2) `11bbe63` (V7) | `run-status.spec.ts` (14, szabályozott órával; J4: +4 V2, +6 V7), `simulationRunState.test.ts` | igen | igen | **részben** — az R3 és a V2/V7 javítás nem | a mentett terv egyszer olvasódik; laborfutam nincs |
+| F02 frissülő futamállapot | 05–07. nap `c1e3605`; J2 `4261e06`; J4 `2e2d56c` (V2) `11bbe63` (V7); J7 `6c94aa0` (W2) | `run-status.spec.ts` (14, szabályozott órával; J4: +4 V2, +6 V7; J7: +4 W2), `simulationRunState.test.ts` | igen | igen | **részben** — az R3, a V2/V7 és a W2 javítás nem | a mentett terv egyszer olvasódik; laborfutam nincs |
 | F03 adatfrissesség | 03. nap `c5c872c` | `freshness.spec.ts` (7), `freshness.test.ts` (15) | igen | igen | igen | a `HealthSnapshot` nem közöl megfigyelési időbélyeget |
 | F04 kísérletlista | 08. nap `6c6fc96` | `experiments.spec.ts` (8), `experimentPaging.integration.test.ts` (7) | igen | igen | igen | — |
-| F05 Fairness profil | 09. nap `881df65`; J3 `6913d1d` | `fairness.spec.ts` (8), HTTP-szűrési teszt | igen | igen | **részben** — az R5 javítás nem | — |
+| F05 Fairness profil | 09. nap `881df65`; J3 `6913d1d`; J7 `f2a4873` (W4) | `fairness.spec.ts` (8; J7: +3 W4), HTTP-szűrési teszt | igen | igen | **részben** — az R5 és a W4 javítás nem | — |
 | F06 registry-létszám | 09. nap `881df65`; J3 `e860556` | domain unit (4), `fairnessSelection.integration.test.ts` | igen | igen | **részben** — az R6 javítás nem | — |
 | F07 hibás escape | 02. nap `db77551`; 14. nap `5262482` | `router.test.ts` (4), `router.spec.ts` (3); élő nginx: 400 | igen | igen | igen | — |
 | F08 ismeretlen útvonal | 02. nap `db77551` | `router.test.ts`, `router.spec.ts` | igen | igen | igen | a szerveroldali SPA fallback szándékosan változatlan |
 | F09 scenario-alapértékek | 04. nap `127e53d`; 15–16. nap `d7469ff` `e4c16d5`; J6 `b7ee9f8` (V5) | `scenario-forms.spec.ts` (10; J6: +5 V5), `complex-scenarios.spec.ts` (15), `scenarioFields.test.ts` (11), `simulationScenarios.integration.test.ts` | igen | igen | **részben** — a 04. nap igen, a 15–16. napi űrlapok és a V5 javítás nem | a `live` mód valódi laborfutama nincs; a review V5-próbája a zárolt mezőn időtúllépésre fut (elfogadott, 14. pont) |
 | F10 biztonsági fejlécek | 14. nap `5262482`; 20. nap `694d5cc` (egy HSTS-tulajdonos) | izolált nginx-mérés (`verify-headers.sh`), `csp.spec.ts` (4), `httpHardening.test.ts` | igen | igen | **részben** — nginx-fejlécek élnek, CSP report-only; a helmet HSTS kivétele nem, ezért az `/api/` ma is két HSTS-t küld | az enforce-ra váltás nincs megtéve (9. pont) |
-| F11 URL-szűrők | 10. nap `700c420`; 11. nap `b954e9b`; J5 `dc05f11` (V4) | `query-state.spec.ts` (22); J5: `query-identity.spec.ts` (17) | igen | igen | **részben** — a 10. napi három oldal igen, a 11. napiak és a V4 javítás nem | PoSe, ChainLocks, Sentinel Layer szándékosan paraméter nélkül; Fairness tip-vezérelt profilváltási rése nem mérve (14. pont) |
+| F11 URL-szűrők | 10. nap `700c420`; 11. nap `b954e9b`; J5 `dc05f11` (V4); J7 `35899d4` (W1) | `query-state.spec.ts` (22); J5: `query-identity.spec.ts` (17); J7: `public-simulations.spec.ts` +3 (W1) | igen | igen | **részben** — a 10. napi három oldal igen, a 11. napiak, a V4 és a W1 javítás nem | PoSe, ChainLocks, Sentinel Layer szándékosan paraméter nélkül; a Fairness tip-vezérelt profilváltási rése mérve és javítva (W4, F05 sor) |
 | F12 szemantika, fókusz | 12. nap `1828831`; 18. nap `fc4652d` (cím nélküli részletoldalak); 20. nap `611fdde` (`aria-pressed`) | `accessibility.spec.ts` (h1 minden útvonalon négy állapotban, fókusz, skip link, toggle-sweep), `navigation.spec.ts` (14) | igen | igen | nem | számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás |
 | F13 függőségek | 13. nap `5b8b5a7`; 20. nap `694d5cc` | `npm audit` előtte/utána; `httpHardening.test.ts` (6: a lapos query-feldolgozás valódi kérésen, urlencoded nincs, forrás-sweep mindkét szerverre) | igen | igen | nem (a VPS a 13. nap előtti lockfile-lal fut) | **elfogadott maradék:** 2 moderate `qs` az express 4 saját pinje miatt. Az elfogadás feltevése (simple parser, nincs urlencoded) a 20. napon derült ki, hogy **csak a fő szerverre volt igaz**; a labor-szerverre (`labServer.ts`, alapból `127.0.0.1`) nem. Javítva és teszttel védve, de nincs telepítve |
 | F14 kontraszt | 12. nap `1828831` | `contrast.test.ts`, `accessibility.spec.ts` (mindkét téma) | igen | igen | nem | — |
@@ -169,9 +169,10 @@ Mind **additív** vagy szűkítő (egy mező kevesebb kerül ki), törölt publi
 | A táblázat-görgetési jelzés az adminban nincs | tudomásul véve | a 18. nap a publikus shellre szólt; az admin túlfolyása javítva (`a436d6b`), a jelzés nem |
 | A 4 workeres skip-link flake (16. nap) | nem reprodukálódott | az azóta futtatott teljes suite-okban nem jelent meg; CI egy workerrel fut |
 | A friss klón K2-je nem volt tiszta (2. pont) | **nyitott, figyelendő** | egy nem induló oldal és két navigációs időtúllépés, viselkedési hiba nélkül; ha a CI-ban is megjelenik, a dev szerver alatti tesztidőzítés a gyanúsított. **2026-09-13:** a 12 végigfutott helyi K2-ből 2-ben egy-egy üres oldal; a trace-ben mindkétszer `net::ERR_NO_BUFFER_SPACE` a `/src/main.ts` betöltésén. Ez tünet, nem gyökérok; a TIME_WAIT-hipotézist a mérés nem igazolta (14. pont) |
-| A J4–J6 (V1–V7) javítás nincs élesben | **nyitott — deploy kell, a független újra-review után** | 14. pont |
-| Gyenge mintájú régi teszt | nyitott | „a poll describing an older state cannot undo an action” a válasz feldolgozása előtt állít, így egy revision-regressziót nem biztosan fog meg (J4 lelet; ugyanez a minta a J2 egy tesztjénél már javítva) |
-| Fairness: tip-vezérelt profilváltás | nyitott, nem mérve | ha a tip átlép egy aktiválási magasságot és az új profil kérése hibázik, a régi profil adata az új „at the tip” gomb alatt maradhat — kódolvasásból; a lekérdezés-váltásnál a Fairness nem érintett (J5) |
+| A J4–J6 (V1–V7) és a J7 (W1–W4) javítás nincs élesben | **nyitott — deploy kell, a független újra-review után** | 14. és 15. pont |
+| Gyenge mintájú régi teszt | **lezárva kódban és tesztben (J7, `c82db16`)** | „a poll describing an older state cannot undo an action” a válasz feldolgozása előtt állított (J4 lelet, a review megerősítette). Mérve: a régi változat is 3/3 elkapta a hibát — konstrukciós, nem megfigyelt hiba volt; most megvárja a régi válasz elolvasását |
+| Fairness: tip-vezérelt profilváltás | **lezárva kódban és tesztben (J7, `f2a4873`)** — előtte: nyitott, nem mérve | ha a tip átlép egy aktiválási magasságot és az új profil kérése hibázik, a régi profil adata az új „at the tip” gomb alatt maradhat — kódolvasásból; a review böngészőben reprodukálta (W4) |
+| A `ResponseGate` URL szerinti olvasás-azonosítása | **lezárva (J7, `2bd3139`)** | a #175 saját harness-hibája (W3): a `release()` egy azonos URL-ű másik válasz olvasását is elfogadta; most válaszonkénti azonosító |
 | A harness teardown-kori megszakítása | tudomásul véve | a teszt vége után visszatartott kérés megszakításának nincs saját tesztje; a teljes suite-ok csak azt mutatják, hogy semmit nem akaszt meg |
 
 ## 9. nginx — beillesztés, jelenlegi állapot, rollback
@@ -261,3 +262,29 @@ Watch és az Operators nem értelmezhető (nincs lekérdezés).
 
 **Deploy:** a 10. pont sorrendje változatlan; a J4–J6 a 11–20. nappal és a J1–J3-mal együtt kerülne ki,
 külön engedéllyel, a független újra-review után.
+
+## 15. Az ismételt review hibajegyei — J7 (2026-09-13/14)
+
+Az ismételt független review ([jelentés](WEBSITE_REVIEW_V1_V7_2026-09-13_HU.md)) a `72fec82`-n V1, V2, V3,
+V5, V6 és V7 eredeti hibáját lezárta, a V4-et részben fogadta el, új P1-et nem talált, és négy P2
+hibajegyet adott. Mind a négy javítva van kódban és tesztben a `web/review-fixes-2026-09-13-2` ágon;
+**egyik sincs élesben**, és a **független újra-review még nem történt meg**. Részletek: napló, J7.
+
+| ID | Mit javít | Commit | Teszt (a rendes kapuban) | Negatív kontroll | A review ellenpróbája |
+|---|---|---|---|---|---|
+| W3 | a `ResponseGate.release()` a saját válaszára vár, nem az URL egy újabb olvasására | `2bd3139` | `harness.spec.ts` (+2) | 1 — korai visszatéréssel bukik | zöld |
+| W2 | a recovery- és history-olvasás 401-e lezárja a sessiont, a kiválasztás-ellenőrzés után | `6c94aa0` | `run-status.spec.ts` (+4) | 5 | zöld |
+| W1 | a Simulations lista azonos lapjának pollhibája megtartja a listát | `35899d4` | `public-simulations.spec.ts` (+3) | 3 | zöld |
+| W4 | a Fairness adata az ablakhoz és a követett profilhoz kötve | `f2a4873` | `fairness.spec.ts` (+3) | 4 | zöld |
+| — | a régi pollteszt megvárja a régi válasz elolvasását | `c82db16` | `run-status.spec.ts` (1 szigorítva) | 1 (3/3) | — |
+
+**Kapuk az ág végén (`c82db16`):** K1 exit 0 — **864** szerver + **203** kliens unit; K2 **289** zöld,
+első futásra; K3 exit 0 — 15 fájl, **98** teszt, 8 kihagyott (a Mongo nélküli párdarabok); CSP **4**;
+a review öt ellenpróbája (W1–W4, C2) zöld.
+
+**A review mellékletei** a repóban (`docs/review-2026-09-13-followup/`; a naplók a review által írt UTF-16
+kódolásban, ezért a git binárisnak mutatja őket), a futásainak trace-ei a repón kívül (12. pont).
+
+**Deploy:** a 10. pont sorrendje változatlan; a J4–J7 együtt kerülne ki, külön engedéllyel, a független
+újra-review után. A review deploy-véleménye: a megfigyelő webfelület kiadása mérlegelhető; a live szimulátor
+elfogadásához továbbra is valódi laborbizonyíték kell.

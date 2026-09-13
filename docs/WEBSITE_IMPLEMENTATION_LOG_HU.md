@@ -28,7 +28,8 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | 19 | Keresés és súgó | ELLENŐRZÖTT | `6b5385d`; részletek a 19. napi bejegyzésben |
 | 20 | Regresszió és review-csomag | ELLENŐRZÖTT | `694d5cc` … `46ac9da` (#174); részletek a 20. napi bejegyzésben |
 | J1–J3 | Az 01–10. napi review (R1–R7) javításai | ELLENŐRZÖTT | `4972341`, `4261e06`, `6913d1d`, `e860556` (#164) |
-| J4–J6 | A végső review (V1–V7) javításai | ELLENŐRZÖTT — a független újra-review még nem történt meg | `web/review-fixes-2026-09-13`; lásd a J4–J6 bejegyzést |
+| J4–J6 | A végső review (V1–V7) javításai | ELLENŐRZÖTT — az ismételt review V1, V2, V3, V5, V6, V7-et lezárta, V4-et részben | `web/review-fixes-2026-09-13` (#175) |
+| J7 | Az ismételt review (W1–W4) javításai és egy tesztadósság | ELLENŐRZÖTT — a független újra-review még nem történt meg | `web/review-fixes-2026-09-13-2`; lásd a J7 bejegyzést |
 
 A 11–20. nap sorai 2026-09-13-ig `TERVEZETT`-et mutattak, miközben mindegyik napnak megvolt a lezárt bejegyzése; a végső review jelezte. A táblázat most a napi bejegyzések saját „Commit(ok), végső SHA” és „Napi státusz” sorait idézi.
 
@@ -2784,6 +2785,86 @@ Napi státusz: ELLENŐRZÖTT — a független újra-review még nem történt me
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## J7 javító munkanap – az ismételt review hibajegyei (W1–W4) és egy tesztadósság
+
+```text
+Nap / dátum / implementáló: J7 / 2026-09-13 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/review-fixes-2026-09-13-2 @ 72fec82 (main, a #175 merge)
+Napi feladat és előfeltételei: az ismételt független review (docs/WEBSITE_REVIEW_V1_V7_2026-09-13_HU.md)
+  négy P2 hibajegye és a megerősített tesztadósság. Előfeltétel: az ellenpróbák reprodukálva a mainen —
+  W1–W4 piros, C2 zöld.
+Auditpontok: F02 (W2), F05 (W4), F11 (W1); W3 a tesztharness
+```
+
+**Sorrend.** A review W2 → W3 → W1 → W4 sorrendet javasolt; a W3-mal kezdtem, mert a többi javítás tesztjei
+ugyanerre a harnessre épülnek, és nem akartam tudottan hibás eszközzel mérni.
+
+**W3 — `2bd3139` (harness, a #175 saját hibája).** A `release()` arra várt, hogy „az URL-t még egyszer
+elolvassák”; egy ugyanarra az URL-re érkező másik válasz elolvasása ezt teljesítette, miközben a saját törzs
+még olvasatlan volt. Minden API-válasz csak tesztben használt `x-harness-response-id` fejlécet kap, az
+olvasásjelző ezt a konkrét `Response`-hoz jegyzi fel, a `release()` a saját azonosítójára vár. A törzs, a
+státusz és az oldalnak visszaadott Promise változatlan. Két önteszt (a review esete és két azonos URL-ű
+válasz fordított olvasási sorrendben); a negatív kontroll — a darabszámos logika — mindkettőt **korai
+visszatéréssel** buktatja (`undefined` törzs), nem időtúllépéssel.
+
+**W2 — `6c94aa0`.** A bizonyíték-olvasás a 401-et is „nem olvasható”-nak vette, a history-frissítés elnyelte.
+A 401 most a kezdeti olvasásnál és minden frissítésnél — az újraolvasó gombét is beleértve — a
+session-lejárati kezelőhöz jut, **a kiválasztás-ellenőrzés után**: egy már elhagyott futam késői 401-e nem
+dobja ki az aktuálisat. Az 503 olvasási hiba marad, az újraolvasás csak GET. +4 teszt, 5 negatív kontroll.
+
+**W1 — `35899d4`.** A Simulations lista minden hibánál csak a hibát rajzolta, mielőtt megnézte volna, kinek a
+sorait tartja. Ennek a lapnak a sorai most a hiba mellett maradnak; adat nélkül csak a hiba látszik, sem
+kitalált üres lista, sem hamis „Loading”. +3 teszt, 3 negatív kontroll — a harmadik csak azért bukik, mert az
+első betöltési hiba tesztje megkapta a „nem Loading” állítást; nélküle az őr megfigyelhetetlen lett volna.
+
+**W4 — `f2a4873`.** A Fairness adata az URL-váltásnál törlődött, a tip-vezérelt profilváltásnál nem. Az adat
+most az ablakhoz és a **ténylegesen követett** profilhoz van kötve; hiba után a közös „Could not be loaded”
+felirat áll. +3 teszt, 4 negatív kontroll. Ezzel az átadási csomag „Fairness: tip-vezérelt profilváltás —
+nem mérve” tétele lezárult.
+
+**Tesztadósság — `c82db16`.** A „a poll describing an older state cannot undo an action” az óra léptetése után
+azonnal állított. Mérve, változtatás előtt: a revision-szabály kivételét a régi változat is **3/3-szor**
+elkapta — a gyengeség a konstrukcióban volt, nem megfigyelt hamis zöldben. Most megvárja a régi pollválasz
+elolvasását; a kontroll 3/3 bukik, a teszt 3/3 zöld.
+
+**A nap saját hibái és mérési lelete:**
+
+1. **A review naplói UTF-16 kódolásúak**, ezért az első titokkeresésem ezekre nem működött (a pozitív
+   kontroll csak a markdown- és spec-fájlokból számolt). Push előtt UTF-8-ra alakítva, fájlonkénti pozitív
+   kontrollal újraellenőrizve: tiszták. A repóban a review által írt kódolásban maradtak.
+2. Az első W1-tesztem két elemre illeszkedő szelektorral (`.page-sub`) bukott a javított kódon is — szűkítve.
+3. A W4 hibaágának „Could not be loaded” feliratát eredetileg semmi nem mérte — a teszt kiegészítve.
+
+**Érintett fájlok:** `client/e2e/harness.ts`, `client/e2e/harness.spec.ts`,
+`client/src/components/dd-admin-shell.ts`, `client/e2e/run-status.spec.ts`,
+`client/src/components/dd-page-simulations.ts`, `client/e2e/public-simulations.spec.ts`,
+`client/src/components/dd-page-fairness.ts`, `client/e2e/fairness.spec.ts`.
+
+**Szerződésváltozás / kompatibilitás:** nincs. Szerverkód, auth, CSRF, DTO változatlan.
+
+**Parancsok, exit-kódok** (commitonként, a commit fáján):
+
+| Commit | K1 | K2 | CSP |
+|---|---|---|---|
+| `2bd3139` W3 | exit 0 — 864 + 203 | 279 | 4 |
+| `6c94aa0` W2 | exit 0 — 864 + 203 | 283 | 4 |
+| `35899d4` W1 | exit 0 — 864 + 203 | 286 | 4 |
+| `f2a4873` W4 | exit 0 — 864 + 203 | 289 | 4 |
+| `c82db16` tesztadósság | exit 0 — 864 + 203 | 289 | 4 |
+
+K3 a `c82db16`-on: exit 0 — 15 fájl, **98** teszt, 8 kihagyott (a Mongo nélküli párdarabok). A review
+ellenpróbái a `c82db16`-on: **5/5 zöld** (W1, W2, W3, W4, C2). Mind az öt K2 első futásra tiszta volt.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+```text
+Commit(ok), végső SHA: 1a4a592 (review-dokumentumok), 2bd3139, 6c94aa0, 35899d4, f2a4873, c82db16,
+  + ez a dokumentációs commit
+Végső git státusz: a saját munkám commitolva; öt követetlen ops/c2-*.sh más munkából, érintetlenül
+Napi státusz: ELLENŐRZÖTT — a független újra-review még nem történt meg
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -3115,16 +3196,16 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
 | F01 | 05–06, **J1**, **J4** | `8735d1d`, `5fd3307`, `4972341`, `96e6e30`, `451e3e8` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 13 eset — a 9 eredeti plusz a review R1/R2/R4 ellenpróbái és a panel őrszemének fehér dobozos esete; J4: `run-status.spec.ts` +6 (V1), `admin.spec.ts` +3 (V3) | **A review újranyitotta** (R1, R2, R4): futamváltás közben a régi futamra ment volna az abort, késői hiba törölte az újat, a megerősítés átvándorolt. A J1 mindhármat lezárta, őrszemenként külön negatív kontrollal. **A végső review ismét újranyitotta** (V1: késői terv visszatekerte a futamot, a terv hibája elvitte az abortot; V3: belépés után nem töltődött be a dashboard). A J4 lezárta, 7 + 3 negatív kontrollal; nincs telepítve |
-| F02 | 05–07, **J2** | `8735d1d`, `5fd3307`, `c1e3605`, `4261e06` | unit: `simulationRunState.test.ts`; E2E: 14 eset szabályozott órával — a 8 eredeti plusz automatikus átmenet, sikertelen bizonyítékfrissítés, operátori recovery, Refresh, és a két idempotencia-eset | **A review újranyitotta** (R3): a státuszpoll csak a futamot frissítette, a bizonyítékot és az idővonalat nem, a Refresh pedig a kiválasztást nem olvasta újra. A J2 lezárta; a mentett terv továbbra is egyszer olvasódik. **A végső review ismét újranyitotta** (V2: az egymást keresztező bizonyíték-frissítések közül az utolsó érkező nyert; V7: a kezdeti olvasás hibája „nincs bizonyíték” lett). A J4 lezárta (`2e2d56c`, `11bbe63`; +4 és +6 E2E, 5 és 7 negatív kontroll); nincs telepítve |
+| F02 | 05–07, **J2** | `8735d1d`, `5fd3307`, `c1e3605`, `4261e06` | unit: `simulationRunState.test.ts`; E2E: 14 eset szabályozott órával — a 8 eredeti plusz automatikus átmenet, sikertelen bizonyítékfrissítés, operátori recovery, Refresh, és a két idempotencia-eset | **A review újranyitotta** (R3): a státuszpoll csak a futamot frissítette, a bizonyítékot és az idővonalat nem, a Refresh pedig a kiválasztást nem olvasta újra. A J2 lezárta; a mentett terv továbbra is egyszer olvasódik. **A végső review ismét újranyitotta** (V2: az egymást keresztező bizonyíték-frissítések közül az utolsó érkező nyert; V7: a kezdeti olvasás hibája „nincs bizonyíték” lett). A J4 lezárta (`2e2d56c`, `11bbe63`; +4 és +6 E2E, 5 és 7 negatív kontroll); nincs telepítve. **Az ismételt review W2-je**: a recovery- és history-olvasás 401-e nem zárta le a sessiont — a J7 lezárta (`6c94aa0`; +4 E2E, 5 negatív kontroll); nincs telepítve |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
-| F05 | 09, **J3** | `881df65`, `6913d1d` | E2E: 8 eset — a 4 eredeti plusz mozgó tip, átmeneti feloldási hiba utáni újrapróbálkozás, és az explicit profil + aggregát érinthetetlensége; HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): a feloldás `_resolved === null` mögött ült, és a „nem feloldható” sem null, ezért mindkét válasz beragadt. A J3 lezárta; a profil-registry cache-e indokoltként megmaradt |
+| F05 | 09, **J3** | `881df65`, `6913d1d` | E2E: 8 eset — a 4 eredeti plusz mozgó tip, átmeneti feloldási hiba utáni újrapróbálkozás, és az explicit profil + aggregát érinthetetlensége; HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): a feloldás `_resolved === null` mögött ült, és a „nem feloldható” sem null, ezért mindkét válasz beragadt. A J3 lezárta; a profil-registry cache-e indokoltként megmaradt. **Az ismételt review W4-e**: tip-vezérelt profilváltásnál a régi profil adata az új jelölés alatt maradt — a J7 lezárta (`f2a4873`; +3 E2E, 4 negatív kontroll); nincs telepítve |
 | F06 | 09, **J3** | `881df65`, `e860556` | unit: 4 eset a doménben, ebből egy dokumentált szerződéskorrekcióval; HTTP: 7/5 és 3/0 változatlanul, plusz egy az ablak után regisztrált host 1/0-val, amely nincs a `neverSelected`-ben; E2E: két oszlop, néma host, hiányzó mező `—` | **A review újranyitotta** (R6): a `currentRegisteredNodes` a történeti eligibility-vel szűrt, így nem a jelenlegi registry létszámát adta. A J3 lezárta; az eligibility a `neverSelected`-nél és a `roundsEligible`-nél maradt |
 | F07 | 02, **14** | `db77551`, `5262482` | unit: 4 eset a `router.test.ts`-ben; E2E: 3 eset böngészőben; **élő nginx: `/round/%`, `/tx/%E0%A4%A`, `/block/%zz` mind 400**, a szabályos `/round/7%3A7416%3A0` 200 | **Lezárva.** A production nginx a kliens előtt visszautasít, tehát a hiba beírt URL-ből nem érhető el; a kliensoldali javítás az SPA-n belüli navigációra kell, és azt a böngészőtesztek fedik |
 | F08 | 02 | `db77551` | unit: „names an unknown path…”; E2E: `/audit-nonexistent-20260911` | Kliensoldalon lezárva; a szerveroldali SPA fallback szándékosan változatlan |
 | F09 | 04, **J6** | `127e53d`, `b7ee9f8` | unit: minden sablon átmegy a `parseScenarioRequest`-en; HTTP: `simulationScenarios.integration.test.ts`; E2E: 8 eset; J6: `scenario-forms.spec.ts` +5 (V5) | Kliens- és szerveroldalon lezárva. A valódi registry-alapú célpontválasztó a 16. nap; a `live` mód tényleges laborfutamát ez nem bizonyítja. **A végső review V5-je** a 15–16. napi szerkesztő hibája volt (a hibás Advanced JSON egy mezőszerkesztéstől elveszett); a J6 lezárta, 6 negatív kontrollal; nincs telepítve |
 | F10 | 14, **20** | `5262482`, `694d5cc` | izolált nginx: 6 fejléc 5 válaszon, benne egy valódi 404, negatív kontrollal; böngésző: az **enforce** házirend tisztán fut a buildelt **és** a deployolt bundle-on; élő: a fejlécek `/`, `/rounds`, `/admin`, asset és ismeretlen útvonal valódi válaszán lemérve; 20. nap: `httpHardening.test.ts` — a szerver nem küld HSTS-t | **Élesen bekapcsolva** (tulajdonosi engedéllyel). A CSP **report-only**; az enforce-ra váltás egy fájlcsere, a bizonyíték megvan. A kettős HSTS a 20. napon kódban megszűnt (egy tulajdonos: az nginx), **de nincs telepítve** — élesben az `/api/` ma is kettőt küld |
-| F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni. **A végső review V4-e**: lekérdezés-váltáskor a régi adat az új lap, szűrő, ablak vagy téma alatt maradt. A J5 hét oldalon lezárta (`dc05f11`; `query-identity.spec.ts` +17, 9 negatív kontroll); nincs telepítve |
+| F11 | 10–11 | `700c420`, `b954e9b` | E2E: 22 eset — a 10. napi 10 a Rounds/Fairness/Experiments oldalra, plusz 12 a Vantage Points topicjára, a Staking ablakára és nézetére, a Blocks és a Transactions lapozójára, és egy arra, hogy vezérlő nélküli oldal nem kap paramétert | Kliensoldalon lezárva. A hét megnevezett oldalból négyen van ténylegesen vezérlő; PoSe, ChainLocks és Sentinel Layer szándékosan paraméter nélkül maradt, mert nincs mit kötni. **A végső review V4-e**: lekérdezés-váltáskor a régi adat az új lap, szűrő, ablak vagy téma alatt maradt. A J5 hét oldalon lezárta (`dc05f11`; `query-identity.spec.ts` +17, 9 negatív kontroll); nincs telepítve. **Az ismételt review a V4-et részben fogadta el** (W1: a Simulations lista pollhibája eltüntette az utolsó jó listát; W4 az F05 sorában) — a J7 lezárta (`35899d4`; +3 E2E, 3 negatív kontroll); nincs telepítve |
 | F12 | 12, **18**, **20** | `1828831`, `fc4652d`, `611fdde` | E2E: 10 eset — egy h1 oldalanként, szekciók h2-ben, fókusz navigációkor és Backnél, fókusz megmaradása poll és szűrőváltás alatt, Back a szűrő fölött nem mozdítja, skip link kezelővel és láthatóan, teljes billentyűzetes útvonal, caption a táblázatában; 18. nap: pontosan egy h1 mind a 20 útvonalon négy állapotban, a fókusz megmarad a részletoldal címén adatérkezéskor; 20. nap: `aria-pressed` sweep minden toggle-csoporton | Kliensoldalon lezárva, **nincs telepítve**. Számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás; a staking nézetváltó `aria-pressed`-je a 20. napon pótolva |
 | F13 | 13 | `5b8b5a7` | `npm audit` előtte/utána mérve: **3 moderate → 2**, a `body-parser` lekerült a listáról; `npm ci`, K1, K2, K3 mind exit 0 | **Részben — elfogadott maradék.** A body-parser útja lockfile-frissítéssel lezárva, manifest és override nélkül. A maradék kettő az express saját `qs@~6.15.1` pinje; a 4-es vonal nem lép le róla, az egyetlen felfelé út az express 5 (framework-major, a terv nem kéri). Nem elérhető kódút: `query parser` = `simple`, `urlencoded` nincs. **A 20. napon kiderült, hogy ez csak a fő szerverre volt igaz** — a labor-szerver nem állította a parsert. Közös `hardenHttpApp()` mindkettőnek (`694d5cc`), és az őrszem megvan: `httpHardening.test.ts` valódi kéréssel és a forrás sweepjével. **Nincs telepítve** (a VPS a 13. nap előtti lockfile-lal fut) |
 | F14 | 12 | `1828831` | unit: a tényleges gombpár 4,5:1 mindkét témában + a régi kompozíció mérésként rögzítve; E2E: a gomb valódi számított szín-párja a lapon, mindkét témában | Lezárva. Saját `--btn-danger-bg`/`--btn-danger-fg` pár (7,29:1 sötét, 5,61:1 világos); a `--crit` szövegszínként változatlan, a keret is az maradt |
@@ -3158,6 +3239,9 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   sessiont), W3 (a `ResponseGate` URL szerint azonosított olvasást — új harness-hiba), W4 (Fairness
   automatikus profilváltása). Az ellenpróbák a mainen az implementáló gépén is reprodukálódtak: W1–W4
   piros, C2 zöld. A javítás a `web/review-fixes-2026-09-13-2` ágon, a J7 munkanapon.
+  **Mind a négy javítva kódban és tesztben** (`2bd3139` W3, `6c94aa0` W2, `35899d4` W1, `f2a4873` W4),
+  plusz a megerősített tesztadósság (`c82db16`); a review öt ellenpróbája zöld. **Független újra-review:
+  még nem történt meg.**
   A reviewer `client/test-results/` alatti trace-ei (`followup-review`, `negative-followup`,
   `negative-followup-editor`, `review-final` — 22 fájl) a repón kívül megőrizve:
   `D:\www\devnet .deftrack-review-artefacts\2026-09-13-followup\`, `SHA256SUMS` sha256
