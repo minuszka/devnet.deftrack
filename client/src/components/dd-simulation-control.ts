@@ -106,6 +106,7 @@ export class DdSimulationControl extends LitElement {
     plan: { attribute: false },
     recovery: { attribute: false },
     preflight: { attribute: false },
+    planError: { attribute: false },
     _scenarioId: { state: true },
     _network: { state: true },
     _mode: { state: true },
@@ -145,6 +146,8 @@ export class DdSimulationControl extends LitElement {
   recovery: RecoveryReportView | null = null;
   /** A preflight the server actually produced. Null means not run. */
   preflight: SimulationPreflight | null = null;
+  /** Set when the dashboard's read of the saved plan failed; null while it is loading or loaded. */
+  planError: string | null = null;
   private _scenarioId = 'mn-stop';
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
@@ -721,7 +724,8 @@ export class DdSimulationControl extends LitElement {
         ${this._form(descriptor)}
         ${(() => {
           const run = this._actionRun();
-          return run !== null && this.plan !== null ? this._selectedView(run, this.plan) : nothing;
+          if (run === null) return nothing;
+          return this.plan !== null ? this._selectedView(run, this.plan) : this._planlessView(run);
         })()}
       </section>
     `;
@@ -1099,8 +1103,43 @@ export class DdSimulationControl extends LitElement {
     return html`
       ${this._preview(plan, run)}
       ${this._preflightCard()}
-      ${this._approvalAndRecovery(run)}
+      ${this._approvalAndRecovery(run, true)}
     `;
+  }
+
+  /**
+   * A run the server has described, whose saved plan is not here.
+   *
+   * The panel drew nothing at all without a plan, so a run whose status had
+   * been read but whose plan was still loading -- or could not be read -- had
+   * no Abort button, whatever state its fault was in. The way out does not
+   * depend on the plan; what does -- preflight, arming, starting -- is not
+   * offered until the plan has been seen.
+   */
+  private _planlessView(run: SimulationControlRun): TemplateResult {
+    const failed = this.planError !== null;
+    return html`
+      <section class="card">
+        <div class="card-head"><h3 class="card-title">Saved plan</h3><div class="page-sub mono">${failed ? 'not read' : 'loading'}</div></div>
+        <div class="card-body">
+          <div class="notice plan-unread" role="status">
+            ${failed ? 'The saved plan for this run could not be read.' : 'The saved plan for this run is still being read.'}
+            It cannot be validated, armed or started from here until it has been; its abort and
+            recovery controls below stay available.
+          </div>
+          ${failed
+            ? html`<div class="actions" style="margin-top:var(--sp-4)">
+                <button class="btn" @click=${this._requestPlanReload}>Read the saved plan again</button>
+              </div>`
+            : nothing}
+        </div>
+      </section>
+      ${this._approvalAndRecovery(run, false)}
+    `;
+  }
+
+  private _requestPlanReload(): void {
+    this.dispatchEvent(new CustomEvent('plan-reload-requested', { bubbles: true, composed: true }));
   }
 
   private _preview(plan: DryRunPlan, run: SimulationControlRun): TemplateResult {
@@ -1149,7 +1188,8 @@ export class DdSimulationControl extends LitElement {
     `;
   }
 
-  private _approvalAndRecovery(run: SimulationControlRun): TemplateResult {
+  /** `planSeen` false: the run's own state and its way out, and nothing that acts on the plan. */
+  private _approvalAndRecovery(run: SimulationControlRun, planSeen: boolean): TemplateResult {
     const descriptor = this._runDescriptor();
     const isArmed = run.state.status === 'armed';
     // A descriptor the panel cannot resolve is not a reason to widen approval:
@@ -1171,7 +1211,7 @@ export class DdSimulationControl extends LitElement {
           <div class="state-line">Created from seed <strong class="mono">${run.metadata.seed}</strong>, scenario <strong class="mono">${run.metadata.scenarioId}</strong> v${run.metadata.scenarioVersion}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}
           ${this._safetyLine(run)}
-          ${run.state.status === 'scheduled'
+          ${planSeen && run.state.status === 'scheduled'
             ? html`
                 <label><input type="checkbox" .checked=${this._riskAcknowledged} @change=${(event: Event) => { this._riskAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy || !mayApprove} />
                   <span>I acknowledge the server-declared <strong>${descriptor?.riskClass ?? 'unknown'}</strong> risk for “${descriptor?.title ?? run.metadata.scenarioId}”.</span>
@@ -1180,7 +1220,7 @@ export class DdSimulationControl extends LitElement {
                 <div class="actions"><button class="btn primary" ?disabled=${this._busy || !this._riskAcknowledged || !mayApprove} @click=${this._arm}>Arm approved plan</button></div>
               `
             : nothing}
-          ${isArmed
+          ${planSeen && isArmed
             ? html`
                 <label><input type="checkbox" .checked=${this._startAcknowledged} @change=${(event: Event) => { this._startAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy} />
                   <span>I confirm ${run.state.live ? 'this will execute the approved fault in the local lab' : 'this will complete the approved dry-run'}.</span>

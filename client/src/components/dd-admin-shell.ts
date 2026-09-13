@@ -93,6 +93,7 @@ export class DdAdminShell extends LitElement {
     _selectedPlan: { state: true },
     _selectedRecovery: { state: true },
     _selectedPreflight: { state: true },
+    _planError: { state: true },
     _loading: { state: true },
     _message: { state: true },
   };
@@ -125,6 +126,14 @@ export class DdAdminShell extends LitElement {
   private _selectedPlan: DryRunPlan | null = null;
   private _selectedRecovery: RecoveryReportView | null = null;
   private _selectedPreflight: SimulationPreflight | null = null;
+  /**
+   * Why the selected run's saved plan is not here, when a read of it failed.
+   *
+   * A plan that could not be read is a missing plan, not a missing run: the run
+   * the status poll accepted stays, and so do its abort and recovery controls.
+   * Only what needs the plan -- preflight, arming, starting -- waits for it.
+   */
+  private _planError: string | null = null;
   /**
    * A run key in the URL that is not a run key.
    *
@@ -421,6 +430,7 @@ export class DdAdminShell extends LitElement {
       this._selectedPlan = null;
       this._selectedRecovery = null;
       this._selectedPreflight = null;
+      this._planError = null;
       this._selectedRunKey = null;
       this._badRunKey = null;
       // The key is not a secret, but leaving it in the address bar of a
@@ -517,7 +527,18 @@ export class DdAdminShell extends LitElement {
       adminApi.recovery(runKey).then((r) => r.recovery).catch(() => null),
     ]);
     if (generation !== this._selectionGeneration) return;
-    this._selectedRun = detail.run;
+    /*
+     * The plan is immutable and is always taken. The run that comes with it is
+     * a snapshot like any other, and goes through the same revision rule as the
+     * poll and every mutation.
+     *
+     * It was assigned outright: the one read of the run that skipped the rule.
+     * A status read that landed while this one was still on its way -- which a
+     * slow first load all but invites -- described a later state and was
+     * overwritten by an earlier one, so the panel went back to `armed` and
+     * offered to start a run whose fault was active.
+     */
+    this._acceptRun(detail.run);
     this._selectedPlan = detail.plan;
     this._selectedRecovery = recovery;
     this._selectedPreflight = null;
@@ -638,6 +659,7 @@ export class DdAdminShell extends LitElement {
     this._selectedPlan = null;
     this._selectedRecovery = null;
     this._selectedPreflight = null;
+    this._planError = null;
     this._history = null;
   }
 
@@ -651,7 +673,15 @@ export class DdAdminShell extends LitElement {
     this._selectedPlan = null;
     this._selectedRecovery = null;
     this._selectedPreflight = null;
+    this._planError = null;
     this._history = null;
+  }
+
+  /** The panel asked for the saved plan again, after a read of it failed. */
+  private _reloadSelectedRun(): void {
+    const runKey = this._selectedRunKey;
+    if (runKey === null) return;
+    void this._loadSelectedRun(runKey);
   }
 
   private _selectRun(runKey: string): void {
@@ -695,6 +725,9 @@ export class DdAdminShell extends LitElement {
       this._selectedPreflight = null;
       this._history = null;
     }
+    // A read is starting, so the plan is being read, not "could not be read" --
+    // including a retry of one that failed.
+    this._planError = null;
     // Held while the request is in flight, so the panel shows which run it is
     // waiting for rather than the previous one.
     this._selectedRunKey = runKey;
@@ -706,16 +739,29 @@ export class DdAdminShell extends LitElement {
       // A failure belongs to the selection that asked for it. Without this,
       // run A's late 503 wiped the run the operator had already moved to.
       if (generation !== this._selectionGeneration) return;
-      this._history = null;
-      this._selectedRun = null;
-      this._selectedPlan = null;
-      this._selectedRecovery = null;
       if (error instanceof ApiError && error.status === 404) {
+        this._history = null;
+        this._selectedRun = null;
+        this._selectedPlan = null;
+        this._selectedRecovery = null;
         this._message = `No run ${runKey} exists on this deployment.`;
       } else if (error instanceof ApiError && error.status === 401) {
         this._endSession('Your session ended. Sign in again to view the private dashboard.');
       } else {
-        this._message = messageOf(error);
+        /*
+         * What failed is this read, not the run.
+         *
+         * It used to clear everything, including a run the status poll had
+         * already accepted -- and the panel draws nothing without a plan -- so a
+         * live fault lost its Abort button because one read of an immutable
+         * document timed out. The run, its evidence and its timeline stay as
+         * they are; the plan is simply not here, and the panel says so.
+         *
+         * The plan and the timeline are read together, so the message names
+         * both: either may be the one that failed, and neither was taken.
+         */
+        this._planError = messageOf(error);
+        this._message = `The saved plan and timeline for ${runKey} could not be read: ${messageOf(error)}`;
       }
     } finally {
       // Deliberately not generation-guarded: a request that has finished is one
@@ -833,7 +879,9 @@ export class DdAdminShell extends LitElement {
           .plan=${this._selectedPlan}
           .recovery=${this._selectedRecovery}
           .preflight=${this._selectedPreflight}
+          .planError=${this._planError}
           @simulation-changed=${this._loadDashboard}
+          @plan-reload-requested=${this._reloadSelectedRun}
           @run-selected=${(event: CustomEvent<{ runKey: string }>) => this._selectRun(event.detail.runKey)}
           @run-updated=${this._onRunUpdated}
         ></dd-simulation-control>

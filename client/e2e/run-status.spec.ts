@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { expect, fail, ok, test } from './harness.js';
 import { adminSessionStubs, controlRun, runStubs, savedPlan, RUN_A, RUN_B } from './fixtures/admin.js';
 
@@ -472,5 +473,230 @@ test.describe('run status', () => {
     const calls = app.requestsTo(`/api/v1/admin/simulations/runs/${RUN_A}/abort`, 'POST');
     expect(calls).toHaveLength(2);
     expect(calls[0]?.idempotencyKey).toBe(calls[1]?.idempotencyKey);
+  });
+
+  /**
+   * Everything below was found by the final independent review (2026-09-13),
+   * and each case failed on main before it was fixed. The review's own probes
+   * are in docs/review-2026-09-13; these are the gate's versions, and the order
+   * of the answers in them is stated with held responses rather than hoped for
+   * with delays.
+   */
+
+  const A = `/api/v1/admin/simulations/runs/${RUN_A}`;
+  const PLAN_UNREAD = 'The saved plan for this run could not be read';
+  const ABORT = 'Abort & recover';
+  const START_BUTTON = 'Confirm and start';
+
+  /**
+   * The page clock, installed and stopped.
+   *
+   * Installed alone, it keeps running in real time, so the status poll fires by
+   * itself every five seconds -- and a poll landing inside an assertion's retry
+   * window repairs exactly the rollback that assertion is there to catch. The
+   * first version of the V1 test passed on the unfixed code for that reason.
+   * Stopped, the poll ticks only when the test moves the clock, which makes it
+   * one more answer whose order the test states.
+   */
+  async function stoppedClock(page: Page): Promise<void> {
+    await page.clock.install({ time: START });
+    await page.clock.pauseAt(new Date(START.getTime() + 1_000));
+  }
+
+  /**
+   * V1. The saved plan arrived after a newer status, and rolled the run back.
+   *
+   * The first read fetches the run together with its plan, and it wrote that
+   * run without asking whether it was older than the one already held -- the
+   * one read of the run that skipped the revision rule the poll and every
+   * mutation obey. A status read that landed while the plan was still on its
+   * way, which is exactly what a slow first load invites, was overwritten: the
+   * panel went back to `armed` and offered to start a run whose fault was
+   * active.
+   */
+  test('a late saved plan cannot roll a newer run back', async ({ app, page }) => {
+    const plan = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'armed', revision: 3, live: true }),
+      [`${A}/dry-run`]: {
+        body: ok({ run: controlRun({ runKey: RUN_A, status: 'armed', revision: 3, live: true }), plan: savedPlan(RUN_A) }),
+        gate: plan,
+      },
+      [A]: {
+        body: ok(controlRun({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true })),
+      },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await plan.waitForHeld(1);
+
+    // The status read gets there first, and is read.
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+
+    await plan.release();
+    // The plan has been read and drawn...
+    await expect(page.getByText('Target preview')).toBeVisible();
+    // ...and the older run that came with it changed nothing.
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+    await expect(page.getByRole('button', { name: START_BUTTON, exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
+  });
+
+  /** V1, the other order: the plan first, then a newer status. Still the newer one wins. */
+  test('a newer status after the saved plan still lands', async ({ app, page }) => {
+    const plan = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'armed', revision: 3, live: true }),
+      [`${A}/dry-run`]: {
+        body: ok({ run: controlRun({ runKey: RUN_A, status: 'armed', revision: 3, live: true }), plan: savedPlan(RUN_A) }),
+        gate: plan,
+      },
+      [A]: {
+        body: ok(controlRun({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true })),
+      },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await plan.waitForHeld(1);
+
+    await plan.release();
+    await expect(page.locator(STATUS)).toContainText('armed');
+    await expect(page.getByRole('button', { name: START_BUTTON, exact: true })).toBeVisible();
+
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+    await expect(page.getByRole('button', { name: START_BUTTON, exact: true })).toHaveCount(0);
+  });
+
+  /**
+   * V1, the failure branch. A saved plan that cannot be read is a missing plan,
+   * not a missing run.
+   *
+   * The failure used to clear everything -- including a run the status poll had
+   * already accepted -- and the panel drew nothing at all without a plan, so a
+   * live fault lost its Abort button because one read of an immutable document
+   * failed. What the plan is needed for (preflight, arming, starting) is not
+   * offered without it; the way out is.
+   */
+  test('a saved plan that cannot be read leaves the run and its abort', async ({ app, page }) => {
+    const plan = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'armed', revision: 3, live: true }),
+      [`${A}/dry-run`]: { status: 503, body: fail('the plan store did not answer'), gate: plan },
+      [A]: {
+        body: ok(controlRun({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true })),
+      },
+      [`${A}/abort`]: {
+        body: ok({ run: controlRun({ runKey: RUN_A, status: 'aborting', revision: 10, live: true, faultMayBeActive: true }) }),
+      },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await plan.waitForHeld(1);
+
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+    // While the plan is still on its way, the run is known, and so is its way out.
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+    await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
+
+    await plan.release();
+    await expect(page.getByText(PLAN_UNREAD)).toBeVisible();
+    await expect(page.locator('.alert[role="alert"]').first()).toContainText('the plan store did not answer');
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+    for (const name of [START_BUTTON, 'Arm approved plan', 'Validate preflight']) {
+      await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    }
+
+    // And the abort that is offered works.
+    await page.getByRole('button', { name: ABORT }).click();
+    await expect(page.locator(STATUS)).toContainText('aborting');
+    expect(app.requestsTo(`${A}/abort`, 'POST')).toHaveLength(1);
+  });
+
+  /** V1: without its plan an armed run is not started -- and reading the plan again restores it. */
+  test('without its saved plan an armed run cannot be started, until the plan is read again', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'armed', revision: 3, live: true }),
+      [`${A}/dry-run`]: { status: 503, body: fail('the plan store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/dry-run`, 1);
+
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+    await expect(page.locator(STATUS)).toContainText('armed');
+    await expect(page.getByText(PLAN_UNREAD)).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /I confirm/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: START_BUTTON, exact: true })).toHaveCount(0);
+
+    const retry = app.gate();
+    app.stub({
+      ...runStubs({ runKey: RUN_A, status: 'armed', revision: 3, live: true }),
+      [`${A}/dry-run`]: {
+        body: ok({ run: controlRun({ runKey: RUN_A, status: 'armed', revision: 3, live: true }), plan: savedPlan(RUN_A) }),
+        gate: retry,
+      },
+    });
+    await page.getByRole('button', { name: 'Read the saved plan again' }).click();
+    await retry.waitForHeld(1);
+    // While the retry is out, the panel says the plan is being read -- not that
+    // it could not be -- and offers no second retry on top of the first.
+    await expect(page.getByText('The saved plan for this run is still being read')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Read the saved plan again' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: START_BUTTON, exact: true })).toHaveCount(0);
+
+    await retry.release();
+    await expect(page.getByText('Target preview')).toBeVisible();
+    await expect(page.getByText(PLAN_UNREAD)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: START_BUTTON, exact: true })).toBeVisible();
+  });
+
+  /** V1, the same for arming: a risk acknowledged without the plan on screen is not an acknowledgement. */
+  test('without its saved plan a scheduled run cannot be armed', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'scheduled', revision: 3, live: true }),
+      [`${A}/dry-run`]: { status: 503, body: fail('the plan store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/dry-run`, 1);
+
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+    await expect(page.locator(STATUS)).toContainText('scheduled');
+    await expect(page.getByText(PLAN_UNREAD)).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /I acknowledge/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Arm approved plan', exact: true })).toHaveCount(0);
+  });
+
+  /** V1: keeping the run through a failed plan read must not keep it through an ended session. */
+  test('a saved plan read that answers 401 still ends the session', async ({ app, page }) => {
+    const plan = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true }),
+      [`${A}/dry-run`]: { status: 401, body: fail('no admin session'), gate: plan },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await plan.waitForHeld(1);
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+
+    await plan.release();
+    await expect(page.getByRole('heading', { name: 'Admin access', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: ABORT })).toHaveCount(0);
   });
 });
