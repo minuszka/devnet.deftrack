@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test';
-import { expect, ok, test } from './harness.js';
+import { expect, fail, ok, test, type ApiStubs } from './harness.js';
 import { overviewStubs, roundStubs } from './fixtures/stubs.js';
 import { adminSessionStubs, RUN_A, runStubs } from './fixtures/admin.js';
-import { pageOf, roundRun } from './fixtures/api.js';
+import { healthSnapshot, pageOf, roundRun } from './fixtures/api.js';
+import { blockDetail, emptyLayoutStubs, HASH, loadedLayoutStubs, LONG_RUN_KEY, SIM_A } from './fixtures/layout.js';
 
 /**
  * F12 and F14: what a page is, where the focus goes, and one colour pair.
@@ -102,6 +103,68 @@ test.describe('semantics and focus', () => {
       const h1s = (await headings(page)).filter((h) => h.level === 1);
       expect(h1s, `on ${path}`).toHaveLength(1);
     }
+  });
+
+  /*
+   * The test above visits three paths with their data loaded, and that is all
+   * "every public page" ever meant. Three detail pages rendered no heading at
+   * all while they loaded -- a round, a block, a transaction -- and the block
+   * and the transaction none after a failed load either: only a "Loading…"
+   * note or the error. So the page had no h1, and the focus move after a
+   * navigation had nothing to land on. Found by the day-18 layout sweep.
+   */
+  test('every public path carries exactly one h1, loaded, empty, failing and loading', async ({ app, page }) => {
+    test.setTimeout(180_000);
+    const paths = [
+      '/', '/rounds', '/pose', '/masternodes', '/chainlocks', '/dsl', '/staking', '/peers', '/operators',
+      '/fairness', '/blocks', '/txs', '/experiments', '/simulations', '/round/7%3A11400%3A0', `/block/${HASH}`,
+      `/tx/${HASH}`, `/experiments/${LONG_RUN_KEY}`, `/simulations/${SIM_A}`, '/no-such-page',
+    ];
+    const states: Array<[string, ApiStubs]> = [
+      ['loaded', loadedLayoutStubs()],
+      ['empty', emptyLayoutStubs()],
+      ['failing', { '/api/v1/health': { body: ok(healthSnapshot()) }, '/api/v1/*': { status: 503, body: fail('unavailable') } }],
+      ['loading', { '/api/v1/*': { delayMs: 60_000, body: ok(null) } }],
+    ];
+    const wrong: string[] = [];
+    for (const [state, stubs] of states) {
+      // Replaced, not merged: an exact stub left over from the previous state
+      // would answer instead of the prefix, and the state would be a lie.
+      for (const key of Object.keys(loadedLayoutStubs())) app.unstub(key);
+      app.unstub('/api/v1/*');
+      app.stub(stubs);
+      for (const path of paths) {
+        await page.goto(path);
+        await expect(page.locator('main > *').first()).toBeAttached();
+        if (state === 'loading') await page.waitForTimeout(300);
+        else await page.waitForLoadState('networkidle');
+        const h1s = (await headings(page)).filter((h) => h.level === 1);
+        if (h1s.length !== 1) wrong.push(`${state} ${path.slice(0, 40)}: ${h1s.length} h1`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  /*
+   * The heading must be the same element before and after the data arrives. A
+   * loading heading in a template of its own is replaced when the answer lands,
+   * and the focus the navigation put on it falls off onto the body.
+   */
+  test('a detail page keeps the focus on its heading when its data arrives', async ({ app, page }) => {
+    app.stub({
+      ...loadedLayoutStubs(),
+      '/api/v1/blocks/*': { delayMs: 1_500, body: ok(blockDetail()) },
+    });
+    await app.goto('/blocks');
+    await expect(page.locator('dd-page-blocks tbody tr')).toHaveCount(5);
+
+    await page.locator('dd-page-blocks tbody a').first().click();
+    // On the heading while the block is still on its way...
+    await expect.poll(async () => await focused(page)).toEqual({ tag: 'h1', text: 'Block' });
+    // ...and still on it once the block is there.
+    await expect(page.locator('dd-page-block .page-title')).toHaveText(/^Block \d/);
+    expect((await focused(page)).tag).toBe('h1');
+    expect((await focused(page)).text).toMatch(/^Block \d/);
   });
 
   test('navigating moves the focus to the page that was asked for', async ({ app, page }) => {

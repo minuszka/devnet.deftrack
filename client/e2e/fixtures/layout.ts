@@ -187,7 +187,8 @@ function experimentDetail(): ExperimentDetail {
   };
 }
 
-function blockDetail(): BlockDetail {
+/** A block with every hash at full length. Exported for the focus test, which delays it. */
+export function blockDetail(): BlockDetail {
   const { nTx: _nTx, ...row } = blockRow({ hash: HASH, payee: `P${LONG_TOKEN.slice(0, 33)}` });
   void _nTx;
   return {
