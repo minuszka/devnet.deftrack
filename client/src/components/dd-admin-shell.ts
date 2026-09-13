@@ -105,6 +105,7 @@ export class DdAdminShell extends LitElement {
     _selectedPreflight: { state: true },
     _planError: { state: true },
     _evidenceRead: { state: true },
+    _sessionBusy: { state: true },
     _loading: { state: true },
     _message: { state: true },
   };
@@ -203,6 +204,16 @@ export class DdAdminShell extends LitElement {
     void this._applyUrlSelection();
   };
   private _loading = false;
+  /**
+   * A sign-in or sign-out exchange is out. Its own flag, not `_loading`.
+   *
+   * Sign-in used to set `_loading` and then ask for the dashboard, and the
+   * dashboard load returns at once while `_loading` is set -- so a successful
+   * sign-in loaded nothing, and the page sat empty under "Sign out" until the
+   * thirty-second refresh. The session exchange and the reads it unlocks are
+   * different things, and one flag cannot stand for both.
+   */
+  private _sessionBusy = false;
   private _message = '';
   private _timer: number | null = null;
 
@@ -428,7 +439,9 @@ export class DdAdminShell extends LitElement {
   }
 
   private async _signIn(): Promise<void> {
-    this._loading = true;
+    // One exchange at a time. The button is disabled while this is set, and a
+    // disabled button delivers no click -- that is the whole guard.
+    this._sessionBusy = true;
     this._message = '';
     try {
       // The identity proxy has already authenticated the browser. This exchange
@@ -436,21 +449,22 @@ export class DdAdminShell extends LitElement {
       this._session = await adminApi.signIn();
       this._screen = 'ready';
       this._startRefresh();
-      await this._loadDashboard();
     } catch {
       // Do not repeat the sign-in endpoint's distinction between an unknown
       // subject, proxy and disabled deployment in the page itself.
       this._screen = 'signed-out';
       this._message = 'Sign-in was not accepted. Use the approved identity proxy or contact an administrator.';
+      return;
     } finally {
-      this._loading = false;
+      this._sessionBusy = false;
     }
+    await this._loadDashboard();
   }
 
   private async _signOut(): Promise<void> {
     const session = this._session;
     if (session === null) return;
-    this._loading = true;
+    this._sessionBusy = true;
     try {
       await adminApi.signOut(session.csrfToken);
     } catch {
@@ -480,7 +494,7 @@ export class DdAdminShell extends LitElement {
       // signed-out browser invites the next person to reload into it.
       this._writeUrl(null, 'replace');
       this._screen = 'signed-out';
-      this._loading = false;
+      this._sessionBusy = false;
       if (this._timer !== null) clearInterval(this._timer);
       this._timer = null;
     }
@@ -895,8 +909,8 @@ export class DdAdminShell extends LitElement {
             This dashboard is available only through the approved identity proxy. No administrator API key or infrastructure credential is used by the browser.
           </p>
           ${this._message ? html`<div class="alert" role="alert">${this._message}</div>` : nothing}
-          <button class="btn primary" ?disabled=${this._loading} @click=${this._signIn}>
-            ${this._loading ? 'Signing in…' : 'Continue to admin dashboard'}
+          <button class="btn primary" ?disabled=${this._sessionBusy} @click=${this._signIn}>
+            ${this._sessionBusy ? 'Signing in…' : 'Continue to admin dashboard'}
           </button>
           <a href="/">Return to the public explorer</a>
         </div>
@@ -932,7 +946,7 @@ export class DdAdminShell extends LitElement {
         <div class="identity">
           <span class="subject">${session.subject}</span>
           <span class="pill accent">${session.role}</span>
-          <button class="btn" ?disabled=${this._loading} @click=${this._signOut}>Sign out</button>
+          <button class="btn" ?disabled=${this._loading || this._sessionBusy} @click=${this._signOut}>Sign out</button>
         </div>
       </div>
       <header>
