@@ -9,7 +9,7 @@ import {
   llmqApiName,
   type ParamSpec,
 } from '../lib/queryState.js';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
 import { TableScrollController } from '../lib/tableScroll.js';
@@ -48,6 +48,18 @@ export class DdPageFairness extends LitElement {
   };
 
   private _d: SelectionFairness | null = null;
+  /**
+   * The sample the figures on hand were read for -- window and the profile the
+   * page was actually following -- or null.
+   *
+   * A change of URL cleared the figures, but the profile the page follows also
+   * moves without one: with no profile in the URL it is the one signing at the
+   * tip, and the tip crossing the activation height changes it. That left V1's
+   * tables under the "at the tip" marker on V2 while V2's figures loaded, and
+   * for good if they failed (W4 of the re-review). A refresh of the same sample
+   * that fails still keeps its figures.
+   */
+  private _heldFor: string | null = null;
   private _rounds = 50;
   private _error = '';
   /**
@@ -172,9 +184,11 @@ export class DdPageFairness extends LitElement {
         return;
       }
 
+      const asked = this._sampleKey();
       const d = await run.api.selectionFairness(this._rounds, llmqApiName(this._effective()));
       if (run.stale) return;
       this._d = d;
+      this._heldFor = asked;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -232,6 +246,11 @@ export class DdPageFairness extends LitElement {
     return this._resolved?.known === true ? this._resolved.llmqName : null;
   }
 
+  /** The window and the profile the page is following now. */
+  private _sampleKey(): string {
+    return `${this._rounds}|${this._effective() ?? ''}`;
+  }
+
   private _setWindow(n: number): void {
     this._query.set({ rounds: n });
   }
@@ -241,7 +260,8 @@ export class DdPageFairness extends LitElement {
   }
 
   override render(): TemplateResult {
-    const d = this._d;
+    // The figures on hand, only under the sample they answer.
+    const d = this._heldFor === this._sampleKey() ? this._d : null;
     return html`
       <div class="page-head">
         <div>
@@ -279,7 +299,7 @@ export class DdPageFairness extends LitElement {
             being one.
           </div>`
         : !d
-        ? html`<div class="note">Loading…</div>`
+        ? html`<div class="note">${this._error ? COULD_NOT_LOAD : 'Loading…'}</div>`
         : d.roundsConsidered === 0
           ? html`<div class="note">
               No round has formed yet, so there is no member list to count. Selection can only be
