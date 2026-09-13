@@ -44,6 +44,12 @@ export class DdPageExperiments extends LitElement {
 
   runKey: string | null = null;
   private _rows: ExperimentRow[] = [];
+  /**
+   * The query -- status and offset -- the rows on hand were read for, or null.
+   * See dd-page-blocks: moving page or filter left the previous rows under the
+   * new range and the newly pressed filter until the answer came, or for good.
+   */
+  private _heldFor: string | null = null;
   /** The true match count, not the size of the page on screen. */
   private _total = 0;
   private _offset = 0;
@@ -156,6 +162,7 @@ export class DdPageExperiments extends LitElement {
       // run's URL until the new answer lands -- briefly, and wrongly.
       this._detail = null;
       this._rows = [];
+      this._heldFor = null;
       this._total = 0;
       this._error = '';
       this._poll.refresh();
@@ -180,6 +187,10 @@ export class DdPageExperiments extends LitElement {
     return typeof page === 'number' ? page : 1;
   }
 
+  private _queryKey(): string {
+    return `${this._status}|${this._offset}`;
+  }
+
   private async _load(run: PollRun): Promise<void> {
     this._loading = true;
     try {
@@ -188,6 +199,7 @@ export class DdPageExperiments extends LitElement {
         if (run.stale) return;
         this._detail = detail;
       } else {
+        const asked = this._queryKey();
         const result = await run.api.experiments({
           limit: PAGE_SIZE,
           offset: this._offset,
@@ -198,6 +210,7 @@ export class DdPageExperiments extends LitElement {
         // The count of everything that matches, which is the number the pager
         // and the "of N" both need. The page on screen is a sample of it.
         this._total = result.total;
+        this._heldFor = asked;
       }
       this._error = '';
     } catch (error) {
@@ -235,6 +248,9 @@ export class DdPageExperiments extends LitElement {
   }
 
   private _list(): TemplateResult {
+    // Rows, count and range are shown only under the query they answer.
+    const current = this._heldFor === this._queryKey();
+    const rows = current ? this._rows : [];
     const from = this._total === 0 ? 0 : this._offset + 1;
     const to = Math.min(this._offset + PAGE_SIZE, this._total);
     return html`
@@ -244,7 +260,9 @@ export class DdPageExperiments extends LitElement {
           <!-- What is on screen, against what exists. The heading alone used to
                say "Recorded runs" over a page of 25 out of 34. -->
           <div class="page-sub mono">
-            ${this._total === 0 ? 'none' : `${num(from)}–${num(to)} of ${num(this._total)}`}
+            ${!current
+              ? this._error ? 'count unknown' : '…'
+              : this._total === 0 ? 'none' : `${num(from)}–${num(to)} of ${num(this._total)}`}
           </div>
         </div>
         <div class="filters">
@@ -277,11 +295,11 @@ export class DdPageExperiments extends LitElement {
                 </tr>
               </thead>
               <tbody>
-                ${this._rows.length === 0
+                ${rows.length === 0
                   ? html`<tr>
-                      <td class="empty" colspan="7">${this._emptyReason()}</td>
+                      <td class="empty" colspan="7">${this._emptyReason(current)}</td>
                     </tr>`
-                  : this._rows.map(
+                  : rows.map(
                       (r) => html`
                         <tr>
                           <td class="mono"><a href="/experiments/${r.runKey}">${r.runKey}</a></td>
@@ -301,13 +319,13 @@ export class DdPageExperiments extends LitElement {
           </div>
         </div>
         <div class="pager">
-          <button ?disabled=${this._offset === 0 || this._loading} @click=${() => this._move(-1)}>
+          <button ?disabled=${this._offset === 0 || this._loading || !current} @click=${() => this._move(-1)}>
             Newer
           </button>
-          <button ?disabled=${to >= this._total || this._loading} @click=${() => this._move(1)}>
+          <button ?disabled=${to >= this._total || this._loading || !current} @click=${() => this._move(1)}>
             Older
           </button>
-          <span>${this._total === 0 ? 'nothing to page through' : `${num(from)}–${num(to)} of ${num(this._total)}`}</span>
+          <span>${!current ? '—' : this._total === 0 ? 'nothing to page through' : `${num(from)}–${num(to)} of ${num(this._total)}`}</span>
         </div>
       </section>
     `;
@@ -321,7 +339,10 @@ export class DdPageExperiments extends LitElement {
    * just failed. On a page whose subject is the record of what was done to the
    * network, "nothing was done" is the one answer that must never be guessed.
    */
-  private _emptyReason(): string {
+  private _emptyReason(current: boolean): string {
+    // Nothing held for this query yet is never "none recorded", whatever the
+    // loading flag says at this instant.
+    if (!current) return this._error !== '' ? 'The list could not be loaded, so what exists is unknown.' : 'Loading…';
     if (this._loading) return 'Loading…';
     if (this._error !== '') return 'The list could not be loaded, so what exists is unknown.';
     if (this._status !== '') return `No ${this._status} run matches. Other runs may exist.`;

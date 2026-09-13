@@ -268,7 +268,7 @@ export class AppHarness {
           return;
         }
         const stub = typeof handler === 'function' ? handler(url, request.method()) : handler;
-        const ticket = stub.gate?.hold(path);
+        const ticket = stub.gate?.hold(path, () => request.failure() !== null);
         if (ticket !== undefined && !(await ticket.released)) {
           // Abandoned at teardown. Aborted rather than answered: an answer
           // delivered while the test is being torn down could set off requests
@@ -341,6 +341,8 @@ interface HeldRequest {
   path: string;
   letGo: (answer: boolean) => void;
   delivered: Promise<boolean>;
+  /** Whether the page gave up on this request while it was held. */
+  cancelled: () => boolean;
 }
 
 /** What the harness holds on to while a request waits at a gate. */
@@ -373,7 +375,7 @@ export class ResponseGate {
   }
 
   /** Called by the harness when a request reaches a stub carrying this gate. */
-  hold(path: string): HeldTicket {
+  hold(path: string, cancelled: () => boolean = () => false): HeldTicket {
     let letGo: (answer: boolean) => void = () => undefined;
     let settle: (delivered: boolean) => void = () => undefined;
     const released = new Promise<boolean>((resolve) => {
@@ -382,8 +384,20 @@ export class ResponseGate {
     const delivered = new Promise<boolean>((resolve) => {
       settle = resolve;
     });
-    this.queue.push({ path, letGo, delivered });
+    this.queue.push({ path, letGo, delivered, cancelled });
     return { released, settle };
+  }
+
+  /**
+   * Whether the page has cancelled the held request for exactly `path`.
+   *
+   * A page that abandons a read -- the poll controller does, whenever the query
+   * moves on -- never reads the answer, so there is nothing to wait for. This is
+   * how a test says that is what happened, rather than waiting out a timeout and
+   * calling the silence a pass.
+   */
+  cancelled(path: string): boolean {
+    return this.queue.some((entry) => entry.path === path && entry.cancelled());
   }
 
   /** Wait until at least `count` requests are being held. */
@@ -409,6 +423,10 @@ export class ResponseGate {
       throw new Error(`nothing to release${path === undefined ? '' : ` for ${path}`}; held: ${held}`);
     }
     this.queue.splice(index, 1);
+    if (entry.cancelled()) {
+      entry.letGo(false);
+      throw new Error(`the page cancelled its request to ${entry.path} while it was held`);
+    }
     const before = await this.app.readCount(entry.path);
     entry.letGo(true);
     if (!(await entry.delivered)) {

@@ -123,6 +123,30 @@ test.describe('held responses', () => {
     await expect(gate.release(PROBE)).rejects.toThrow(`nothing to release for ${PROBE}; held: nothing`);
   });
 
+  test('a request the page cancels while held is reported as cancelled, not waited for', async ({
+    app,
+    page,
+  }) => {
+    const gate = app.gate();
+    app.stub({ ...overviewStubs(), [PROBE]: { body: ok({ n: 1 }), gate } });
+    await app.goto('/');
+    await page.evaluate((path) => {
+      const controller = new AbortController();
+      (window as unknown as Record<string, unknown>)['cancelProbe'] = () => controller.abort();
+      void fetch(path, { signal: controller.signal }).catch(() => undefined);
+    }, PROBE);
+    await gate.waitForHeld(1);
+    expect(gate.cancelled(PROBE)).toBe(false);
+
+    await page.evaluate(() => (window as unknown as { cancelProbe: () => void }).cancelProbe());
+    await expect.poll(() => gate.cancelled(PROBE)).toBe(true);
+
+    // Said at once, and said as what it is -- not a read that timed out.
+    const started = Date.now();
+    await expect(gate.release()).rejects.toThrow(`the page cancelled its request to ${PROBE} while it was held`);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   test('release works while the page clock is paused', async ({ app, page }) => {
     // Measured: an installed clock alone keeps the page's timers running, so
     // that case proves nothing here. A PAUSED clock stops them, and waiting

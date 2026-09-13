@@ -56,8 +56,19 @@ export class DdPageBlocks extends LitElement {
 
   private _rows: BlockRow[] = [];
   private _total = 0;
-  /** A page of blocks has arrived at least once; until then a count is not known. */
-  private _loaded = false;
+  /**
+   * The offset the rows on hand were read at, or null before any arrived.
+   *
+   * Rows used to be "loaded" once and for good, so moving to page 2 relabelled
+   * page 1's rows as page 2 -- the pager moved at once, the rows only when the
+   * answer came, and never if it failed. Rows belong to the page they were read
+   * for; a refresh of that same page that fails still keeps them (day 3).
+   */
+  private _heldFor: number | null = null;
+  /** The rows on hand answer the page on screen. */
+  private get _loaded(): boolean {
+    return this._heldFor === this._offset;
+  }
   private _offset = 0;
   private _error = '';
   private _loading = true;
@@ -94,11 +105,12 @@ export class DdPageBlocks extends LitElement {
 
   private async _load(run: PollRun): Promise<void> {
     try {
-      const p = await run.api.blocks({ limit: PAGE_SIZE, offset: this._offset });
+      const offset = this._offset;
+      const p = await run.api.blocks({ limit: PAGE_SIZE, offset });
       if (run.stale) return;
       this._rows = p.items;
       this._total = p.total;
-      this._loaded = true;
+      this._heldFor = offset;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;

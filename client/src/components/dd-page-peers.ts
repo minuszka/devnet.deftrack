@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { PeerPropagation } from '../lib/api.js';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, type ParamSpec } from '../lib/queryState.js';
 import { ago, num } from '../lib/format.js';
@@ -37,6 +37,11 @@ export class DdPagePeers extends LitElement {
   };
 
   private _d: PeerPropagation | null = null;
+  /**
+   * The topic the report on hand was read for, or null. See dd-page-blocks:
+   * choosing ChainLocks left the block report under "Recent ChainLocks".
+   */
+  private _heldFor: Topic | null = null;
   private _topic: Topic = 'block';
   private _error = '';
   /** Interval, visibility, cancellation and the sequence guard, in one place. */
@@ -97,9 +102,11 @@ export class DdPagePeers extends LitElement {
 
   private async _load(run: PollRun): Promise<void> {
     try {
-      const d = await run.api.peerPropagation(this._topic, 30);
+      const topic = this._topic;
+      const d = await run.api.peerPropagation(topic, 30);
       if (run.stale) return;
       this._d = d;
+      this._heldFor = topic;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -131,7 +138,8 @@ export class DdPagePeers extends LitElement {
   }
 
   override render(): TemplateResult {
-    const d = this._d;
+    // The report on hand, only under the topic it answers.
+    const d = this._heldFor === this._topic ? this._d : null;
     return html`
       <div class="page-head">
         <div>
@@ -161,7 +169,7 @@ export class DdPagePeers extends LitElement {
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
       ${!d
-        ? html`<div class="note">Loading…</div>`
+        ? html`<div class="note">${this._error ? COULD_NOT_LOAD : 'Loading…'}</div>`
         : html`${this._tiles(d)} ${this._hosts(d)} ${this._laggards(d)} ${this._events(d)}`}
     `;
   }
