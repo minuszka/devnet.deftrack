@@ -2260,6 +2260,174 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 19. nap – Célzott keresés és használati segítség
+
+```text
+Nap / dátum / implementáló: 19 / 2026-09-13 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day19-search-help @ ccfd961 (main, a 18. nap után)
+Napi feladat és előfeltételei: célzott keresés (magasság, blokkhash, txid, kísérlet- és
+  szimuláció-runKey), rövid módszertani oldal, favicon, másolásgomb hibajelzéssel.
+  Előfeltétel: a 18. napi fejléc és menü — megvan.
+Auditpontok: nincs önálló F-pont; az audit „Keresés", „Fogalmak" és „Arculati részletek" javaslata
+```
+
+**Kiinduló állapot.** Keresés nem volt. Súgó nem volt: egy HHI- vagy Gini-számot
+csak az érthetett, aki a forrást olvasta. Favicon nem volt (az `index.html` nem
+hivatkozott ikonra). Az egyetlen másolásgomb — a főoldal quorum hash-e — a
+vágólap hibáját **csendben elnyelte**, azzal az indokkal, hogy a teljes hash a cella
+`title`-jében úgyis ott van.
+
+### A keresés: amit egy 64 hex karakteres azonosítóról nem lehet tudni
+
+A fejlécben egy kereső, ami **csak explicit submitra** keres — gépelésre semmi nem
+megy ki. Üres vagy csak szóközt tartalmazó submit semmit nem kérdez, és kiírja,
+mit fogad a mező. A keresés a `/search?q=` oldalra visz, ami a meglévő publikus
+végpontokat kérdezi:
+
+| Bemenet | Megkérdezett végpontok |
+|---|---|
+| csak számjegy (≤ 12) | blokk magasság szerint **és** kísérlet runKey szerint |
+| 64 hex karakter | blokk hash szerint **és** tranzakció **és** kísérlet |
+| `sim_` + 32 hex | szimuláció **és** kísérlet |
+| a szerver runKey-ábécéjében bármi más | kísérlet |
+| minden egyéb (szóköz, `/`, `<`…) | semmi — „nem kereshető" |
+
+A táblázat oka mindenhol ugyanaz: **egyik alakról sem a formátum dönt.** A szerver
+kísérlet-runKey szabálya (`/^[a-z0-9][a-z0-9._-]*$/i`, legfeljebb 80) egy magasságot,
+egy hash-t és egy `sim_…` kulcsot is elfogad — ezt a unit teszt a saját hibás
+elvárásomon fogta meg (a `sim_short`-ot „nem kereshetőnek" vártam, de az
+aláhúzás benne van az ábécében).
+
+**Minden válasz megmarad annak, ami volt:** 404 = nincs ilyen; minden más státusz
+(400, 401, 429, 5xx), hálózati hiba vagy 8 másodperc válasz nélkül = **nem
+sikerült ellenőrizni**, okkal együtt. „No match" csak akkor jelenik meg, ha minden
+kérdés 404-et kapott; ha egy is ellenőrizetlen, a lap kimondja: „Not a »no match«",
+és felsorolja, hol nem talált és mit nem sikerült ellenőrizni, egy „Search again"
+gombbal. Egy 64 hex karakteres „no match" azt is kimondja, hogy egy proTxHash is
+ilyen hosszú, és masternode-keresés még nincs — **nem irányít blokk- vagy
+tranzakcióoldalra**.
+
+**Továbbugrás:** pontosan egy találat, és minden más kérdés 404 → a lap magára az
+elemre visz, `history.replaceState`-tel. Push-sal a Vissza gomb a keresésre lépne
+vissza, ami újra továbbugrana — a Vissza-gombos teszt ezt rögzíti. Egy találat
+és egy ellenőrizetlen kérdés **nem** egyértelmű válasz: a lap mindkettőt mutatja.
+Több találat külön kártyákon, mindegyik saját linkkel.
+
+**Régebbi keresés nem írhatja felül az újabbat:** új keresés megszakítja az előző
+kéréseit, és egy válaszra csak az a keresés hallgat, amelyik kérdezte.
+
+### Másolás
+
+Közös `dd-copy` komponens: a **teljes** azonosítót másolja (a képernyőn rövidített
+hash soha nem az, ami a vágólapra kerül), sikerre „copied", elutasított vágólapra
+„copy failed" — a gombon és egy képernyőolvasónak szóló állapotsorban is. A főoldal
+quorum hash-gombja is ezt használja, a régi megjelenéssel; a hiba elnyelése megszűnt.
+
+### A 18. napi mérés azonnal megfogott egy hibát
+
+A `dd-copy` állapotsora `sr-only`, tehát `position: absolute`. Egy abszolút
+pozicionált elemet egy görgető doboz csak akkor vág le, ha a tartalmazó blokkja a
+dobozon belül van — itt nem volt, így a táblázat képernyőn kívüli soraiban a
+láthatatlan állapotsor a lap szélén túl ült: **a főoldal 360 px-en +773 px-szel
+lett szélesebb**. A javítás egy `position: relative` a komponens hostján. Ez az a
+hiba, amire egy csak ránézéssel ellenőrzött oldal zöld lett volna.
+
+### How we measure
+
+Rövid oldal a DKG, PoSe, Sentinel Layer, HHI és Gini mutatóhoz, a fejlécből egy
+linkkel. Minden szakasz három dolgot mond: **mi a szám, mi a minta, és mit nem tud
+megmondani.** Minden definíció ott olvasva, ahol a szám számolódik, és a
+komponensben minden szakasz mellett ott a forrás helye:
+
+| Mutató | Forrás |
+|---|---|
+| formation rate, median health | `server/src/domain/roundStats.ts` (formed ÷ (formed + failed); pending és impossible kimarad) |
+| health ratio | Core `src/rpc/quorums.cpp:158` @ `e06908d850` — érvényes tagok ÷ a quorum **tényleges** taglétszáma, két tizedesre |
+| punished | `server/src/services/quorumRound.service.ts` |
+| PoSe küszöb és büntetés | CLAUDE.md, forráshivatkozással (`deterministicmns.cpp:328-340`, `:810/:815`, `:1131`) |
+| DSL convergence, missed, unobserved | `server/src/routes/v1/dsl.v1.routes.ts` |
+| HHI, Gini, alapablak 500 blokk | `server/src/domain/stakingHealth.ts`, `server/src/routes/v1/staking.v1.routes.ts` |
+
+A csoportos menü rögzített, ezért a keresés és a módszertan **nem kerül a
+csoportokba**: a fejlécből érhető el, és a menüben semmit nem világít. A router
+unit tesztje, amely minden rejtett route-tól szekciót várt, a nevének megfelelően
+most a **részletoldalakra** (mintás route-okra) szűkül, és külön teszt rögzíti,
+hogy a két önálló oldal nem világít semmit.
+
+### Favicon
+
+`client/public/favicon.svg`: a kártyacímek akcentszínű négyzete és mellette egy
+üres — egy kör, ami formálódott, és egy, ami nem. Nincs új arculat, nincs külső
+hivatkozás (a teszt ezt is nézi). A `ops/deploy.sh` a teljes `dist`-et rsync-eli,
+tehát élesen is kikerül.
+
+### Érintett fájlok
+
+Kliens: új `lib/search.ts` (+ 15 unit eset), új `components/dd-page-search.ts`, új
+`components/dd-page-methodology.ts`, új `components/dd-copy.ts`, `lib/router.ts`
+(két önálló route, `navigate(…, { replace })`), `lib/router.test.ts` (+1, és a
+szekció-teszt szűkítése), `components/dd-shell.ts` (kereső, link, bekötés),
+`components/dd-page-overview.ts` (a másolásgomb cseréje), `index.html`, új
+`public/favicon.svg`. Tesztek: új `e2e/search.spec.ts` (19 eset); a 18. napi
+`responsive.spec.ts` és az `accessibility.spec.ts` h1-tesztje kiterjesztve a két új
+oldalra.
+
+**Szerződésváltozás / kompatibilitás:** nincs API-változás, nincs új függőség.
+A shell-bundle 221 kB-ról 253 kB-ra (gzip 49 → 58 kB) nőtt a 18. és 19. nap
+együtt; az audit a kis kliensméretet megtartandónak nevezte, ez még e tartományban
+van, de a 20. napi átadásban szerepel.
+
+### Negatív kontrollok
+
+Egyszerre egy őr kivéve, a hozzá tartozó teszt futtatva, majd visszaállítva.
+
+| Kontroll | Eredmény |
+|---|---|
+| A — minden sikertelen kérdés „nincs találat"-nak számít | E2E 1 és unit 1 bukott |
+| B — a 64 hex karakteres azonosítót a formátuma dönti el (csak blokk) | E2E 2 és unit 1 bukott |
+| C — a mező gépelés közben keres | bukott |
+| D — mindkét elavult-keresés őr kivéve | bukott |
+| D1 — csak az abort kivéve | **nem bukott** — a generációs ellenőrzés fedi |
+| D2 — csak a generációs ellenőrzés kivéve | **nem bukott** — az abort fedi |
+| E — a továbbugrás push-sal, nem replace-szel | a Vissza-teszt bukott |
+| F — az időtúllépés nincs jelezve | bukott |
+| G — egy találat egy ellenőrizetlen mellett is továbbugrik | unit bukott |
+| H — a másolásgomb elnyeli a vágólap hibáját | 2 bukott (a keresési és a főoldali gomb) |
+| I — rövidített azonosítót másol | bukott |
+| J — üres submit is navigál | bukott |
+| K — a „no match" nem említi a proTxHash-t | bukott |
+| L — nincs favicon-link | bukott |
+| M — a `dd-copy` állapotsora kiszökik a táblázat dobozából | a betöltött elrendezésmérés bukott (ez maga a megtalált hiba) |
+
+**D1 és D2 őszintén:** a két őr ugyanazt a hibát fedi, a teszt csak mindkettő
+kivételekor bukik. A generációs ellenőrzés a kódkomment szerint egy olyan válaszra
+is való, ami az abort pillanatában már megérkezett — ezt az ablakot egyik teszt sem
+tudja szándékosan kinyitni, úgyhogy az a rész **érvelés, nem bizonyíték**, és a
+komment is így mondja.
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **855** szerver (változatlan) + **199** kliens (183 → 199) unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **212** böngészőteszt (193 → 212), egy workerrel, 5,1 perc |
+| K3 | exit 0 — 15 fájl, 98 teszt (változatlan; nem kötelező ezen a napon, lefutott) |
+| CSP-kapu | exit 0 — 4 eset; a favicon a buildelt kliensben is ott van (`dist/favicon.svg`) |
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:**
+
+- a **20. nap** (regresszió és review-csomag) elkezdhető;
+- **proTxHash-keresés:** a backlogba került (lásd lent) — nincs hozzá masternode-részletoldal.
+
+```text
+Commit(ok), végső SHA: 6b5385d (19. nap)
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -2611,6 +2779,20 @@ Napi státusz: ELLENŐRZÖTT
 - Független végső review a teljes munkáról: még nem történt meg.
 
 A blokkot, kihagyott tesztet és fennmaradó sérülékenységet ne töröld ki egy későbbi bejegyzéssel: lezáráskor hivatkozz a bizonyítékra, hogy az előzmény követhető maradjon.
+
+---
+
+## Backlog — ami nem ennek a tervnek a része
+
+A terv kifejezetten külön backlogba küldött tételei, hogy ne vesszenek el egy napi
+bejegyzés nyitott pontjai között.
+
+- **proTxHash-keresés (19. nap).** Egy 64 hex karakteres azonosító masternode
+  proTxHash is lehet, de nincs publikus masternode-részletoldal, ahová a keresés
+  vihetne. Addig a keresés nem irányít blokk- vagy tranzakcióoldalra, és a „no
+  match" kimondja, hogy masternode-keresés még nincs. Előfeltétel: egy publikus
+  masternode-részletútvonal, a publikus API host-cím-szabályával
+  (`publicApi.integration.test.ts`: egyetlen publikus végpont sem ad ki host-címet).
 
 ---
 
