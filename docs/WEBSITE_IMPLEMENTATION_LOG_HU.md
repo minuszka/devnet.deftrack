@@ -3247,6 +3247,19 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   `D:\www\devnet .deftrack-review-artefacts\2026-09-13-followup\`, `SHA256SUMS` sha256
   `de50d0ac8fbda907df031a80b07819a8947679e0196c3d253fc517e41d47259a`; `sha256sum -c` a másolaton és az
   eredetin is teljes egyezés, negatív kontroll (egy átírt bájt) exit 1.
+- **Harmadik független review a J7-ről: 2026-09-14, az `eb76773`-n** ([jelentés](WEBSITE_REVIEW_W1_W4_2026-09-14_HU.md),
+  [hibajegyek és ellenpróbák](review-2026-09-14/)). W1, W4 és V4 lezárható; W3 a harness működésére
+  lezárható; a régi pollteszt szigorítása indokolt (a 3/3 mérés reprodukálva). **W2 részben nyitott:**
+  X1/P2 — a kezdeti history- vagy dry-run-olvasás 503-a után a recovery 401-e elvész, mert a
+  `Promise.all` az első hibánál kilép. Új teszthiba: X2/P3 — a W3 negatív kontrolljában a dobó állítás
+  után egy timer bezárt lapot hív. Új P1 nincs. Az implementáló gépén változtatás előtt reprodukálva: X1
+  két ellenpróbája piros, C3 és C4 zöld; a W3 kontroll futásában egy „has been closed” hiba. A javítás
+  ugyanazon az ágon (`web/review-fixes-2026-09-13-2`, #176), a J8 munkanapon. **Független újra-review:
+  még nem történt meg.**
+  A reviewer `docs/review-2026-09-14/artifacts/` és `generated/` mappái (a review saját `.gitignore`-ja
+  kizárja őket; 61 fájl) a repón kívül is megőrizve: `D:\www\devnet .deftrack-review-artefacts\2026-09-14\`,
+  `SHA256SUMS` sha256 `f27855033ef9c19ab0e9f6752221822e93df6f6e3a7724c534af89e05c47cf8c`; `sha256sum -c`
+  a másolaton és az eredetin is 61/61, negatív kontroll (egy átírt bájt, egy törölt fájl) exit 1.
 - **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
   böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
   jelentés által hivatkozott `client/test-results/review-final/`-t is:

@@ -222,6 +222,10 @@ helyreállítási bizonyítéka hiányzik.
   [review-2026-09-13-followup/](review-2026-09-13-followup/); a futásainak trace-ei a repón kívül:
   `D:\www\devnet .deftrack-review-artefacts\2026-09-13-followup\`, 22 fájl, `SHA256SUMS` sha256
   `de50d0ac8fbda907df031a80b07819a8947679e0196c3d253fc517e41d47259a`.
+- A **harmadik review** ([jelentés](WEBSITE_REVIEW_W1_W4_2026-09-14_HU.md)) mellékletei:
+  [review-2026-09-14/](review-2026-09-14/) (UTF-8 naplók); a kimenetei (`artifacts/`, `generated/`) a repón
+  kívül: `D:\www\devnet .deftrack-review-artefacts\2026-09-14\`, 61 fájl, `SHA256SUMS` sha256
+  `f27855033ef9c19ab0e9f6752221822e93df6f6e3a7724c534af89e05c47cf8c`.
 
 ## 13. Amit a review-nak külön érdemes néznie
 

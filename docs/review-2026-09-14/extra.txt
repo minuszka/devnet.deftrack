@@ -1,0 +1,115 @@
+﻿node.exe : [WebServer] (node:37544) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([WebServer] (no... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:23932) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:25196) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]   VITE v8.2.2  ready in 197 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:5495/
+
+Running 4 tests using 1 worker
+
+(node:15544) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 0:13:53 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  1 docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial history read fails first (3.1s)
+(node:30380) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 0:13:57 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  2 docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial dry-run read fails first (3.1s)
+(node:36392) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 0:14:01 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 3 docs\review-2026-09-14\extra.spec.ts:31:1 › C3 a late initial evidence 401 after selecting a planless B cannot end B session (624ms)
+  ok 4 docs\review-2026-09-14\extra.spec.ts:53:1 › C4 abandoning a held answer aborts it without giving its body to the page (196ms)
+
+
+  1) docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial history read fails first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      25 |     await late401.release();
+      26 |     expect(pageErrors).toEqual([]);
+    > 27 |     await expect(page.getByRole('button', { name: 'Continue to admin dashboard' })).toBeVisible();
+         |                                                                                     ^
+      28 |   });
+      29 | }
+      30 |
+        at D:\www\devnet .deftrack\docs\review-2026-09-14\extra.spec.ts:27:85
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-a3960-al-history-read-fails-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-a3960-al-history-read-fails-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-a3960-al-history-read-fails-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-a3960-al-history-read-fails-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial dry-run read fails first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      25 |     await late401.release();
+      26 |     expect(pageErrors).toEqual([]);
+    > 27 |     await expect(page.getByRole('button', { name: 'Continue to admin dashboard' })).toBeVisible();
+         |                                                                                     ^
+      28 |   });
+      29 | }
+      30 |
+        at D:\www\devnet .deftrack\docs\review-2026-09-14\extra.spec.ts:27:85
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-1da03-al-dry-run-read-fails-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-1da03-al-dry-run-read-fails-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-1da03-al-dry-run-read-fails-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14\artifacts\extra-none\extra-X1-recovery-401-is-n-1da03-al-dry-run-read-fails-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2 failed
+    docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial history read fails first 
+    docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial dry-run read fails first 
+  2 passed (11.3s)
