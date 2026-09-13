@@ -162,10 +162,19 @@ test.describe('held responses', () => {
       }, 500);
     });
 
-    await released;
-    // Not polled: release() is what must have waited for this very body.
-    expect(await inPage(page, 'heldBody')).toEqual(ok({ n: 1 }));
-    await allow;
+    // Read the moment release() returns, and not polled: release() is what must
+    // have waited for this very body. Asserted only once the timer has run, so a
+    // release that returned early fails here alone -- the assertion used to
+    // throw first, and the timer then called a page the teardown had closed
+    // (X2 of the third review).
+    let body: unknown;
+    try {
+      await released;
+      body = await inPage(page, 'heldBody');
+    } finally {
+      await allow;
+    }
+    expect(body).toEqual(ok({ n: 1 }));
   });
 
   test('two held answers for one URL, read in reverse order, are each waited for on their own', async ({
@@ -204,10 +213,16 @@ test.describe('held responses', () => {
     // Both let go together: the second's read lands long before the first's.
     const first = gate.release();
     const second = gate.release();
-    await first;
-    const bodies = await inPage<Record<string, unknown>>(page, 'bodies');
+    // Read as soon as the first release returns; asserted once the second has
+    // settled too, for the same reason as above.
+    let bodies: Record<string, unknown> | undefined;
+    try {
+      await first;
+      bodies = await inPage<Record<string, unknown>>(page, 'bodies');
+    } finally {
+      await second;
+    }
     expect(bodies?.['first'], 'release() of the first answer returned before its own body was read').toEqual(ok({ n: 1 }));
-    await second;
   });
 
   test('a request the page cancels while held is reported as cancelled, not waited for', async ({
