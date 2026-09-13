@@ -109,7 +109,9 @@ test.describe('semantics and focus', () => {
     await app.goto('/');
     await expect(page.locator('.page-title')).toHaveText('Overview');
 
-    await page.getByRole('link', { name: 'DKG Rounds', exact: true }).click();
+    // The Network group's link, which lands on its first page. Since day 18 the
+    // page links sit under their group, and the overview shows the groups.
+    await page.getByRole('link', { name: 'Network', exact: true }).click();
     await expect(page.locator('dd-page-rounds')).toHaveCount(1);
 
     // The heading of the new page, not the link that was clicked and not the
@@ -121,7 +123,7 @@ test.describe('semantics and focus', () => {
   test('Back moves the focus too, because Back is a navigation', async ({ app, page }) => {
     app.stub({ ...overviewStubs(), ...roundStubs() });
     await app.goto('/');
-    await page.getByRole('link', { name: 'DKG Rounds', exact: true }).click();
+    await page.getByRole('link', { name: 'Network', exact: true }).click();
     await expect.poll(async () => (await focused(page)).text).toContain('DKG Rounds');
 
     await page.goBack();
@@ -140,7 +142,7 @@ test.describe('semantics and focus', () => {
     await app.goto('/');
     await expect(page.locator('.page-title')).toHaveText('Overview');
 
-    await page.getByRole('link', { name: 'ChainLocks', exact: true }).focus();
+    await page.getByRole('link', { name: 'Blockchain', exact: true }).focus();
     const before = await focused(page);
     expect(before.tag).toBe('a');
 
@@ -248,9 +250,9 @@ test.describe('semantics and focus', () => {
     for (let i = 0; i < 40; i += 1) {
       await page.keyboard.press('Tab');
       const el = await focused(page);
-      if (el.tag === 'a' && el.text === 'DKG Rounds') break;
+      if (el.tag === 'a' && el.text === 'Network') break;
     }
-    expect((await focused(page)).text).toBe('DKG Rounds');
+    expect((await focused(page)).text).toBe('Network');
 
     await page.keyboard.press('Enter');
     await expect(page.locator('dd-page-rounds')).toHaveCount(1);

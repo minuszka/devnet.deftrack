@@ -14,6 +14,7 @@ import { ago, num, ratio, shortHash } from '../lib/format.js';
 import { interventionsFor, type InterventionRun } from '../lib/interventions.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 50;
@@ -38,6 +39,8 @@ const QUERY: Record<string, ParamSpec> = {
 const REFRESH_MS = 60_000;
 
 export class DdPageRounds extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _rounds: { state: true },
     _total: { state: true },

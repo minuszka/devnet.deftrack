@@ -4,6 +4,7 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, num, ratio } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
@@ -28,6 +29,8 @@ const QUERY: Record<string, ParamSpec> = {
 };
 
 export class DdPageExperiments extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     runKey: { type: String },
     _rows: { state: true },
@@ -74,6 +77,18 @@ export class DdPageExperiments extends LitElement {
         padding: 14px;
         font-size: var(--fs-sm);
       }
+      /* On a phone a 170 px label column leaves the values a sliver; each term
+         goes above its value instead. Still a dl: the pairing is in the markup,
+         not in the columns. */
+      @media (max-width: 560px) {
+        .kv {
+          grid-template-columns: 1fr;
+          gap: 2px;
+        }
+        .kv dd + dt {
+          margin-top: var(--sp-2);
+        }
+      }
       .kv dt {
         font-family: var(--font-mono);
         font-size: var(--fs-xs);
@@ -84,6 +99,9 @@ export class DdPageExperiments extends LitElement {
       }
       .kv dd {
         margin: 0;
+        /* A run key or a title with nowhere to break set the value column's
+           minimum width, and pushed the page 996 px past the edge of a phone. */
+        overflow-wrap: anywhere;
       }
       .prose {
         white-space: pre-wrap;

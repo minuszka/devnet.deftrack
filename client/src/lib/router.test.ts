@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSeparateShell, matchRoute, roundHref, ROUTES } from './router.js';
+import { isSeparateShell, matchRoute, NAV_GROUPS, navLocation, roundHref, ROUTES } from './router.js';
 
 describe('matchRoute', () => {
   it('matches the sections', () => {
@@ -109,5 +109,77 @@ describe('separate shells', () => {
 
   it('has no route of its own for it, which is why the rule is needed', () => {
     expect(matchRoute('/admin').status).toBe('not-found');
+  });
+});
+
+describe('the grouped menu', () => {
+  /*
+   * The groups are fixed by the plan, labels and order both. Written out here
+   * in full rather than derived, because a test that reads the grouping back
+   * from ROUTES would agree with any grouping at all.
+   */
+  it('has exactly the four groups the plan fixes, in order', () => {
+    expect(NAV_GROUPS.map((g) => [g.label, g.routes.map((r) => r.label)])).toEqual([
+      ['Overview', ['Overview']],
+      [
+        'Network',
+        ['DKG Rounds', 'PoSe Watch', 'Masternodes', 'ChainLocks', 'Sentinel Layer', 'Staking', 'Vantage Points', 'Operators', 'Fairness'],
+      ],
+      ['Blockchain', ['Blocks', 'Transactions']],
+      ['Experiments', ['Experiments', 'Simulations']],
+    ]);
+  });
+
+  it('puts every menu entry in exactly one group', () => {
+    const visible = ROUTES.filter((r) => !r.hidden).map((r) => r.path);
+    const grouped = NAV_GROUPS.flatMap((g) => g.routes.map((r) => r.path));
+    expect([...grouped].sort()).toEqual([...visible].sort());
+    expect(new Set(grouped).size).toBe(grouped.length);
+  });
+
+  it('keeps the original paths', () => {
+    expect(NAV_GROUPS.flatMap((g) => g.routes.map((r) => r.path))).toEqual([
+      '/', '/rounds', '/pose', '/masternodes', '/chainlocks', '/dsl', '/staking', '/peers', '/operators', '/fairness',
+      '/blocks', '/txs', '/experiments', '/simulations',
+    ]);
+  });
+
+  it('lights the page itself as the current page', () => {
+    const where = navLocation(matchRoute('/pose'));
+    expect(where.group?.label).toBe('Network');
+    expect(where.entry?.label).toBe('PoSe Watch');
+    expect(where.exact).toBe(true);
+  });
+
+  /*
+   * A single round lit nothing at all, because its path is /round and the menu
+   * entry's is /rounds. A single experiment lit Experiments only because the
+   * two share a path.
+   */
+  it('lights the section a detail page belongs to, as a location rather than the page', () => {
+    const cases: Array<[string, string, string]> = [
+      ['/round/7%3A7416%3A0', 'Network', 'DKG Rounds'],
+      ['/block/00abc', 'Blockchain', 'Blocks'],
+      ['/tx/00def', 'Blockchain', 'Transactions'],
+      ['/experiments/run-key-1', 'Experiments', 'Experiments'],
+      [`/simulations/sim_${'1'.repeat(32)}`, 'Experiments', 'Simulations'],
+    ];
+    for (const [path, group, entry] of cases) {
+      const where = navLocation(matchRoute(path));
+      expect([where.group?.label, where.entry?.label, where.exact], path).toEqual([group, entry, false]);
+    }
+  });
+
+  it('gives every detail route a section to belong under', () => {
+    for (const route of ROUTES.filter((r) => r.hidden)) {
+      expect(route.section, route.label).toBeDefined();
+      expect(ROUTES.some((r) => !r.hidden && r.path === route.section), route.label).toBe(true);
+    }
+  });
+
+  it('lights nothing for a page that could not be found or read', () => {
+    for (const path of ['/nowhere', '/round/%']) {
+      expect(navLocation(matchRoute(path))).toEqual({ group: null, entry: null, exact: false });
+    }
   });
 });

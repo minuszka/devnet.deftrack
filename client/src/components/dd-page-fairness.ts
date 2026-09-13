@@ -12,6 +12,7 @@ import {
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
@@ -35,6 +36,8 @@ const QUERY: Record<string, ParamSpec> = {
 };
 
 export class DdPageFairness extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _d: { state: true },
     _rounds: { state: true },

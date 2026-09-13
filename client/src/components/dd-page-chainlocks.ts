@@ -3,12 +3,15 @@ import type { BlockArrivalReport, ChainLockReport } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
 const REFRESH_MS = 20_000;
 
 export class DdPageChainLocks extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = { _d: { state: true }, _arrival: { state: true }, _error: { state: true } };
 
   private _d: ChainLockReport | null = null;

@@ -54,7 +54,11 @@ test.describe('simulation list', () => {
   test('is in the navigation and reachable from it', async ({ app, page }) => {
     app.stub({ ...overviewStubs(), ...listStubs(3) });
     await app.goto('/');
-    await page.getByRole('link', { name: 'Simulations', exact: true }).click();
+    // Under Experiments since day 18: the group first, then the page.
+    const nav = page.getByRole('navigation', { name: 'Sections' });
+    await nav.getByRole('link', { name: 'Experiments', exact: true }).click();
+    await expect(page.locator('dd-page-experiments')).toHaveCount(1);
+    await nav.getByRole('link', { name: 'Simulations', exact: true }).click();
     await expect(page.locator('dd-page-simulations')).toHaveCount(1);
     await expect(page.locator('.page-title')).toHaveText('Simulations');
   });

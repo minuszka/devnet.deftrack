@@ -125,7 +125,7 @@ test.describe('router', () => {
     await app.goto('/');
     await expect(page.locator('.page-title')).toHaveText('Overview');
 
-    await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'DKG Rounds' }).click();
+    await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Network', exact: true }).click();
     await expect(page.locator('dd-page-rounds')).toHaveCount(1);
     expect(new URL(page.url()).pathname).toBe('/rounds');
 

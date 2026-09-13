@@ -6,6 +6,7 @@ import { PollController, type PollRun } from '../lib/poll.js';
 import { groupByOperator } from '../lib/roundMembers.js';
 import { roundSentence, roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
@@ -22,6 +23,8 @@ const REFRESH_MS = 60_000;
  * and an aggregate the reader cannot open is not attribution.
  */
 export class DdPageRound extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     param: {},
     _round: { state: true },

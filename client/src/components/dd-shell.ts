@@ -5,7 +5,15 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { FreshnessTracker, freshnessNote, measuredCount } from '../lib/freshness.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
-import { ROUTES, matchRoute, installLinkInterceptor, type Match } from '../lib/router.js';
+import {
+  NAV_GROUPS,
+  matchRoute,
+  installLinkInterceptor,
+  navLocation,
+  type Match,
+  type NavGroupId,
+  type NavLocation,
+} from '../lib/router.js';
 import { baseStyles } from '../styles/shared.js';
 import './dd-page-overview.js';
 import './dd-page-rounds.js';
@@ -30,10 +38,16 @@ export class DdShell extends LitElement {
   static override properties = {
     _route: { state: true },
     _health: { state: true },
+    _menuOpen: { state: true },
+    _openGroups: { state: true },
   };
 
   private _route: Match = matchRoute(location.pathname);
   private _health: HealthSnapshot | null = null;
+  /** The narrow-screen menu. Closed on every navigation. */
+  private _menuOpen = false;
+  /** Which groups the narrow-screen menu shows expanded: the reader's own group, to begin with. */
+  private _openGroups: ReadonlySet<NavGroupId> = new Set();
   /** The header's own poll: stops with the tab, cancels what it supersedes. */
   private readonly _poll = new PollController(this, {
     intervalMs: HEALTH_REFRESH_MS,
@@ -51,6 +65,11 @@ export class DdShell extends LitElement {
     const before = this._pageIdentity();
     this._route = matchRoute(location.pathname);
     document.title = `devnet.deftrack — ${this._route.route.label}`;
+    // A menu left open over the page that was just chosen from it hides that
+    // page; and the group to show expanded next time is the one now current.
+    this._menuOpen = false;
+    const where = navLocation(this._route);
+    this._openGroups = new Set(where.group ? [where.group.id] : []);
     this.scrollIntoView();
     /*
      * Focus moves only when the page actually changed.
@@ -193,7 +212,11 @@ export class DdShell extends LitElement {
         flex-wrap: wrap;
         /* Hard right, on the same row as the warning, and still right when the
            row is too narrow to hold both and the counters wrap below it. */
-        flex: 0 0 auto;
+        /* Allowed to shrink, so the chips wrap inside it. It was 0 0 auto --
+           never narrower than all five chips in a row -- and on a phone that
+           made the whole document 152 px wider than the screen. */
+        flex: 0 1 auto;
+        min-width: 0;
         margin-left: auto;
       }
       .monitor > span {
@@ -279,7 +302,16 @@ export class DdShell extends LitElement {
         gap: var(--sp-3) var(--sp-5);
         padding: var(--sp-4) 0 var(--sp-3);
       }
+      /* Allowed below its content's width. The loading skeleton in here is 520
+         px wide, and a flex item may only shrink past its content once its
+         container can: without this the loading header alone made a phone's
+         page 176 px wider than the screen. */
+      .telemetry {
+        min-width: 0;
+      }
       .brand {
+        color: var(--ink);
+        text-decoration: none;
         font-family: var(--font-mono);
         font-size: var(--fs-xl);
         font-weight: 700;
@@ -320,48 +352,155 @@ export class DdShell extends LitElement {
       .telemetry .dimb { color: var(--ink-2); font-weight: 600; }
       .telemetry .lag b { color: var(--warn); }
 
-      /* Row three: the sections. Sticky, so the way around is never scrolled
-         out of reach; tabs with room to hit. */
+      /*
+       * Row three: the sections, in four groups. Sticky, so the way around is
+       * never scrolled out of reach.
+       *
+       * Wide: the groups in one row, and the current group's pages in a second
+       * row under it -- so the group and the page are both lit at once, and a
+       * page's siblings are one click away. Narrow: one Menu button, which says
+       * where the reader is, over a list of groups that open and close.
+       *
+       * Fourteen equal tabs used to wrap into two rows on a desktop and scroll
+       * sideways below 1100 px, with most of them past the edge.
+       */
       nav {
         position: sticky;
         top: 0;
         z-index: 5;
-        display: flex;
-        gap: 2px;
-        flex-wrap: wrap;
         background: var(--bg);
         border-bottom: 1px solid var(--line);
         margin-bottom: var(--sp-5);
       }
+      nav ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .groups,
+      .pages {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+      }
+      .pages {
+        border-top: 1px solid var(--line-soft);
+      }
       nav a {
+        display: block;
         font-family: var(--font-mono);
-        font-size: var(--fs-sm);
         font-weight: 600;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--ink-3);
-        padding: 13px 16px;
         border-bottom: 2px solid transparent;
-        margin-bottom: -1px;
         text-decoration: none;
         white-space: nowrap;
         transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), border-color var(--t-base) var(--ease);
+      }
+      .groups a {
+        font-size: var(--fs-sm);
+        padding: 13px 16px 11px;
+      }
+      .pages a {
+        font-size: var(--fs-xs);
+        padding: 10px 12px 8px;
       }
       nav a:hover {
         color: var(--ink);
         background: var(--surface-2);
         text-decoration: none;
       }
-      nav a[aria-current='page'] {
+      /* "page" is this page; "true" is the section a detail page sits in, and
+         the group of either. Both are where the reader is, so both are lit. */
+      nav a[aria-current] {
         color: var(--accent);
         border-bottom-color: var(--accent);
       }
-      @media (max-width: 1100px) {
-        nav {
-          flex-wrap: nowrap;
-          overflow-x: auto;
-          scrollbar-width: thin;
+      .nav-narrow {
+        display: none;
+      }
+      @media (max-width: 959px) {
+        .nav-wide {
+          display: none;
         }
+        .nav-narrow {
+          display: block;
+        }
+      }
+      .menu-toggle,
+      .group-toggle {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-3);
+        width: 100%;
+        min-height: 44px;
+        padding: 0 var(--sp-3);
+        background: none;
+        border: none;
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        text-align: left;
+        cursor: pointer;
+      }
+      .menu-toggle .where {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--accent);
+        font-weight: 600;
+        text-transform: none;
+        letter-spacing: 0.02em;
+      }
+      .caret {
+        margin-left: auto;
+        flex: none;
+        transition: transform var(--t-fast) var(--ease);
+      }
+      [aria-expanded='true'] > .caret {
+        transform: rotate(180deg);
+      }
+      .menu {
+        border-top: 1px solid var(--line-soft);
+        /* A long menu on a short screen scrolls inside itself; the page under
+           it stays where the reader left it. */
+        max-height: calc(100dvh - 60px);
+        overflow-y: auto;
+        padding-bottom: var(--sp-2);
+      }
+      .menu .group-toggle {
+        font-size: var(--fs-xs);
+        color: var(--ink-2);
+      }
+      .menu .group-toggle.current {
+        color: var(--accent);
+      }
+      .menu a {
+        font-size: var(--fs-sm);
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 var(--sp-3) 0 var(--sp-5);
+        border-bottom: none;
+        border-left: 2px solid transparent;
+        text-transform: none;
+        letter-spacing: 0.02em;
+      }
+      .menu > ul > li > a {
+        padding-left: var(--sp-3);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: var(--fs-xs);
+        font-weight: 700;
+      }
+      .menu a[aria-current] {
+        border-left-color: var(--accent);
+        background: var(--accent-wash);
       }
 
       main > * {
@@ -443,7 +582,7 @@ export class DdShell extends LitElement {
       </div>
 
       <header class="site">
-        <div class="brand">devnet<span class="dim">.deftrack</span></div>
+        <a class="brand" href="/">devnet<span class="dim">.deftrack</span></a>
         ${h
           ? this._telemetry(h)
           : fresh.state === 'unavailable'
@@ -453,18 +592,138 @@ export class DdShell extends LitElement {
               ></div>`}
       </header>
 
-      <nav aria-label="Sections">
-        ${ROUTES.filter((r) => !r.hidden).map(
-          (r) => html`
-            <a href=${r.path} aria-current=${r.path === this._route.route.path ? 'page' : nothing}>
-              ${r.label}
-            </a>
-          `
-        )}
-      </nav>
+      ${this._nav()}
 
       <main id="content" tabindex="-1">${this._page()}</main>
     `;
+  }
+
+  /**
+   * The grouped menu, in its two forms. Both are rendered and the stylesheet
+   * shows one: a hidden form is `display: none`, which takes it out of the
+   * accessibility tree and the tab order as well as off the screen, so a reader
+   * never meets the same link twice.
+   */
+  private _nav(): TemplateResult {
+    const where = navLocation(this._route);
+    return html`
+      <nav aria-label="Sections" @keydown=${this._onNavKey}>
+        <div class="nav-wide">${this._wideNav(where)}</div>
+        <div class="nav-narrow">${this._narrowNav(where)}</div>
+      </nav>
+    `;
+  }
+
+  private _wideNav(where: NavLocation): TemplateResult {
+    const current = where.group;
+    return html`
+      <ul class="groups">
+        ${NAV_GROUPS.map((group) => {
+          const first = group.routes[0];
+          if (!first) return nothing;
+          const here = current?.id === group.id;
+          // The overview is a group of one, so its group link IS the page link.
+          const mark = here ? (group.routes.length === 1 && where.exact ? 'page' : 'true') : nothing;
+          return html`<li><a href=${first.path} aria-current=${mark}>${group.label}</a></li>`;
+        })}
+      </ul>
+      ${current && current.routes.length > 1
+        ? html`<ul class="pages" aria-label="${current.label} pages">
+            ${current.routes.map((route) => html`<li>${this._entryLink(route, where)}</li>`)}
+          </ul>`
+        : nothing}
+    `;
+  }
+
+  private _narrowNav(where: NavLocation): TemplateResult {
+    const here = where.entry
+      ? where.group && where.group.routes.length > 1
+        ? `${where.group.label} › ${where.entry.label}`
+        : where.entry.label
+      : '';
+    return html`
+      <button
+        class="menu-toggle"
+        type="button"
+        aria-expanded=${this._menuOpen ? 'true' : 'false'}
+        aria-controls="nav-menu"
+        @click=${this._toggleMenu}
+      >
+        <span>Menu</span>
+        ${here ? html`<span class="where">${here}</span>` : nothing}
+        <span class="caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="menu" id="nav-menu" ?hidden=${!this._menuOpen} @click=${this._onMenuClick}>
+        <ul>
+          ${NAV_GROUPS.map((group) => {
+            const only = group.routes.length === 1 ? group.routes[0] : undefined;
+            if (only) return html`<li>${this._entryLink(only, where)}</li>`;
+            const open = this._openGroups.has(group.id);
+            const id = `nav-group-${group.id}`;
+            return html`<li>
+              <button
+                class="group-toggle ${where.group?.id === group.id ? 'current' : ''}"
+                type="button"
+                aria-expanded=${open ? 'true' : 'false'}
+                aria-controls=${id}
+                @click=${() => this._toggleGroup(group.id)}
+              >
+                ${group.label}<span class="caret" aria-hidden="true">▾</span>
+              </button>
+              <ul id=${id} ?hidden=${!open}>
+                ${group.routes.map((route) => html`<li>${this._entryLink(route, where)}</li>`)}
+              </ul>
+            </li>`;
+          })}
+        </ul>
+      </div>
+    `;
+  }
+
+  private _entryLink(route: { path: string; label: string }, where: NavLocation): TemplateResult {
+    const mark = where.entry?.path === route.path ? (where.exact ? 'page' : 'true') : nothing;
+    return html`<a href=${route.path} aria-current=${mark}>${route.label}</a>`;
+  }
+
+  private _toggleMenu = (): void => {
+    this._menuOpen = !this._menuOpen;
+  };
+
+  private _toggleGroup(id: NavGroupId): void {
+    const next = new Set(this._openGroups);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this._openGroups = next;
+  }
+
+  /**
+   * A link in the menu closes the menu. A navigation does that on its own, but
+   * following the link to the page already on screen is not a navigation --
+   * the router ignores it -- and the menu would stay open over the page, with
+   * the focus on a link about to be hidden. So the focus goes back to the
+   * button that opened it.
+   */
+  private _onMenuClick = (event: Event): void => {
+    const anchor = event
+      .composedPath()
+      .find((el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement);
+    if (!anchor) return;
+    const samePage = new URL(anchor.href).pathname === location.pathname;
+    this._menuOpen = false;
+    if (samePage) void this._focusMenuToggle();
+  };
+
+  /** Escape closes the menu and hands the focus back to its button. */
+  private _onNavKey = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this._menuOpen) return;
+    event.preventDefault();
+    this._menuOpen = false;
+    void this._focusMenuToggle();
+  };
+
+  private async _focusMenuToggle(): Promise<void> {
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>('.menu-toggle')?.focus();
   }
 
   /**

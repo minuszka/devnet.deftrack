@@ -3,6 +3,7 @@ import type { DslEpochRow, DslSummary } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
@@ -43,6 +44,8 @@ function epochFill(row: DslEpochRow): string {
  * next to the health ratio -- either number alone flatters the network.
  */
 export class DdPageDsl extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = { _s: { state: true }, _epochs: { state: true }, _error: { state: true } };
 
   private _s: DslSummary | null = null;

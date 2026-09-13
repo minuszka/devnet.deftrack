@@ -4,6 +4,7 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 25;
@@ -43,6 +44,8 @@ const tagStyles = css`
 `;
 
 export class DdPageBlocks extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _rows: { state: true },
     _total: { state: true },
@@ -184,6 +187,8 @@ export class DdPageBlocks extends LitElement {
 customElements.define('dd-page-blocks', DdPageBlocks);
 
 export class DdPageBlock extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = { param: {}, _block: { state: true }, _error: { state: true } };
   param: string | null = null;
   private _block: BlockDetail | null = null;
