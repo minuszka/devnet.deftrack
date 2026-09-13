@@ -88,8 +88,15 @@ test.describe('run status', () => {
     await page.getByRole('button', { name: 'Abort & recover' }).click();
     await expect(page.locator(STATUS)).toContainText('aborting');
 
-    // Several ticks of the stale answer later, the abort still stands.
+    // Several ticks of the stale answer later -- READ, not merely sent -- the
+    // abort still stands. This used to assert straight after moving the clock,
+    // so it held only because the stale poll happened to be processed first:
+    // measured on 2026-09-13 it did catch a broken revision rule 3 times out of
+    // 3, but by timing, not by construction (re-review, test debt).
+    const polls = `/api/v1/admin/simulations/runs/${RUN_A}`;
+    const before = await app.readCount(polls);
     await page.clock.fastForward(20_000);
+    await app.waitUntilRead(polls, before + 1);
     await expect(page.locator(STATUS)).toContainText('aborting');
   });
 
