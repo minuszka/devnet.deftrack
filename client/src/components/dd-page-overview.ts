@@ -13,6 +13,7 @@ import { classifyNetwork, type NetworkStatus } from '../lib/networkState.js';
 import { primaryProfile, type PrimaryProfile } from '../lib/primaryProfile.js';
 import { roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 import './dd-health-chart.js';
@@ -21,6 +22,8 @@ const REFRESH_MS = 30_000;
 const RECENT = 10;
 
 export class DdPageOverview extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _timeline: { state: true },
     _rounds: { state: true },
@@ -30,6 +33,7 @@ export class DdPageOverview extends LitElement {
     _clocks: { state: true },
     _profile: { state: true },
     _running: { state: true },
+    _runningRead: { state: true },
     _error: { state: true },
     _loading: { state: true },
     _copied: { state: true },
@@ -44,6 +48,17 @@ export class DdPageOverview extends LitElement {
   /** Which profile every figure on this page is about, or why that is unknown. */
   private _profile: PrimaryProfile = { known: false, reason: 'no-signers' };
   private _running: ExperimentRow[] = [];
+  /**
+   * Whether the running-experiment list was actually read.
+   *
+   * A failure used to hide the line -- and a hidden line is also what the page
+   * showed when nothing was running, so "no experiment" and "could not ask"
+   * looked the same. Every figure on this page is read under whatever run is
+   * open, so which of the two it is belongs at the top, in words.
+   */
+  private _runningRead: { kind: 'unknown' } | { kind: 'read' } | { kind: 'unreadable'; message: string } = {
+    kind: 'unknown',
+  };
   private _error = '';
   private _loading = true;
   private _copied: string | null = null;
@@ -249,6 +264,16 @@ export class DdPageOverview extends LitElement {
       .strip.live .line {
         font-size: var(--fs-base);
       }
+      /* Nothing running is a fact worth a line, not a highlight. Could-not-read
+         is amber, because the reader cannot tell what the figures are under. */
+      .strip.quiet {
+        border-left-color: var(--line-strong);
+        color: var(--ink-2);
+      }
+      .strip.unread {
+        color: var(--ink-2);
+        overflow-wrap: anywhere;
+      }
       /* A run that is open right now is an intervention in progress: every
          figure below is being measured under it, so it reads as a live task,
          with the gear turning for as long as the run is open. */
@@ -280,6 +305,7 @@ export class DdPageOverview extends LitElement {
         font-size: var(--fs-base);
         font-weight: 600;
         line-height: 1.35;
+        overflow-wrap: anywhere;
       }
       .chips {
         display: flex;
@@ -296,6 +322,13 @@ export class DdPageOverview extends LitElement {
         background: var(--bg-raised);
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
+      }
+      /* The run key is the one chip with no spaces and no fixed length; it
+         breaks anywhere rather than widening the page. */
+      .chip.mono {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        min-width: 0;
       }
 
       .more {
@@ -444,8 +477,11 @@ export class DdPageOverview extends LitElement {
         run.api.healthTimeline(24 * 7, llmqName),
         run.api.rounds({ limit: RECENT, llmqName }),
         run.api.masternodeTimeline(1).catch(() => ({ hours: 1, points: [] })),
-        // Only for the running-experiment line; a failure hides the line.
-        run.api.experiments({ status: 'running', limit: 5 }).catch(() => null),
+        // Only for the running-experiment line; a failure is said on that line
+        // rather than failing the page.
+        run.api
+          .experiments({ status: 'running', limit: 5 })
+          .catch((error: unknown) => ({ unreadable: errorMessage(error) })),
       ]);
       if (run.stale) return;
       this._timeline = profile.known ? timeline : null;
@@ -454,7 +490,13 @@ export class DdPageOverview extends LitElement {
       this._mn = mn.points.at(-1) ?? null;
       this._health = health;
       this._clocks = clocks;
-      this._running = running?.items ?? [];
+      if ('unreadable' in running) {
+        this._running = [];
+        this._runningRead = { kind: 'unreadable', message: running.unreadable };
+      } else {
+        this._running = running.items;
+        this._runningRead = { kind: 'read' };
+      }
       this._error = '';
       this._freshness.succeeded(Date.now());
     } catch (error) {
@@ -539,7 +581,7 @@ export class DdPageOverview extends LitElement {
 
         ${this._error ? html`<div class="err" role="alert">${this._error}</div>` : nothing}
         ${this._loading && !s ? this._skeleton() : nothing}
-        ${s || this._clocks || this._running.length > 0
+        ${s || this._clocks || this._runningRead.kind !== 'unknown'
           ? html`<div class="summary">
               ${s ? this._alert(status) : nothing} ${this._q60Banner()} ${this._experimentBanner()}
             </div>`
@@ -614,7 +656,21 @@ export class DdPageOverview extends LitElement {
    * has nothing to announce here.
    */
   private _experimentBanner(): TemplateResult | typeof nothing {
-    if (this._running.length === 0) return nothing;
+    if (this._running.length === 0) {
+      if (this._runningRead.kind === 'read') {
+        return html`<section class="strip quiet" role="status">
+          <span class="tag">Experiments</span>
+          <span>No experiment is running.</span>
+        </section>`;
+      }
+      if (this._runningRead.kind === 'unreadable') {
+        return html`<section class="strip unread" role="status">
+          <span class="tag">Experiments</span>
+          <span>Whether an experiment is running could not be read: ${this._runningRead.message}</span>
+        </section>`;
+      }
+      return nothing;
+    }
     return html`${this._running.map(
       (r) => html`<section class="strip task" role="status">
         <span class="tag">

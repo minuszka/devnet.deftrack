@@ -3,6 +3,7 @@ import type { BanWaveReport, MasternodeEventRow, MasternodeTimelinePoint } from 
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 import './dd-mn-chart.js';
@@ -17,6 +18,8 @@ const REFRESH_MS = 30_000;
  * once it has landed -- so penalty count leads, and the ban count follows.
  */
 export class DdPagePose extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _points: { state: true },
     _waves: { state: true },

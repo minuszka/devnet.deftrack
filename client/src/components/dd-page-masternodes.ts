@@ -3,12 +3,15 @@ import type { MasternodeRow, MasternodeVersions } from '@devnet-deftrack/shared'
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { ago, num } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
 const REFRESH_MS = 30_000;
 
 export class DdPageMasternodes extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _rows: { state: true },
     _total: { state: true },

@@ -4,6 +4,7 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 25;
@@ -43,6 +44,8 @@ const tagStyles = css`
 `;
 
 export class DdPageBlocks extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _rows: { state: true },
     _total: { state: true },
@@ -184,6 +187,8 @@ export class DdPageBlocks extends LitElement {
 customElements.define('dd-page-blocks', DdPageBlocks);
 
 export class DdPageBlock extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = { param: {}, _block: { state: true }, _error: { state: true } };
   param: string | null = null;
   private _block: BlockDetail | null = null;
@@ -245,18 +250,34 @@ export class DdPageBlock extends LitElement {
   }
 
   override render(): TemplateResult {
-    const b = this._block;
-    if (this._error) return html`<div class="err">${this._error}</div>`;
-    if (!b) return html`<div class="note">Loading…</div>`;
-
+    const b = this._error ? null : this._block;
+    /*
+     * One heading, in one template, whatever state the page is in.
+     *
+     * While loading, and after a failed load, this page rendered no heading at
+     * all -- only a "Loading…" note or the error -- so it had no h1, and the
+     * shell's focus move after a navigation found nothing to land on. The
+     * heading has to be the SAME element across states, too: a loading
+     * heading in a template of its own would be replaced when the data
+     * arrived, and the focus would fall off it onto the body.
+     */
     return html`
       <div class="page-head">
         <div>
-          <h1 class="page-title" tabindex="-1">Block ${num(b.height)}</h1>
-          <div class="page-sub mono">${b.hash}</div>
+          <h1 class="page-title" tabindex="-1">${b ? `Block ${num(b.height)}` : 'Block'}</h1>
+          ${b ? html`<div class="page-sub mono">${b.hash}</div>` : nothing}
         </div>
       </div>
+      ${this._error
+        ? html`<div class="err">${this._error}</div>`
+        : b
+          ? this._detail(b)
+          : html`<div class="note">Loading…</div>`}
+    `;
+  }
 
+  private _detail(b: BlockDetail): TemplateResult {
+    return html`
       <section class="card">
         <div class="card-head"><h2 class="card-title">Header</h2></div>
         <dl>

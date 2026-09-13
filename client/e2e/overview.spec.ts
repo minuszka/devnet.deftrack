@@ -1,5 +1,5 @@
 import { expect, fail, ok, test } from './harness.js';
-import { healthTimeline, V2_PROFILE } from './fixtures/api.js';
+import { experimentRow, healthTimeline, pageOf, V2_PROFILE } from './fixtures/api.js';
 import { overviewStubs } from './fixtures/stubs.js';
 
 test.describe('public overview', () => {
@@ -69,5 +69,55 @@ test.describe('public overview', () => {
     await expect(page.locator('.note[role="status"]')).toContainText(
       'signing profile could not be determined'
     );
+  });
+
+  /*
+   * Day 18: the top of the front page says whether an experiment is running --
+   * all three answers, in words. A failure to read the list used to hide the
+   * line, and a hidden line was also what "nothing running" looked like.
+   */
+  test.describe('the experiment line at the top', () => {
+    async function aboveTheTiles(page: import('@playwright/test').Page, line: import('@playwright/test').Locator): Promise<void> {
+      const lineBox = await line.boundingBox();
+      const tilesBox = await page.locator('dd-page-overview .tiles').first().boundingBox();
+      expect(lineBox && tilesBox && lineBox.y < tilesBox.y).toBe(true);
+    }
+
+    test('says when no experiment is running, rather than saying nothing', async ({ app, page }) => {
+      app.stub(overviewStubs());
+      await app.goto('/');
+      const line = page.locator('dd-page-overview .strip').filter({ hasText: 'Experiments' });
+      await expect(line).toContainText('No experiment is running.');
+      await aboveTheTiles(page, line);
+    });
+
+    test('keeps "could not ask" apart from "nothing is running"', async ({ app, page }) => {
+      app.stub({
+        ...overviewStubs(),
+        '/api/v1/experiments': { status: 503, body: fail('experiment index unavailable') },
+      });
+      await app.goto('/');
+      const line = page.locator('dd-page-overview .strip').filter({ hasText: 'Experiments' });
+      await expect(line).toContainText('could not be read');
+      await expect(line).toContainText('experiment index unavailable');
+      await expect(line).not.toContainText('No experiment is running');
+      // One unreadable list is not a broken page: the rest still renders.
+      await expect(page.locator('dd-page-overview .err')).toHaveCount(0);
+      await aboveTheTiles(page, line);
+    });
+
+    test('names a running experiment', async ({ app, page }) => {
+      app.stub({
+        ...overviewStubs(),
+        '/api/v1/experiments': {
+          body: ok(pageOf([experimentRow({ runKey: 'fixture-run-0002', title: 'Fixture outage run', status: 'running', endedAt: null, endHeight: null })])),
+        },
+      });
+      await app.goto('/');
+      const line = page.locator('dd-page-overview .strip.task');
+      await expect(line).toContainText('Fixture outage run');
+      await expect(page.getByText('No experiment is running.')).toHaveCount(0);
+      await aboveTheTiles(page, line);
+    });
   });
 });

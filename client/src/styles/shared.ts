@@ -25,6 +25,11 @@ export const baseStyles = css`
     border-radius: var(--radius-md);
     font-family: var(--font-mono);
     font-size: var(--fs-sm);
+    /* An error message quotes what failed -- a path, a hash, an upstream
+       message -- and none of those contain a space to break at. Without this
+       one such token pushed every page on a phone 587 px wider than the screen,
+       measured, and the reader had to scroll sideways to read the error. */
+    overflow-wrap: anywhere;
   }
   .note {
     padding: var(--sp-3) var(--sp-4);
@@ -33,6 +38,7 @@ export const baseStyles = css`
     color: var(--ink-2);
     border-radius: var(--radius-md);
     font-size: var(--fs-sm);
+    overflow-wrap: anywhere;
   }
 
   :host {
@@ -252,7 +258,53 @@ export const cardStyles = css`
 
 /** Data table chrome. */
 export const tableStyles = css`
-  .twrap { overflow-x: auto; }
+  .twrap { overflow-x: auto; --hint-h: 26px; }
+  /*
+   * Say that a table scrolls sideways, and which way there is more.
+   *
+   * The attributes come from TableScrollController, which measures; nothing
+   * here guesses from the viewport. The table itself is never restyled into
+   * something else on a small screen -- a row stays a row and a column stays a
+   * column, which is the only way a value can still be read against its header.
+   *
+   * The hint is a line of its own, pinned to the left edge while the table
+   * scrolls under it. The fade is a mask on the wrapper, so it stays at the
+   * wrapper's edge instead of travelling with the content; its first layer
+   * keeps the hint line itself out of the fade.
+   */
+  .twrap[data-scrollable]::before {
+    content: 'Scroll sideways for more columns ↔';
+    position: sticky;
+    left: 0;
+    display: block;
+    height: var(--hint-h);
+    line-height: var(--hint-h);
+    padding: 0 var(--sp-4);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  .twrap[data-more-end],
+  .twrap[data-more-start] {
+    --fade: 40px;
+    -webkit-mask-image: linear-gradient(#000, #000), var(--fade-mask);
+    mask-image: linear-gradient(#000, #000), var(--fade-mask);
+    -webkit-mask-size: 100% var(--hint-h), 100% 100%;
+    mask-size: 100% var(--hint-h), 100% 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+  .twrap[data-more-end] {
+    --fade-mask: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent);
+  }
+  .twrap[data-more-start] {
+    --fade-mask: linear-gradient(to left, #000 calc(100% - var(--fade)), transparent);
+  }
+  .twrap[data-more-start][data-more-end] {
+    --fade-mask: linear-gradient(to right, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+  }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -315,7 +367,9 @@ export const pageStyles = css`
     line-height: 1.2;
   }
   h1 .dim { color: var(--ink-3); font-weight: 400; }
-  .page-sub { color: var(--ink-2); font-size: var(--fs-sm); margin-top: var(--sp-1); }
+  /* A subtitle is where a detail page prints its hash in full: 64 characters
+     with nowhere to break, which is wider than a phone. */
+  .page-sub { color: var(--ink-2); font-size: var(--fs-sm); margin-top: var(--sp-1); overflow-wrap: anywhere; }
   .grid { display: grid; gap: var(--sp-4); }
 
   /* Stat tiles read as a row of figures to compare, not as a stack of cards to

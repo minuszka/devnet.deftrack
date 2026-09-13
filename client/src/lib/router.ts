@@ -6,6 +6,9 @@
  * would cost more than it saves.
  */
 
+/** The four menu groups. Fixed by the plan; a path never moves because of them. */
+export type NavGroupId = 'overview' | 'network' | 'blockchain' | 'experiments';
+
 export interface Route {
   path: string;
   tag: string;
@@ -15,6 +18,17 @@ export interface Route {
   /** One `:name` segment, matched against the path. */
   pattern?: RegExp;
   key?: string;
+  /** Which menu group a menu entry sits in. Every visible route has one. */
+  group?: NavGroupId;
+  /**
+   * For a detail route: the path of the menu entry it belongs under.
+   *
+   * Without it a single round, block or transaction lit nothing in the menu,
+   * while a single experiment happened to light Experiments only because the
+   * two share a path -- so whether the reader could see where they were depended
+   * on an accident of naming.
+   */
+  section?: string;
 }
 
 /**
@@ -72,20 +86,20 @@ function decodeParam(raw: string): string | null {
 }
 
 export const ROUTES: Route[] = [
-  { path: '/', tag: 'dd-page-overview', label: 'Overview' },
-  { path: '/rounds', tag: 'dd-page-rounds', label: 'DKG Rounds' },
-  { path: '/pose', tag: 'dd-page-pose', label: 'PoSe Watch' },
-  { path: '/masternodes', tag: 'dd-page-masternodes', label: 'Masternodes' },
-  { path: '/chainlocks', tag: 'dd-page-chainlocks', label: 'ChainLocks' },
-  { path: '/dsl', tag: 'dd-page-dsl', label: 'Sentinel Layer' },
-  { path: '/staking', tag: 'dd-page-staking', label: 'Staking' },
-  { path: '/peers', tag: 'dd-page-peers', label: 'Vantage Points' },
-  { path: '/experiments', tag: 'dd-page-experiments', label: 'Experiments' },
-  { path: '/simulations', tag: 'dd-page-simulations', label: 'Simulations' },
-  { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks' },
-  { path: '/txs', tag: 'dd-page-txs', label: 'Transactions' },
-  { path: '/operators', tag: 'dd-page-operators', label: 'Operators' },
-  { path: '/fairness', tag: 'dd-page-fairness', label: 'Fairness' },
+  { path: '/', tag: 'dd-page-overview', label: 'Overview', group: 'overview' },
+  { path: '/rounds', tag: 'dd-page-rounds', label: 'DKG Rounds', group: 'network' },
+  { path: '/pose', tag: 'dd-page-pose', label: 'PoSe Watch', group: 'network' },
+  { path: '/masternodes', tag: 'dd-page-masternodes', label: 'Masternodes', group: 'network' },
+  { path: '/chainlocks', tag: 'dd-page-chainlocks', label: 'ChainLocks', group: 'network' },
+  { path: '/dsl', tag: 'dd-page-dsl', label: 'Sentinel Layer', group: 'network' },
+  { path: '/staking', tag: 'dd-page-staking', label: 'Staking', group: 'network' },
+  { path: '/peers', tag: 'dd-page-peers', label: 'Vantage Points', group: 'network' },
+  { path: '/experiments', tag: 'dd-page-experiments', label: 'Experiments', group: 'experiments' },
+  { path: '/simulations', tag: 'dd-page-simulations', label: 'Simulations', group: 'experiments' },
+  { path: '/blocks', tag: 'dd-page-blocks', label: 'Blocks', group: 'blockchain' },
+  { path: '/txs', tag: 'dd-page-txs', label: 'Transactions', group: 'blockchain' },
+  { path: '/operators', tag: 'dd-page-operators', label: 'Operators', group: 'network' },
+  { path: '/fairness', tag: 'dd-page-fairness', label: 'Fairness', group: 'network' },
   {
     path: '/experiments',
     tag: 'dd-page-experiments',
@@ -93,6 +107,7 @@ export const ROUTES: Route[] = [
     hidden: true,
     pattern: /^\/experiments\/([^/]+)$/,
     key: 'runKey',
+    section: '/experiments',
   },
   {
     /**
@@ -106,6 +121,7 @@ export const ROUTES: Route[] = [
     hidden: true,
     pattern: /^\/simulations\/([^/]+)$/,
     key: 'runKey',
+    section: '/simulations',
   },
   {
     /**
@@ -119,6 +135,7 @@ export const ROUTES: Route[] = [
     hidden: true,
     pattern: /^\/round\/(.+)$/,
     key: 'id',
+    section: '/rounds',
   },
   {
     path: '/block',
@@ -127,6 +144,7 @@ export const ROUTES: Route[] = [
     hidden: true,
     pattern: /^\/block\/([^/]+)$/,
     key: 'id',
+    section: '/blocks',
   },
   {
     path: '/tx',
@@ -135,8 +153,64 @@ export const ROUTES: Route[] = [
     hidden: true,
     pattern: /^\/tx\/([^/]+)$/,
     key: 'txid',
+    section: '/txs',
   },
 ];
+
+export interface NavGroup {
+  id: NavGroupId;
+  label: string;
+  /** The group's menu entries, in the order the menu shows them. */
+  routes: Route[];
+}
+
+const GROUP_LABELS: ReadonlyArray<[NavGroupId, string]> = [
+  ['overview', 'Overview'],
+  ['network', 'Network'],
+  ['blockchain', 'Blockchain'],
+  ['experiments', 'Experiments'],
+];
+
+/**
+ * The menu, grouped.
+ *
+ * Built from ROUTES rather than written out a second time, so a section added
+ * there cannot be forgotten here: a visible route with no group would simply
+ * never be reachable from the menu, and the unit test fails on exactly that.
+ */
+export const NAV_GROUPS: NavGroup[] = GROUP_LABELS.map(([id, label]) => ({
+  id,
+  label,
+  routes: ROUTES.filter((route) => !route.hidden && route.group === id),
+}));
+
+/** Where a match sits in the menu. */
+export interface NavLocation {
+  group: NavGroup | null;
+  /** The menu entry to light. */
+  entry: Route | null;
+  /**
+   * True on the entry's own page, false on a detail page under it -- the
+   * difference between `aria-current="page"` and "you are inside this".
+   */
+  exact: boolean;
+}
+
+export function navLocation(match: Match): NavLocation {
+  const none: NavLocation = { group: null, entry: null, exact: false };
+  // A page that could not be found is not inside any section, and lighting one
+  // would say it was.
+  if (match.status !== 'matched') return none;
+  const route = match.route;
+  const exact = !route.hidden;
+  const entryPath = exact ? route.path : route.section;
+  if (entryPath === undefined) return none;
+  for (const group of NAV_GROUPS) {
+    const entry = group.routes.find((candidate) => candidate.path === entryPath);
+    if (entry) return { group, entry, exact };
+  }
+  return none;
+}
 
 export function matchRoute(pathname: string): Match {
   const clean = pathname.replace(/\/+$/, '') || '/';

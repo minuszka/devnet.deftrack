@@ -6,6 +6,7 @@ import { PollController, type PollRun } from '../lib/poll.js';
 import { groupByOperator } from '../lib/roundMembers.js';
 import { roundSentence, roundVerdict } from '../lib/roundVerdict.js';
 import { roundHref } from '../lib/router.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
@@ -22,6 +23,8 @@ const REFRESH_MS = 60_000;
  * and an aggregate the reader cannot open is not attribution.
  */
 export class DdPageRound extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     param: {},
     _round: { state: true },
@@ -154,29 +157,39 @@ export class DdPageRound extends LitElement {
   }
 
   override render(): TemplateResult {
-    if (this._error) {
-      return html`
-        <div class="page-head"><h1 class="page-title" tabindex="-1">Round</h1></div>
-        <div class="err">${this._error}</div>
-        <p class="back"><a href="/rounds">&larr; All rounds</a></p>
-      `;
-    }
-
-    const r = this._round;
-    if (!r) return html`<div class="note">${this._loading ? 'Loading…' : 'No such round.'}</div>`;
-
-    const verdict = roundVerdict({ status: r.status, punishedCount: r.punishedCount });
-
+    const r = this._error ? null : this._round;
+    const verdict = r ? roundVerdict({ status: r.status, punishedCount: r.punishedCount }) : null;
+    /*
+     * One heading, in one template, whatever state the page is in.
+     *
+     * While loading, and when the round was not found, this page rendered no heading at
+     * all -- only a "Loading…" note or the error -- so it had no h1, and the
+     * shell's focus move after a navigation found nothing to land on. The
+     * heading has to be the SAME element across states, too: a loading
+     * heading in a template of its own would be replaced when the data
+     * arrived, and the focus would fall off it onto the body.
+     */
     return html`
       <div class="page-head">
         <div>
           <h1 class="page-title" tabindex="-1">
-            Round ${num(r.expectedHeight)} <span class="dim">${r.llmqName}</span>${this._devnetTag(r)}
+            ${r ? html`Round ${num(r.expectedHeight)} <span class="dim">${r.llmqName}</span>${this._devnetTag(r)}` : 'Round'}
           </h1>
-          <div class="page-sub mono">${r.roundKey}</div>
+          ${r ? html`<div class="page-sub mono">${r.roundKey}</div>` : nothing}
         </div>
-        <span class="pill ${verdict.tone}">${verdict.label}</span>
+        ${verdict ? html`<span class="pill ${verdict.tone}">${verdict.label}</span>` : nothing}
       </div>
+      ${this._error
+        ? html`<div class="err">${this._error}</div>
+            <p class="back"><a href="/rounds">&larr; All rounds</a></p>`
+        : r && verdict
+          ? this._detail(r, verdict)
+          : html`<div class="note">${this._loading ? 'Loading…' : 'No such round.'}</div>`}
+    `;
+  }
+
+  private _detail(r: QuorumRoundDetail, verdict: ReturnType<typeof roundVerdict>): TemplateResult {
+    return html`
 
       <p class="verdict ${verdict.incident ? 'incident' : 'quiet'}">
         ${roundSentence({

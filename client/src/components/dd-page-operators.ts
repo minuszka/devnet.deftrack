@@ -3,11 +3,14 @@ import type { OperatorReliabilityRow } from '@devnet-deftrack/shared';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { num, ratio } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
 const REFRESH_MS = 60_000;
 
 export class DdPageOperators extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _rows: { state: true },
     _rounds: { state: true },

@@ -2044,6 +2044,222 @@ Napi státusz: ELLENŐRZÖTT
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## 18. nap – Navigáció és mobil
+
+```text
+Nap / dátum / implementáló: 18 / 2026-09-13 / Claude Opus 5 (1M)
+Kiinduló branch és SHA: web/day18-navigation-mobile @ 6d9c603 (main, a 17. nap után)
+Napi feladat és előfeltételei: csoportos navigáció, mobilnézet, vízszintes görgetés
+  megszüntetése, táblázatok jelzett görgetése, főoldal felső része.
+  Előfeltétel: nincs — a 12. napi fókusz- és skip link-viselkedés megvan, megtartandó.
+Auditpontok: nincs önálló F-pont; az audit „Navigáció" és „Mobil" javaslata
+```
+
+**Kiinduló állapot — mérve, nem becsülve.** Új böngészős mérés minden publikus
+útvonalon (a 14 menüpont, az öt részletoldal és egy nem létező oldal), a
+dokumentum saját `scrollWidth`/`clientWidth` arányán:
+
+| Állapot | 360 px | 390 px | 768 px | Ok |
+|---|---|---|---|---|
+| hiba (hosszú azonosítót idéző üzenet) | **+587 px** minden oldalon | +557 px | +180 px | a közös hibasáv nem tört |
+| betöltés | **+176 px** minden oldalon | +146 px | — | a fejléc két fix szélességű skeletonja (380 és 520 px) |
+| bármely (a számlálósor) | +152 px | +122 px | — | a számlálósor `flex: 0 0 auto`, nem tudott tördelni |
+
+A navigáció 14 egyenrangú fül volt: asztalon két sorba tört, 1100 px alatt
+oldalra görgetett. Egy kör-, blokk- vagy tranzakciórészletnél **semmi** nem
+világított a menüben (a `/round` nem egyezik a `/rounds`-szal), egy kísérlet
+részleténél csak véletlenül — mert ugyanaz a path.
+
+### A csoportos menü
+
+A terv rögzített csoportjai, változatlan pathokkal: Overview; Network (DKG Rounds,
+PoSe Watch, Masternodes, ChainLocks, Sentinel Layer, Staking, Vantage Points,
+Operators, Fairness); Blockchain (Blocks, Transactions); Experiments (Experiments,
+Simulations). A csoportosítás a `ROUTES`-ból épül, nem egy második kézzel írt
+listából; a unit teszt a terv listáját **betű szerint** írja ki, mert egy
+`ROUTES`-ból visszaolvasott elvárás bármilyen csoportosítással egyezne.
+
+- **Széles (≥ 960 px):** a csoportok egy sorban, alattuk az aktuális csoport
+  oldalai. A csoport `aria-current="true"`, az oldal `aria-current="page"` — a
+  kettő mást mond, és mindkettő látszik. A csoportlink a csoport első oldalára visz.
+- **Keskeny:** egy Menu gomb, ami kiírja, hol van az olvasó („Network › PoSe
+  Watch"), alatta kinyitható csoportok; nyitáskor az olvasó saját csoportja nyitva.
+  Linkre, Vissza gombra és Escape-re bezárul; az Escape a fókuszt a gombra adja.
+  Az épp nyitott oldal linkje nem navigáció (a router figyelmen kívül hagyja),
+  ezért ott a menü külön zárul, és a fókusz szintén a gombra kerül.
+- **Részletoldal:** a route-ok `section` metaadatot kapnak, így egy blokk a
+  Blockchain › Blocks alatt világít, `aria-current="true"`-val — nem `page`-dzsel,
+  mert a Blocks link nem a blokkra visz.
+- A két forma közül a rejtett `display: none`, tehát az akadálymentességi fából és
+  a tab-sorrendből is kiesik; egy link sosem érhető el kétszer.
+- A márkanév link lett a főoldalra.
+
+### A dokumentum nem görget oldalra
+
+Három javítás a fenti három okra: a hibasáv és a megjegyzés `overflow-wrap:
+anywhere`; a számlálósor zsugorodhat; a telemetriasor `min-width: 0`. A mérés
+ezután **két további helyet** talált hosszú azonosítónál, betöltött állapotban:
+a főoldal futó-kísérlet sávját (a futamkulcs-chip miatt **1440 px-en is +172 px**)
+és a kísérlet részletoldal kulcs–érték listáját (+996 px 360-on). Mindkettő
+tördelhető lett; a kulcs–érték lista telefonon egymás alá rendeződik, és ez is
+teszt mögött van.
+
+**A mérés négy állapotban fut** — hosszú azonosítókkal betöltve, üresen, hosszú
+tokent idéző hibával, és betöltés közben —, négy szélességen, plusz 200%-os
+nagyítás (720 CSS px, `deviceScaleFactor` 2 — emuláció: a Playwright valódi
+böngészőzoomot nem tud nyomni, de ez ugyanaz az elrendezés). A fixtúra
+szándékosan túlzó: 144 karakteres, töréspont nélküli token, teljes 64 karakteres
+hashek, hosszú operátor- és hostcímkék; a cím a dokumentációs tartományból
+(RFC 5737) való.
+
+A mérő a saját negatív kontrollját is futtatja: egy oldal shadow rootjába ültetett
+900 px-es elemet meg kell találnia és meg kell neveznie. Kétszer is kiderült, hogy
+a mérés azt mérte, amit mondott, csak az én tesztem nem: (1) a 200%-os „hiba" kör
+a stubok összefésülése miatt betöltött oldalt mért — szétválasztottam, és a mérés
+útvonalanként ellenőrzi, hogy a hibaállapot tényleg hibát rajzolt ki; (2) az üres
+fixtúrám egy olyan `signers: undefined`-ot adott, amit a szerver sosem küld —
+javítva.
+
+### Táblázatok: saját dobozukban görgetnek, és ezt ki is mondják
+
+A táblázat **valódi táblázat marad** (a teszt a számított `display: table` /
+`table-cell` értéket és az oszlop–cella darabszámot nézi 360 px-en). Egy közös Lit
+controller méri minden `.twrap`-on, hogy van-e oldalra rejtett tartalom, és ha
+van: felirat („Scroll sideways for more columns ↔"), halványuló szél azon az
+oldalon, ahol még van mit látni, `tabindex="0"` és név — hogy billentyűzettel
+elérhető és nyilakkal görgethető legyen. Ha a táblázat kifér, mindez lekerül: egy
+mindig bekapcsolt jelzés ugyanolyan haszontalan, mint egy soha be nem kapcsoló, és
+egy nem görgető dobozon a tabstop semmit nem csinál. Nem nézethatárról dönt, hanem
+mér — egy teszt minden oldal minden táblázatán 360 és 1440 px-en ellenőrzi, hogy a
+jelölés egyezik a tényleges túlfolyással, és hogy mindkét eset előfordult.
+
+Az admin felület táblázatai **nem** kapják meg: a terv szerint az `/admin` külön
+felület, és ez a nap a publikus shell.
+
+### A főoldal felső része
+
+Adatfrissesség, profil, hálózati állapot és futó kísérlet eddig is fent volt — de
+a kísérletsor **eltűnt**, ha nem futott semmi, és akkor is, ha a lista nem volt
+olvasható. A két eset most két kimondott mondat („No experiment is running." /
+„Whether an experiment is running could not be read: …"), a statisztika-csempék
+előtt. **Hosszú módszertani blokk a főoldalon nincs** (a státuszszövegek egy
+mondatosak), így nincs mit összecsukni; nem találtam ki egyet.
+
+### Hat meglévő teszt új útvonalon — nem gyengítve
+
+Négy teszt az overview-ról közvetlenül egy oldal linkjére kattintott, egy fókuszt
+tett egy ilyen linkre, egy pedig odáig tabolt. Az új menüben ezek a csoport alatt
+vannak. Mind a hat a csoportlinket használja (ami ugyanarra az oldalra visz), vagy
+a csoport után az oldalt;
+**az állításaik változatlanok** (fókusz a h1-en, Vissza/Előre, a poll nem veszi
+el a fókuszt, a Simulations elérhető a menüből).
+
+### Negatív kontrollok — tizenöt; három elsőre nem bukott, és az volt a lelet
+
+| Kontroll | Eredmény |
+|---|---|
+| A — a számlálósor nem zsugorodhat | a hibaállapot-mérés bukott |
+| B — a hibasáv nem töri a hosszú tokent | a hibaállapot-mérés bukott |
+| C — a skeleton `max-width` kivéve | **nem bukott** → a szabály felesleges volt, kivettem |
+| C2 — a telemetriasor `min-width: 0` kivéve | a betöltési mérés bukott — ez a valódi őr |
+| D — egy görgető táblázat sosincs jelölve | 4 táblázatteszt bukott |
+| E — minden táblázat jelölve, akkor is, ha kifér | 2 bukott (a „kifér" és az egyezés-teszt) |
+| F — a kulcs–érték rács `minmax(0, …)` kivéve | **nem bukott** → felesleges volt, visszaállítottam az eredetit |
+| F2 — a `dd` `overflow-wrap` kivéve | a betöltött mérés bukott — ez a valódi őr |
+| G — a részletoldal nem világít szekciót | E2E 1 és unit 1 bukott |
+| H — a menü nyitva marad navigáció után | **nem bukott** → a linkkattintás maga zár; hiányzott a Vissza-eset tesztje, pótoltam, azóta bukik |
+| I — a nyitott oldal linkje nyitva hagyja a menüt | bukott |
+| J — az Escape nem csinál semmit | bukott |
+| K — az olvashatatlan kísérletlista „nincs futó"-nak olvasódik | bukott |
+| L — az aktuális csoport nem világít | 3 bukott |
+| M — a kulcs–érték lista telefonon is egymás mellett marad | bukott |
+
+A két felesleges szabály kivétele után a C2 kontrollt újrafuttattam: továbbra is bukik.
+
+### Amit találtam, és nem ennek a napnak a dolga — 20. nap
+
+- **A főoldal health-grafikonja `ResizeObserver loop` hibát dob** átméretezéskor: a
+  magasságát a szélességéből számolja, és ugyanazt az elemet figyeli, amelyiknek
+  a magasságát így állítja. **A mainen is megvan** (mérve: a controllerem nélkül is
+  ugyanannyi); működési hibát nem okoz, de konzolhiba.
+- 1440 px-en a számlálósor a figyelmeztetés alá tör. Mérve: a régi és az új
+  szabállyal is ugyanott áll (49 px), tehát nem ennek a napnak a változása.
+- Telefonon a fejléc (figyelmeztetés, számlálók, frissesség, márka, telemetria)
+  kb. 370 px a menü előtt. A terv nem kéri a fejléc átrendezését; nem nyúltam hozzá.
+
+### Külön commitban: cím nélküli részletoldalak (F12 hézag)
+
+Ugyanez a mérés mutatta meg, hogy a kör-, blokk- és tranzakciórészlet betöltés
+közben — a blokk és a tranzakció hibánál is — **nem renderel h1-et**. A 12. napi
+„minden publikus oldalnak egy h1-e van" teszt valójában három útvonalat nézett,
+betöltött adattal. Lásd a következő bejegyzés-részt.
+
+A javítás: a cím **egyetlen sablonban** renderelődik minden állapotban (betöltés,
+hiba, nem található, kész). Ez nem stílus kérdése: egy saját sablonban lévő
+betöltési cím adatérkezéskor lecserélődik, és a navigáció által rá tett fókusz
+leesik a body-ra.
+
+Két új teszt az `accessibility.spec.ts`-ben: mind a húsz útvonal, négy állapotban,
+pontosan egy h1-gyel; és egy blokkra navigálás visszatartott válasszal — a fókusz
+a „Block" címen van, és ugyanott marad, amikor „Block 11,500" lesz belőle. A
+régi, háromútvonalas teszt megmaradt.
+
+**Negatív kontrollok:** a javítás előtti kód a h1-mérésen pontosan az öt
+állapot–útvonal páron bukik (betöltés: kör, blokk, tranzakció; hiba: blokk,
+tranzakció), a fókuszteszten pedig a fókusz a `main`-en találja magát. Egy
+saját sablonba tett betöltési cím a számláláson **átmegy**, a fókuszteszten
+**bukik** — ezért kell mindkettő.
+
+Ugyanitt: a 12. napi „200%-os zoomnál semmi nem folyik túl" teszt egyetlen oldalt
+mért (a betöltött főoldalt, 640 px-en), ahol a számlálósor még kifér — ezért volt
+zöld a mai +152/+587 px-es mérés mellett. Nem hibás teszt, csak szűk; a 18. napi
+mérés tágítja.
+
+### Érintett fájlok
+
+Kliens: `lib/router.ts` (+ 7 unit eset a `router.test.ts`-ben), új
+`lib/tableScroll.ts`, `components/dd-shell.ts`, `styles/shared.ts`,
+`components/dd-page-overview.ts`, `components/dd-page-experiments.ts`, és a
+controller bekötése a táblázatos publikus oldalakba (`rounds`, `round`, `pose`,
+`masternodes`, `chainlocks`, `dsl`, `peers`, `operators`, `fairness`,
+`simulations`, `blocks`, `txs`). Tesztek: új `e2e/responsive.spec.ts` (12 eset),
+új `e2e/navigation.spec.ts` (14 eset), új `e2e/fixtures/layout.ts`,
+`e2e/overview.spec.ts` (+3), és a hat újra irányított teszt az
+`accessibility`, `router` és `public-simulations` specben.
+
+**Szerződésváltozás / kompatibilitás:** nincs API-változás, a pathok változatlanok.
+Szerver, Core, admin logika érintetlen.
+
+### Parancsok, exit-kódok
+
+| Kapu | Eredmény |
+|---|---|
+| K1 | mind exit 0 — **855** szerver (változatlan) + **183** kliens (176 → 183) unit, typecheck, build, `git diff --check` tiszta |
+| K2 | exit 0 — **193** böngészőteszt (162 → 193), egy workerrel, 4,5 perc (1,3 percről: a mérések ennyit adnak hozzá) |
+| K3 | exit 0 — 15 fájl, 98 teszt (változatlan; nem kötelező ezen a napon, lefutott) |
+| CSP-kapu | exit 0 — 4 eset |
+
+Mindegyik a végleges `fc4652d` fán. **Egy K2-kísérlet 1-es kóddal zárult**, tesztfuttatás
+nélkül: egy megszakított kapufuttatás tesztfolyamata a szülő shell nélkül tovább
+futott, és foglalta az 5191-es portot (`http://127.0.0.1:5191 is already used`).
+A folyamatfát azonosítás után leállítottam — csak azt; az IDE saját Playwright- és
+MCP-folyamatai érintetlenek maradtak —, és a K2 újrafuttatva zöld.
+
+**Valódi laborfutam:** NEM FUTOTT.
+
+**Nyitott probléma / következő lépés:**
+
+- a **19. nap** (keresés és súgó) elkezdhető;
+- 20. napra: a grafikon `ResizeObserver` hibája; a VPS-bundle továbbra is a 11. nap
+  előtti, tehát sem a 17., sem a 18. nap nem látszik élesen.
+
+```text
+Commit(ok), végső SHA: 171443d (18. nap), fc4652d (cím nélküli részletoldalak)
+Végső git státusz: a saját munkám tiszta
+Napi státusz: ELLENŐRZÖTT
+Éles deploy: NEM TÖRTÉNT
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text

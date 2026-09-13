@@ -4,6 +4,7 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
 import { ago, coin, num, shortHash, utc } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const PAGE_SIZE = 25;
@@ -47,6 +48,8 @@ const shared = css`
 `;
 
 export class DdPageTxs extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _rows: { state: true },
     _total: { state: true },
@@ -183,6 +186,8 @@ export class DdPageTxs extends LitElement {
 customElements.define('dd-page-txs', DdPageTxs);
 
 export class DdPageTx extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = { param: {}, _tx: { state: true }, _error: { state: true } };
   param: string | null = null;
   private _tx: TxDetail | null = null;
@@ -250,19 +255,35 @@ export class DdPageTx extends LitElement {
   }
 
   override render(): TemplateResult {
-    const t = this._tx;
-    if (this._error) return html`<div class="err">${this._error}</div>`;
-    if (!t) return html`<div class="note">Loading…</div>`;
-
-    const kind = t.isCoinbase ? 'coinbase' : t.isCoinstake ? 'coinstake' : 'normal';
+    const t = this._error ? null : this._tx;
+    /*
+     * One heading, in one template, whatever state the page is in.
+     *
+     * While loading, and after a failed load, this page rendered no heading at
+     * all -- only a "Loading…" note or the error -- so it had no h1, and the
+     * shell's focus move after a navigation found nothing to land on. The
+     * heading has to be the SAME element across states, too: a loading
+     * heading in a template of its own would be replaced when the data
+     * arrived, and the focus would fall off it onto the body.
+     */
     return html`
       <div class="page-head">
         <div>
           <h1 class="page-title" tabindex="-1">Transaction</h1>
-          <div class="page-sub mono">${t.txid}</div>
+          ${t ? html`<div class="page-sub mono">${t.txid}</div>` : nothing}
         </div>
       </div>
+      ${this._error
+        ? html`<div class="err">${this._error}</div>`
+        : t
+          ? this._detail(t)
+          : html`<div class="note">Loading…</div>`}
+    `;
+  }
 
+  private _detail(t: TxDetail): TemplateResult {
+    const kind = t.isCoinbase ? 'coinbase' : t.isCoinstake ? 'coinstake' : 'normal';
+    return html`
       <section class="card">
         <div class="card-head"><h2 class="card-title">${kind}</h2></div>
         <dl>

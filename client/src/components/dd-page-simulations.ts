@@ -12,6 +12,7 @@ import {
   type Reading,
   type ReportState,
 } from '../lib/simulations.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
 
 const REFRESH_MS = 30_000;
@@ -45,6 +46,8 @@ type DetailState =
  * same kind of evidence as a live rollout.
  */
 export class DdPageSimulations extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     runKey: { type: String },
     _rows: { state: true },

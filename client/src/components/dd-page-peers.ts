@@ -4,6 +4,7 @@ import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, type ParamSpec } from '../lib/queryState.js';
 import { ago, num } from '../lib/format.js';
+import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 import './dd-stat.js';
 
@@ -27,6 +28,8 @@ const QUERY: Record<string, ParamSpec> = {
 const ms = (v: number | null): string => (v === null ? '—' : `${Math.round(v)} ms`);
 
 export class DdPagePeers extends LitElement {
+  /** Marks each table wrapper that scrolls sideways, and which way there is more. */
+  private readonly _tables = new TableScrollController(this);
   static override properties = {
     _d: { state: true },
     _topic: { state: true },
