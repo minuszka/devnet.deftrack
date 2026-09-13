@@ -51,6 +51,12 @@ async function openRun(
 
 const NOT_MEASURED = { status: 404, body: fail('simulation measurement report not found') };
 
+/** Installed and stopped: the list's own poll runs only when a test moves the clock. */
+async function pausedClock(page: import('@playwright/test').Page): Promise<void> {
+  await page.clock.install({ time: new Date('2026-09-13T12:00:00.000Z') });
+  await page.clock.pauseAt(new Date('2026-09-13T12:00:01.000Z'));
+}
+
 test.describe('simulation list', () => {
   test('is in the navigation and reachable from it', async ({ app, page }) => {
     app.stub({ ...overviewStubs(), ...listStubs(3) });
@@ -68,6 +74,52 @@ test.describe('simulation list', () => {
     app.stub(listStubs(0));
     await app.goto('/simulations');
     await expect(page.locator('dd-page-simulations .note')).toContainText('No simulation run has been recorded');
+    await expect(page.locator('dd-page-simulations .err')).toHaveCount(0);
+  });
+
+  /**
+   * W1 of the re-review. A failed refresh of the page on screen threw the list
+   * away: the page returned the error alone whenever there was one, before it
+   * asked whose rows it was holding. Every other paged page keeps its last
+   * good rows beside the error (day 3), and V4 promised the same here.
+   */
+  test('a failed refresh of the same page keeps its runs beside the error', async ({ app, page }) => {
+    app.stub(listStubs(3));
+    await pausedClock(page);
+    await app.goto('/simulations');
+    const row = page.locator(`dd-page-simulations tbody a[href="/simulations/${simRuns(3)[0]!.runKey}"]`);
+    await expect(row).toBeVisible();
+
+    app.stub({ [LIST]: { status: 503, body: fail('same page refresh failed') } });
+    await page.clock.fastForward(30_000);
+    await expect(page.locator('dd-page-simulations .err')).toContainText('same page refresh failed');
+    await expect(row).toBeVisible();
+    await expect(page.locator('dd-page-simulations .card-head .page-sub')).toContainText('3 total');
+  });
+
+  test('a first load that fails shows the failure, not an empty record', async ({ app, page }) => {
+    app.stub({ ...shellStubs(), [LIST]: { status: 503, body: fail('the run store did not answer') } });
+    await app.goto('/simulations');
+    await expect(page.locator('dd-page-simulations .err')).toContainText('the run store did not answer');
+    await expect(page.locator('dd-page-simulations tbody tr')).toHaveCount(0);
+    await expect(page.locator('dd-page-simulations')).not.toContainText('No simulation run has been recorded');
+    // Nor a list still "loading" beside a failure that has already happened.
+    await expect(page.locator('dd-page-simulations')).not.toContainText('Loading');
+  });
+
+  test('the next good refresh clears the error and brings the new list', async ({ app, page }) => {
+    app.stub(listStubs(3));
+    await pausedClock(page);
+    await app.goto('/simulations');
+    await expect(page.locator('dd-page-simulations tbody tr')).toHaveCount(3);
+
+    app.stub({ [LIST]: { status: 503, body: fail('same page refresh failed') } });
+    await page.clock.fastForward(30_000);
+    await expect(page.locator('dd-page-simulations .err')).toContainText('same page refresh failed');
+
+    app.stub(listStubs(4));
+    await page.clock.fastForward(30_000);
+    await expect(page.locator('dd-page-simulations tbody tr')).toHaveCount(4);
     await expect(page.locator('dd-page-simulations .err')).toHaveCount(0);
   });
 
