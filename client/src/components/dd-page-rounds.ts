@@ -58,7 +58,18 @@ export class DdPageRounds extends LitElement {
   private _rounds: QuorumRoundListItem[] = [];
   private _total = 0;
   /** A page of rounds has arrived at least once; until then a count is not known. */
-  private _loaded = false;
+  /**
+   * The query the rows on hand were read for -- status, profile and offset -- or
+   * null before any arrived. See dd-page-blocks: a filter change used to leave
+   * the previous filter's rounds under the newly pressed button.
+   */
+  private _heldFor: string | null = null;
+  private _queryKey(): string {
+    return `${this._status}|${this._llmq}|${this._offset}`;
+  }
+  private get _loaded(): boolean {
+    return this._heldFor === this._queryKey();
+  }
   private _offset = 0;
   private _status = '';
   private _llmq = '';
@@ -199,6 +210,7 @@ export class DdPageRounds extends LitElement {
 
   private async _load(run: PollRun): Promise<void> {
     try {
+      const asked = this._queryKey();
       const params: { limit: number; offset: number; status?: string; llmqName?: string } = {
         limit: PAGE_SIZE,
         offset: this._offset,
@@ -217,7 +229,7 @@ export class DdPageRounds extends LitElement {
       if (run.stale) return;
       this._rounds = p.items;
       this._total = p.total;
-      this._loaded = true;
+      this._heldFor = asked;
       if (profiles) this._profiles = profiles.items;
       if (runs) {
         this._runs = runs.items.map((r) => ({

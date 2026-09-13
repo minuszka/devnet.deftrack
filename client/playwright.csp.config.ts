@@ -23,6 +23,13 @@ export default defineConfig({
   // CSP run after a failed suite deleted that suite's traces and screenshots --
   // which is how the evidence for one day-20 failure was lost.
   outputDir: 'test-results-csp',
+  // And its own HTML report, for the same reason. The baseline's reporter was
+  // inherited with its folder, so a CSP run replaced the browser suite's report:
+  // measured on 2026-09-13, playwright-report held the CSP run's 4 tests right
+  // after a 277-test suite run. CI skips this step when the suite fails, so
+  // there it only ever replaced a passing report; locally a failed run's
+  // report went with it.
+  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report-csp' }]],
   use: {
     ...baseline.use,
     baseURL: 'http://127.0.0.1:5192',

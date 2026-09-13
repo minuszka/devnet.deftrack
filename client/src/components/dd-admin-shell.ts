@@ -17,7 +17,7 @@ import {
 import { num } from '../lib/format.js';
 import { isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
-import { acceptsRunUpdate } from '../lib/simulationRunState.js';
+import { acceptsRunUpdate, type EvidenceRead } from '../lib/simulationRunState.js';
 import {
   adminHref,
   decideSelection,
@@ -71,6 +71,16 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'The dashboard could not be refreshed.';
 }
 
+/** One read of a run's recovery evidence: what it says, or why it could not be read. */
+type EvidenceAnswer = { read: true; recovery: RecoveryReportView | null } | { read: false; message: string };
+
+function readEvidence(runKey: string): Promise<EvidenceAnswer> {
+  return adminApi.recovery(runKey).then(
+    (answer): EvidenceAnswer => ({ read: true, recovery: answer.recovery }),
+    (error: unknown): EvidenceAnswer => ({ read: false, message: messageOf(error) })
+  );
+}
+
 /**
  * The day-10 browser surface is intentionally observational.  It may create
  * and revoke its own session, but it exposes no scenario or fault controls;
@@ -93,6 +103,9 @@ export class DdAdminShell extends LitElement {
     _selectedPlan: { state: true },
     _selectedRecovery: { state: true },
     _selectedPreflight: { state: true },
+    _planError: { state: true },
+    _evidenceRead: { state: true },
+    _sessionBusy: { state: true },
     _loading: { state: true },
     _message: { state: true },
   };
@@ -126,6 +139,24 @@ export class DdAdminShell extends LitElement {
   private _selectedRecovery: RecoveryReportView | null = null;
   private _selectedPreflight: SimulationPreflight | null = null;
   /**
+   * Why the selected run's saved plan is not here, when a read of it failed.
+   *
+   * A plan that could not be read is a missing plan, not a missing run: the run
+   * the status poll accepted stays, and so do its abort and recovery controls.
+   * Only what needs the plan -- preflight, arming, starting -- waits for it.
+   */
+  private _planError: string | null = null;
+  /**
+   * Whether the selected run's evidence has been read -- not what it says,
+   * which is `_selectedRecovery`. See `EvidenceRead`.
+   *
+   * The first read of a selection caught its evidence failure into null, so a
+   * 503 there printed "No recovery proof has been recorded": a claim about the
+   * lab nobody made. A failed read now says it failed, until something has been
+   * read; after that, a failed refresh keeps what was read (J2).
+   */
+  private _evidenceRead: EvidenceRead = { state: 'loading' };
+  /**
    * A run key in the URL that is not a run key.
    *
    * Held rather than swallowed: the alternative is falling through to another
@@ -148,10 +179,41 @@ export class DdAdminShell extends LitElement {
    * still let the older answer land last.
    */
   private _selectionGeneration = 0;
+  /**
+   * Reads of a selection's moving parts -- its timeline and its recovery
+   * evidence -- numbered in the order they were asked for, and the number each
+   * of those two fields was last written from.
+   *
+   * The generation above tells a read for this selection from a read for
+   * another; it cannot order two reads for the SAME selection, and the moving
+   * parts are read again on every transition, every mutation and every
+   * Refresh. So whichever answer arrived last won: the poll saw `recovery` and
+   * asked for the evidence, saw `completed` a moment later and asked again, the
+   * second answer ("all targets clear") landed first, and the first -- written
+   * before the recovery had finished -- replaced it.
+   *
+   * A field takes an answer only from a request newer than the one it holds.
+   * An older answer that arrives first is still shown: it is the freshest thing
+   * known until the newer one lands. A failed read writes nothing, so it holds
+   * no place either.
+   */
+  private _detailRequests = 0;
+  private _historyFrom = 0;
+  private _recoveryFrom = 0;
   private _onPopState = (): void => {
     void this._applyUrlSelection();
   };
   private _loading = false;
+  /**
+   * A sign-in or sign-out exchange is out. Its own flag, not `_loading`.
+   *
+   * Sign-in used to set `_loading` and then ask for the dashboard, and the
+   * dashboard load returns at once while `_loading` is set -- so a successful
+   * sign-in loaded nothing, and the page sat empty under "Sign out" until the
+   * thirty-second refresh. The session exchange and the reads it unlocks are
+   * different things, and one flag cannot stand for both.
+   */
+  private _sessionBusy = false;
   private _message = '';
   private _timer: number | null = null;
 
@@ -377,7 +439,9 @@ export class DdAdminShell extends LitElement {
   }
 
   private async _signIn(): Promise<void> {
-    this._loading = true;
+    // One exchange at a time. The button is disabled while this is set, and a
+    // disabled button delivers no click -- that is the whole guard.
+    this._sessionBusy = true;
     this._message = '';
     try {
       // The identity proxy has already authenticated the browser. This exchange
@@ -385,21 +449,22 @@ export class DdAdminShell extends LitElement {
       this._session = await adminApi.signIn();
       this._screen = 'ready';
       this._startRefresh();
-      await this._loadDashboard();
     } catch {
       // Do not repeat the sign-in endpoint's distinction between an unknown
       // subject, proxy and disabled deployment in the page itself.
       this._screen = 'signed-out';
       this._message = 'Sign-in was not accepted. Use the approved identity proxy or contact an administrator.';
+      return;
     } finally {
-      this._loading = false;
+      this._sessionBusy = false;
     }
+    await this._loadDashboard();
   }
 
   private async _signOut(): Promise<void> {
     const session = this._session;
     if (session === null) return;
-    this._loading = true;
+    this._sessionBusy = true;
     try {
       await adminApi.signOut(session.csrfToken);
     } catch {
@@ -420,14 +485,16 @@ export class DdAdminShell extends LitElement {
       this._selectedRun = null;
       this._selectedPlan = null;
       this._selectedRecovery = null;
+      this._evidenceRead = { state: 'loading' };
       this._selectedPreflight = null;
+      this._planError = null;
       this._selectedRunKey = null;
       this._badRunKey = null;
       // The key is not a secret, but leaving it in the address bar of a
       // signed-out browser invites the next person to reload into it.
       this._writeUrl(null, 'replace');
       this._screen = 'signed-out';
-      this._loading = false;
+      this._sessionBusy = false;
       if (this._timer !== null) clearInterval(this._timer);
       this._timer = null;
     }
@@ -510,18 +577,59 @@ export class DdAdminShell extends LitElement {
    * The status poll below renews the part that moves.
    */
   private async _loadHistory(runKey: string, generation: number): Promise<void> {
+    const request = ++this._detailRequests;
     const [detail, history, recovery] = await Promise.all([
       adminApi.dryRun(runKey),
       adminApi.history(runKey),
-      // Evidence that is merely unavailable must never read as "clear".
-      adminApi.recovery(runKey).then((r) => r.recovery).catch(() => null),
+      // Evidence that is merely unavailable must never read as "clear" -- nor
+      // as "none recorded", which is what catching it into null used to say.
+      readEvidence(runKey),
     ]);
     if (generation !== this._selectionGeneration) return;
-    this._selectedRun = detail.run;
+    /*
+     * The plan is immutable and is always taken. The run that comes with it is
+     * a snapshot like any other, and goes through the same revision rule as the
+     * poll and every mutation.
+     *
+     * It was assigned outright: the one read of the run that skipped the rule.
+     * A status read that landed while this one was still on its way -- which a
+     * slow first load all but invites -- described a later state and was
+     * overwritten by an earlier one, so the panel went back to `armed` and
+     * offered to start a run whose fault was active.
+     */
+    this._acceptRun(detail.run);
     this._selectedPlan = detail.plan;
-    this._selectedRecovery = recovery;
     this._selectedPreflight = null;
+    // The timeline and the evidence are as old as this request, and a refresh
+    // issued after it may already have brought newer ones.
+    this._takeHistory(history, request);
+    this._takeEvidence(recovery, request);
+  }
+
+  private _takeHistory(history: SimulationHistory, request: number): void {
+    if (request <= this._historyFrom) return;
     this._history = history;
+    this._historyFrom = request;
+  }
+
+  /**
+   * One evidence read's answer, from the first read or any refresh.
+   *
+   * A failure writes no evidence and holds no place in the order. It changes
+   * what the panel SAYS only while nothing has been read: evidence that was
+   * read stays, because a failed refresh is not an answer.
+   */
+  private _takeEvidence(answer: EvidenceAnswer, request: number): void {
+    if (!answer.read) {
+      if (this._evidenceRead.state !== 'read') {
+        this._evidenceRead = { state: 'unavailable', message: answer.message };
+      }
+      return;
+    }
+    if (request <= this._recoveryFrom) return;
+    this._selectedRecovery = answer.recovery;
+    this._recoveryFrom = request;
+    this._evidenceRead = { state: 'read' };
   }
 
   /**
@@ -613,20 +721,35 @@ export class DdAdminShell extends LitElement {
    * left writes nothing.
    */
   private async _refreshSelectionDetail(runKey: string, generation: number): Promise<void> {
+    const request = ++this._detailRequests;
     const [history, recovery] = await Promise.all([
       adminApi.history(runKey).catch(() => null),
       /*
-       * `undefined` is "this refresh failed"; `null` is "the server says there
-       * is no proof". Collapsing the two would let a timed-out request report
-       * that a recovery which HAS been proven was never recorded -- the same
-       * class of mistake as reading unavailable evidence as "all clear", in the
-       * other direction.
+       * A failed read and "the server says there is no proof" are different
+       * answers. Collapsing the two would let a timed-out request report that a
+       * recovery which HAS been proven was never recorded -- the same class of
+       * mistake as reading unavailable evidence as "all clear", in the other
+       * direction.
        */
-      adminApi.recovery(runKey).then((r) => r.recovery).catch(() => undefined),
+      readEvidence(runKey),
     ]);
     if (generation !== this._selectionGeneration || this._selectedRunKey !== runKey) return;
-    if (history !== null) this._history = history;
-    if (recovery !== undefined) this._selectedRecovery = recovery;
+    if (history !== null) this._takeHistory(history, request);
+    this._takeEvidence(recovery, request);
+  }
+
+  /**
+   * The panel asked for the evidence again, after a read of it failed.
+   *
+   * A read, and only a read. The panel's "Retry recovery proof" is a command
+   * that runs recovery on the lab; a failed read must never be retried by
+   * sending one.
+   */
+  private _rereadEvidence(): void {
+    const runKey = this._selectedRunKey;
+    if (runKey === null) return;
+    if (this._evidenceRead.state === 'unavailable') this._evidenceRead = { state: 'loading' };
+    void this._refreshSelectionDetail(runKey, this._selectionGeneration);
   }
 
   private _clearSelection(): void {
@@ -637,7 +760,9 @@ export class DdAdminShell extends LitElement {
     this._selectedRun = null;
     this._selectedPlan = null;
     this._selectedRecovery = null;
+    this._evidenceRead = { state: 'loading' };
     this._selectedPreflight = null;
+    this._planError = null;
     this._history = null;
   }
 
@@ -650,8 +775,17 @@ export class DdAdminShell extends LitElement {
     this._selectedRun = null;
     this._selectedPlan = null;
     this._selectedRecovery = null;
+    this._evidenceRead = { state: 'loading' };
     this._selectedPreflight = null;
+    this._planError = null;
     this._history = null;
+  }
+
+  /** The panel asked for the saved plan again, after a read of it failed. */
+  private _reloadSelectedRun(): void {
+    const runKey = this._selectedRunKey;
+    if (runKey === null) return;
+    void this._loadSelectedRun(runKey);
   }
 
   private _selectRun(runKey: string): void {
@@ -692,9 +826,13 @@ export class DdAdminShell extends LitElement {
       this._selectedRun = null;
       this._selectedPlan = null;
       this._selectedRecovery = null;
+      this._evidenceRead = { state: 'loading' };
       this._selectedPreflight = null;
       this._history = null;
     }
+    // A read is starting, so the plan is being read, not "could not be read" --
+    // including a retry of one that failed.
+    this._planError = null;
     // Held while the request is in flight, so the panel shows which run it is
     // waiting for rather than the previous one.
     this._selectedRunKey = runKey;
@@ -706,16 +844,30 @@ export class DdAdminShell extends LitElement {
       // A failure belongs to the selection that asked for it. Without this,
       // run A's late 503 wiped the run the operator had already moved to.
       if (generation !== this._selectionGeneration) return;
-      this._history = null;
-      this._selectedRun = null;
-      this._selectedPlan = null;
-      this._selectedRecovery = null;
       if (error instanceof ApiError && error.status === 404) {
+        this._history = null;
+        this._selectedRun = null;
+        this._selectedPlan = null;
+        this._selectedRecovery = null;
+        this._evidenceRead = { state: 'loading' };
         this._message = `No run ${runKey} exists on this deployment.`;
       } else if (error instanceof ApiError && error.status === 401) {
         this._endSession('Your session ended. Sign in again to view the private dashboard.');
       } else {
-        this._message = messageOf(error);
+        /*
+         * What failed is this read, not the run.
+         *
+         * It used to clear everything, including a run the status poll had
+         * already accepted -- and the panel draws nothing without a plan -- so a
+         * live fault lost its Abort button because one read of an immutable
+         * document timed out. The run, its evidence and its timeline stay as
+         * they are; the plan is simply not here, and the panel says so.
+         *
+         * The plan and the timeline are read together, so the message names
+         * both: either may be the one that failed, and neither was taken.
+         */
+        this._planError = messageOf(error);
+        this._message = `The saved plan and timeline for ${runKey} could not be read: ${messageOf(error)}`;
       }
     } finally {
       // Deliberately not generation-guarded: a request that has finished is one
@@ -757,8 +909,8 @@ export class DdAdminShell extends LitElement {
             This dashboard is available only through the approved identity proxy. No administrator API key or infrastructure credential is used by the browser.
           </p>
           ${this._message ? html`<div class="alert" role="alert">${this._message}</div>` : nothing}
-          <button class="btn primary" ?disabled=${this._loading} @click=${this._signIn}>
-            ${this._loading ? 'Signing in…' : 'Continue to admin dashboard'}
+          <button class="btn primary" ?disabled=${this._sessionBusy} @click=${this._signIn}>
+            ${this._sessionBusy ? 'Signing in…' : 'Continue to admin dashboard'}
           </button>
           <a href="/">Return to the public explorer</a>
         </div>
@@ -794,7 +946,7 @@ export class DdAdminShell extends LitElement {
         <div class="identity">
           <span class="subject">${session.subject}</span>
           <span class="pill accent">${session.role}</span>
-          <button class="btn" ?disabled=${this._loading} @click=${this._signOut}>Sign out</button>
+          <button class="btn" ?disabled=${this._loading || this._sessionBusy} @click=${this._signOut}>Sign out</button>
         </div>
       </div>
       <header>
@@ -832,8 +984,12 @@ export class DdAdminShell extends LitElement {
           .run=${this._selectedRun}
           .plan=${this._selectedPlan}
           .recovery=${this._selectedRecovery}
+          .evidenceRead=${this._evidenceRead}
           .preflight=${this._selectedPreflight}
+          .planError=${this._planError}
           @simulation-changed=${this._loadDashboard}
+          @plan-reload-requested=${this._reloadSelectedRun}
+          @evidence-reread-requested=${this._rereadEvidence}
           @run-selected=${(event: CustomEvent<{ runKey: string }>) => this._selectRun(event.detail.runKey)}
           @run-updated=${this._onRunUpdated}
         ></dd-simulation-control>

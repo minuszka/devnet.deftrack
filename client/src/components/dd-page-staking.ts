@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import type { StakingHealth } from '../lib/api.js';
-import { errorMessage, isAbortError } from '../lib/errors.js';
+import { COULD_NOT_LOAD, errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, type ParamSpec } from '../lib/queryState.js';
 import { num, ratio } from '../lib/format.js';
@@ -39,6 +39,12 @@ export class DdPageStaking extends LitElement {
   };
 
   private _d: StakingHealth | null = null;
+  /**
+   * The window the sample on hand was read for, or null. See dd-page-blocks:
+   * choosing 1,000 left the 500-block sample under the pressed "1,000" -- for
+   * as long as the answer took, and for good if it failed.
+   */
+  private _heldFor: number | null = null;
   private _blocks = 500;
   private _view: LeaderView = 'machines';
   private _error = '';
@@ -300,9 +306,11 @@ export class DdPageStaking extends LitElement {
 
   private async _load(run: PollRun): Promise<void> {
     try {
-      const d = await run.api.stakingHealth(this._blocks);
+      const blocks = this._blocks;
+      const d = await run.api.stakingHealth(blocks);
       if (run.stale) return;
       this._d = d;
+      this._heldFor = blocks;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -319,7 +327,8 @@ export class DdPageStaking extends LitElement {
   }
 
   override render(): TemplateResult {
-    const d = this._d;
+    // The sample on hand, only under the window it answers.
+    const d = this._heldFor === this._blocks ? this._d : null;
     return html`
       <div class="page-head">
         <div>
@@ -346,7 +355,7 @@ export class DdPageStaking extends LitElement {
 
       ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
       ${!d
-        ? html`<div class="note">Loading…</div>`
+        ? html`<div class="note">${this._error ? COULD_NOT_LOAD : 'Loading…'}</div>`
         : html`${this._hero(d)} ${this._tiles(d)} ${this._leaderboard(d)}`}
     `;
   }

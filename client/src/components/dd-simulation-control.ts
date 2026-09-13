@@ -15,7 +15,7 @@ import {
 import { num } from '../lib/format.js';
 import { canonicalJson, draftScope } from '../lib/draftIdentity.js';
 import { eligibility } from '../lib/targetEligibility.js';
-import { acceptsRunUpdate, runSafety } from '../lib/simulationRunState.js';
+import { acceptsRunUpdate, runSafety, type EvidenceRead } from '../lib/simulationRunState.js';
 import { baseStyles, cardStyles, controlStyles, pageStyles, tableStyles } from '../styles/shared.js';
 
 type Network = 'regtest' | 'devnet';
@@ -106,6 +106,8 @@ export class DdSimulationControl extends LitElement {
     plan: { attribute: false },
     recovery: { attribute: false },
     preflight: { attribute: false },
+    planError: { attribute: false },
+    evidenceRead: { attribute: false },
     _scenarioId: { state: true },
     _network: { state: true },
     _mode: { state: true },
@@ -145,6 +147,13 @@ export class DdSimulationControl extends LitElement {
   recovery: RecoveryReportView | null = null;
   /** A preflight the server actually produced. Null means not run. */
   preflight: SimulationPreflight | null = null;
+  /** Set when the dashboard's read of the saved plan failed; null while it is loading or loaded. */
+  planError: string | null = null;
+  /**
+   * Whether `recovery` is an answer at all. Until the dashboard says it has been
+   * read, a null there means "not read", never "none recorded".
+   */
+  evidenceRead: EvidenceRead = { state: 'loading' };
   private _scenarioId = 'mn-stop';
   private _network: Network = 'regtest';
   private _mode: Mode = 'dry-run';
@@ -327,6 +336,27 @@ export class DdSimulationControl extends LitElement {
 
   /** Non-empty while the Advanced text cannot be read. Blocks Prepare. */
   private _paramsError = '';
+
+  /**
+   * The Advanced text cannot be read, so the structured editors are locked.
+   *
+   * Every field edit, and a change of scenario, writes the object and used to
+   * drop the text with it: a half-finished JSON edit vanished the moment Count
+   * was touched, replaced without a word by the last object that parsed. The
+   * text is left only by finishing it or by discarding it on purpose. The
+   * network, the mode and the selected run's own controls do not touch the
+   * parameters and stay usable.
+   */
+  private get _paramsLocked(): boolean {
+    return this._paramsError !== '';
+  }
+
+  /** Throw the unreadable text away, back to the last parameters that could be read. */
+  private _discardParamsText(): void {
+    this._paramsText = null;
+    this._paramsError = '';
+    this._draftChanged();
+  }
 
   /** The Advanced JSON view is collapsed until somebody asks for it. */
   private _advanced = false;
@@ -721,7 +751,8 @@ export class DdSimulationControl extends LitElement {
         ${this._form(descriptor)}
         ${(() => {
           const run = this._actionRun();
-          return run !== null && this.plan !== null ? this._selectedView(run, this.plan) : nothing;
+          if (run === null) return nothing;
+          return this.plan !== null ? this._selectedView(run, this.plan) : this._planlessView(run);
         })()}
       </section>
     `;
@@ -733,7 +764,7 @@ export class DdSimulationControl extends LitElement {
         <div class="card-head"><h3 class="card-title">1. Prepare and preview</h3><div class="page-sub mono">no remote action</div></div>
         <div class="form-grid">
           <label><span>Scenario</span>
-            <select .value=${this._scenarioId} @change=${this._selectScenario} ?disabled=${this._busy}>
+            <select .value=${this._scenarioId} @change=${this._selectScenario} ?disabled=${this._busy || this._paramsLocked}>
               ${this.scenarios.map((scenario) => html`<option value=${scenario.scenarioId}>${scenario.title} · ${scenario.riskClass}</option>`)}
             </select>
           </label>
@@ -813,7 +844,7 @@ export class DdSimulationControl extends LitElement {
             id=${id}
             .value=${String(value ?? '')}
             @change=${(e: Event) => this._setParam(field.name, (e.target as HTMLSelectElement).value)}
-            ?disabled=${this._busy}
+            ?disabled=${this._busy || this._paramsLocked}
           >
             ${(field.values ?? []).map((v: string) => html`<option value=${v}>${v}</option>`)}
           </select>
@@ -845,7 +876,7 @@ export class DdSimulationControl extends LitElement {
             // a half-typed number into a refused request.
             this._setParam(field.name, raw === '' ? undefined : Number(raw));
           }}
-          ?disabled=${this._busy}
+          ?disabled=${this._busy || this._paramsLocked}
           required=${field.required ? true : nothing}
         />
         <small class="field-range"
@@ -885,7 +916,7 @@ export class DdSimulationControl extends LitElement {
     const usable = rows.filter((r) => r.verdict.ok).length;
 
     return html`
-      <fieldset class="wide target-chooser" ?disabled=${this._busy}>
+      <fieldset class="wide target-chooser" ?disabled=${this._busy || this._paramsLocked}>
         <legend>
           ${field.label}
           ${field.required ? nothing : html`<em class="optional">optional</em>`}
@@ -989,7 +1020,12 @@ export class DdSimulationControl extends LitElement {
         ${this._paramsError
           ? html`<div class="alert" role="alert">
               The parameters cannot be read: ${this._paramsError}. What you typed is kept; nothing
-              will be prepared until it parses.
+              will be prepared until it parses, and the fields above and the scenario are locked so
+              that nothing replaces it.
+              <div class="actions" style="margin-top:var(--sp-3)">
+                <button type="button" class="btn" @click=${this._discardParamsText}>Discard the unreadable JSON</button>
+                <small>Discarding returns to the last parameters that could be read.</small>
+              </div>
             </div>`
           : nothing}
       </div>
@@ -1058,16 +1094,26 @@ export class DdSimulationControl extends LitElement {
    */
   private _safetyLine(run: SimulationControlRun): TemplateResult {
     const safety = runSafety(run, this.recovery);
+    const read = this.evidenceRead;
+    // What the evidence says is only asked once it has been read: before that,
+    // and after a read that failed, a null here is not the server's "none".
     const proof =
-      safety.allClear === 'unknown'
-        ? html`<span class="state-line">
-            No recovery proof has been recorded for this run yet.
+      read.state === 'unavailable'
+        ? html`<span class="state-line evidence-unread">
+            The recovery evidence for this run could not be read (${read.message}). That says nothing
+            either way about whether a proof has been recorded.
           </span>`
-        : html`<span class=${safety.allClear === 'yes' ? 'recovery-ok' : 'recovery-bad'}>
-            Recovery proof:
-            ${safety.allClear === 'yes' ? 'all targets clear' : 'manual attention required'}
-            (${num(this.recovery?.targets.length ?? 0)} targets checked)
-          </span>`;
+        : read.state === 'loading'
+          ? html`<span class="state-line">The recovery evidence for this run is still being read.</span>`
+          : safety.allClear === 'unknown'
+            ? html`<span class="state-line">
+                No recovery proof has been recorded for this run yet.
+              </span>`
+            : html`<span class=${safety.allClear === 'yes' ? 'recovery-ok' : 'recovery-bad'}>
+                Recovery proof:
+                ${safety.allClear === 'yes' ? 'all targets clear' : 'manual attention required'}
+                (${num(this.recovery?.targets.length ?? 0)} targets checked)
+              </span>`;
     return html`
       <div class=${safety.faultMayBeActive ? 'recovery-bad' : ''}>
         ${safety.faultMayBeActive
@@ -1075,7 +1121,18 @@ export class DdSimulationControl extends LitElement {
           : 'No fault outstanding. '}
         ${proof}
       </div>
+      ${read.state === 'unavailable'
+        ? html`<div class="actions">
+            <!-- A read, not the "Retry recovery proof" command below it: that one
+                 runs recovery on the lab, and a failed read is never a reason to. -->
+            <button class="btn" @click=${this._requestEvidenceReread}>Read the evidence again</button>
+          </div>`
+        : nothing}
     `;
+  }
+
+  private _requestEvidenceReread(): void {
+    this.dispatchEvent(new CustomEvent('evidence-reread-requested', { bubbles: true, composed: true }));
   }
 
   /**
@@ -1099,8 +1156,43 @@ export class DdSimulationControl extends LitElement {
     return html`
       ${this._preview(plan, run)}
       ${this._preflightCard()}
-      ${this._approvalAndRecovery(run)}
+      ${this._approvalAndRecovery(run, true)}
     `;
+  }
+
+  /**
+   * A run the server has described, whose saved plan is not here.
+   *
+   * The panel drew nothing at all without a plan, so a run whose status had
+   * been read but whose plan was still loading -- or could not be read -- had
+   * no Abort button, whatever state its fault was in. The way out does not
+   * depend on the plan; what does -- preflight, arming, starting -- is not
+   * offered until the plan has been seen.
+   */
+  private _planlessView(run: SimulationControlRun): TemplateResult {
+    const failed = this.planError !== null;
+    return html`
+      <section class="card">
+        <div class="card-head"><h3 class="card-title">Saved plan</h3><div class="page-sub mono">${failed ? 'not read' : 'loading'}</div></div>
+        <div class="card-body">
+          <div class="notice plan-unread" role="status">
+            ${failed ? 'The saved plan for this run could not be read.' : 'The saved plan for this run is still being read.'}
+            It cannot be validated, armed or started from here until it has been; its abort and
+            recovery controls below stay available.
+          </div>
+          ${failed
+            ? html`<div class="actions" style="margin-top:var(--sp-4)">
+                <button class="btn" @click=${this._requestPlanReload}>Read the saved plan again</button>
+              </div>`
+            : nothing}
+        </div>
+      </section>
+      ${this._approvalAndRecovery(run, false)}
+    `;
+  }
+
+  private _requestPlanReload(): void {
+    this.dispatchEvent(new CustomEvent('plan-reload-requested', { bubbles: true, composed: true }));
   }
 
   private _preview(plan: DryRunPlan, run: SimulationControlRun): TemplateResult {
@@ -1149,7 +1241,8 @@ export class DdSimulationControl extends LitElement {
     `;
   }
 
-  private _approvalAndRecovery(run: SimulationControlRun): TemplateResult {
+  /** `planSeen` false: the run's own state and its way out, and nothing that acts on the plan. */
+  private _approvalAndRecovery(run: SimulationControlRun, planSeen: boolean): TemplateResult {
     const descriptor = this._runDescriptor();
     const isArmed = run.state.status === 'armed';
     // A descriptor the panel cannot resolve is not a reason to widen approval:
@@ -1171,7 +1264,7 @@ export class DdSimulationControl extends LitElement {
           <div class="state-line">Created from seed <strong class="mono">${run.metadata.seed}</strong>, scenario <strong class="mono">${run.metadata.scenarioId}</strong> v${run.metadata.scenarioVersion}.</div>
           ${run.state.faultLeaseExpiresAtMs !== null ? html`<div class="countdown">Fault lease: ${countdown(run.state.faultLeaseExpiresAtMs, this._now)}</div>` : nothing}
           ${this._safetyLine(run)}
-          ${run.state.status === 'scheduled'
+          ${planSeen && run.state.status === 'scheduled'
             ? html`
                 <label><input type="checkbox" .checked=${this._riskAcknowledged} @change=${(event: Event) => { this._riskAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy || !mayApprove} />
                   <span>I acknowledge the server-declared <strong>${descriptor?.riskClass ?? 'unknown'}</strong> risk for “${descriptor?.title ?? run.metadata.scenarioId}”.</span>
@@ -1180,7 +1273,7 @@ export class DdSimulationControl extends LitElement {
                 <div class="actions"><button class="btn primary" ?disabled=${this._busy || !this._riskAcknowledged || !mayApprove} @click=${this._arm}>Arm approved plan</button></div>
               `
             : nothing}
-          ${isArmed
+          ${planSeen && isArmed
             ? html`
                 <label><input type="checkbox" .checked=${this._startAcknowledged} @change=${(event: Event) => { this._startAcknowledged = (event.target as HTMLInputElement).checked; }} ?disabled=${this._busy} />
                   <span>I confirm ${run.state.live ? 'this will execute the approved fault in the local lab' : 'this will complete the approved dry-run'}.</span>

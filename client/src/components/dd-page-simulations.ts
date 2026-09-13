@@ -10,7 +10,7 @@ import {
   RUN_KEY_PATTERN,
   type PublicSimulationRunView,
   type Reading,
-  type ReportState,
+  type SettledReportState,
 } from '../lib/simulations.js';
 import { TableScrollController } from '../lib/tableScroll.js';
 import { baseStyles, cardStyles, pageStyles, pagerStyles, tableStyles } from '../styles/shared.js';
@@ -35,7 +35,7 @@ type DetailState =
   | { kind: 'malformed' }
   | { kind: 'missing' }
   | { kind: 'error'; message: string }
-  | { kind: 'loaded'; run: PublicSimulationRunView; report: ReportState; fetchedAtMs: number };
+  | { kind: 'loaded'; run: PublicSimulationRunView; report: SettledReportState; fetchedAtMs: number };
 
 /**
  * The public simulation results: every run, and what its measurement says.
@@ -60,6 +60,11 @@ export class DdPageSimulations extends LitElement {
 
   runKey: string | null = null;
   private _rows: PublicSimulationRunView[] = [];
+  /**
+   * The offset the rows on hand were read at, or null. See dd-page-blocks: while
+   * page 2 loaded, page 1's runs stood under "26–30 of 30".
+   */
+  private _heldFor: number | null = null;
   private _total = 0;
   private _offset = 0;
   /** Loading is not empty: the two look alike and mean opposite things. */
@@ -152,6 +157,7 @@ export class DdPageSimulations extends LitElement {
       // What is held belongs to the run that was on screen a moment ago.
       this._detail = { kind: 'loading' };
       this._rows = [];
+      this._heldFor = null;
       this._total = 0;
       this._error = '';
       this._poll.refresh();
@@ -175,10 +181,12 @@ export class DdPageSimulations extends LitElement {
     }
     this._loading = true;
     try {
-      const result = await run.api.simulations({ limit: PAGE_SIZE, offset: this._offset });
+      const offset = this._offset;
+      const result = await run.api.simulations({ limit: PAGE_SIZE, offset });
       if (run.stale) return;
       this._rows = result.items;
       this._total = result.total;
+      this._heldFor = offset;
       this._error = '';
     } catch (error) {
       if (run.stale || isAbortError(error)) return;
@@ -213,7 +221,7 @@ export class DdPageSimulations extends LitElement {
       return;
     }
 
-    let report: ReportState;
+    let report: SettledReportState;
     try {
       report = { kind: 'present', report: await run.api.simulationReport(runKey) };
     } catch (error) {
@@ -252,15 +260,17 @@ export class DdPageSimulations extends LitElement {
 
   private _list(): TemplateResult {
     if (this._error) return html`<div class="err" role="alert">${this._error}</div>`;
+    // The rows on hand are shown only under the page they were read for.
+    const current = this._heldFor === this._offset;
     const to = Math.min(this._offset + PAGE_SIZE, this._total);
     return html`
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Recorded runs</h2>
-          <div class="page-sub mono">${this._loading && this._rows.length === 0 ? '' : `${num(this._total)} total`}</div>
+          <div class="page-sub mono">${!current ? '' : `${num(this._total)} total`}</div>
         </div>
         <div class="card-body flush">
-          ${this._loading && this._rows.length === 0
+          ${!current
             ? html`<div class="note">Loading…</div>`
             : this._total === 0
               ? html`<div class="note">
@@ -340,7 +350,7 @@ export class DdPageSimulations extends LitElement {
     }
   }
 
-  private _loaded(run: PublicSimulationRunView, report: ReportState, fetchedAtMs: number): TemplateResult {
+  private _loaded(run: PublicSimulationRunView, report: SettledReportState, fetchedAtMs: number): TemplateResult {
     const reading = readSimulation(run, report);
     return html`
       ${run.state.live
@@ -383,7 +393,7 @@ export class DdPageSimulations extends LitElement {
    * adapter's material is prior modelling, and a page that put it beside a
    * measured result would present a model as a forecast.
    */
-  private _measurement(run: PublicSimulationRunView, report: ReportState): TemplateResult {
+  private _measurement(run: PublicSimulationRunView, report: SettledReportState): TemplateResult {
     if (report.kind !== 'present') {
       if (run.state.status !== 'completed') return html`${nothing}`;
       return html`<section class="card">
@@ -438,7 +448,7 @@ export class DdPageSimulations extends LitElement {
    * new tab and does not need revoking. The page is public, so is every byte in
    * the file, and the envelope says where each came from.
    */
-  private _export(run: PublicSimulationRunView, report: ReportState, fetchedAtMs: number): TemplateResult {
+  private _export(run: PublicSimulationRunView, report: SettledReportState, fetchedAtMs: number): TemplateResult {
     const exported = buildSimulationExport(run, report, fetchedAtMs);
     const href = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(exported, null, 2))}`;
     return html`
