@@ -42,6 +42,10 @@ const PATHS = [
   `/experiments/${LONG_RUN_KEY}`,
   `/simulations/${SIM_A}`,
   `/no-such-page-${LONG_TOKEN}`,
+  // Day 19: search results for an identifier every lookup endpoint answers,
+  // and the methodology page.
+  `/search?q=${HASH}`,
+  '/methodology',
 ];
 
 interface Overflow {
@@ -124,11 +128,14 @@ async function sweep(page: Page, state: 'loaded' | 'empty' | 'error' | 'loading'
       const errors = await page.locator('main .err').allTextContents();
       if (errors.length > 0) failures.push(`${state} ${path}: rendered an error instead of the page: ${errors.join(' / ')}`);
     }
-    if (state === 'error' && !path.startsWith('/no-such-page')) {
-      // And the failing state must actually be failing, or it measured a
-      // loaded page and called it an error page. Fairness says it as a note:
-      // with its inputs unreadable it cannot name a profile, and says that.
-      await expect(page.locator('main .err, main .note').first(), `${path} shows its error`).toBeVisible();
+    // And the failing state must actually be failing, or it measured a loaded
+    // page and called it an error page. Fairness says it as a note: with its
+    // inputs unreadable it cannot name a profile, and says that. The search
+    // page's own form of it is the unchecked-lookups box. The not-found page
+    // and the methodology page ask nothing, so they have no failing state --
+    // they are still measured below.
+    if (state === 'error' && !path.startsWith('/no-such-page') && path !== '/methodology') {
+      await expect(page.locator('main .err, main .note, main .unchecked').first(), `${path} shows its error`).toBeVisible();
     }
     for (const width of widths) {
       await page.setViewportSize({ width, height: 800 });

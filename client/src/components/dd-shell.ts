@@ -9,6 +9,7 @@ import {
   NAV_GROUPS,
   matchRoute,
   installLinkInterceptor,
+  navigate,
   navLocation,
   type Match,
   type NavGroupId,
@@ -30,6 +31,8 @@ import './dd-page-experiments.js';
 import './dd-page-peers.js';
 import './dd-page-fairness.js';
 import './dd-page-simulations.js';
+import './dd-page-search.js';
+import './dd-page-methodology.js';
 import './dd-page-not-found.js';
 
 const HEALTH_REFRESH_MS = 30_000;
@@ -40,6 +43,7 @@ export class DdShell extends LitElement {
     _health: { state: true },
     _menuOpen: { state: true },
     _openGroups: { state: true },
+    _searchHint: { state: true },
   };
 
   private _route: Match = matchRoute(location.pathname);
@@ -48,6 +52,8 @@ export class DdShell extends LitElement {
   private _menuOpen = false;
   /** Which groups the narrow-screen menu shows expanded: the reader's own group, to begin with. */
   private _openGroups: ReadonlySet<NavGroupId> = new Set();
+  /** Said under the search box when a submit had nothing in it. */
+  private _searchHint = '';
   /** The header's own poll: stops with the tab, cancels what it supersedes. */
   private readonly _poll = new PollController(this, {
     intervalMs: HEALTH_REFRESH_MS,
@@ -70,6 +76,10 @@ export class DdShell extends LitElement {
     this._menuOpen = false;
     const where = navLocation(this._route);
     this._openGroups = new Set(where.group ? [where.group.id] : []);
+    this._searchHint = '';
+    // A search page opened from its address shows its query in the box, so the
+    // reader can correct it rather than retype it.
+    if (this._route.route.tag === 'dd-page-search') void this._fillSearchBox(this._searchQuery());
     this.scrollIntoView();
     /*
      * Focus moves only when the page actually changed.
@@ -87,6 +97,39 @@ export class DdShell extends LitElement {
      */
     if (this._pageIdentity() !== before) void this._focusPage();
   };
+
+  /** The query a search page is showing, from the address. */
+  private _searchQuery(): string {
+    return new URLSearchParams(location.search).get('q') ?? '';
+  }
+
+  private async _fillSearchBox(query: string): Promise<void> {
+    await this.updateComplete;
+    const input = this.renderRoot.querySelector<HTMLInputElement>('.search input');
+    // Not while somebody is typing in it. (document.activeElement would only
+    // ever name this shell: the box is inside its shadow root.)
+    if (input && this.shadowRoot?.activeElement !== input) input.value = query;
+  }
+
+  /**
+   * Search on an explicit submit, and only then.
+   *
+   * Nothing listens to the box as it is typed in: every lookup is several
+   * requests against endpoints that read the database, and firing them per
+   * keystroke would turn one question into dozens. An empty submit asks
+   * nothing and says what the box takes.
+   */
+  private _onSearch(event: Event): void {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const query = String(new FormData(form).get('q') ?? '').trim();
+    if (query === '') {
+      this._searchHint = 'Type a block height, a hash, a transaction id or a run key.';
+      return;
+    }
+    this._searchHint = '';
+    navigate(`/search?q=${encodeURIComponent(query)}`);
+  }
 
   /** What counts as "a different page" for the purpose of moving focus. */
   private _pageIdentity(): string {
@@ -352,6 +395,71 @@ export class DdShell extends LitElement {
       .telemetry .dimb { color: var(--ink-2); font-weight: 600; }
       .telemetry .lag b { color: var(--warn); }
 
+      /* The search box, between the brand and the telemetry. It takes the row
+         to itself on a narrow screen rather than squeezing the input. */
+      .tools {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2) var(--sp-4);
+        flex: 1 1 320px;
+        max-width: 680px;
+        min-width: 0;
+      }
+      .search {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2);
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+      .search input {
+        flex: 1 1 200px;
+        min-width: 0;
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        padding: 7px 10px;
+        background: var(--bg-raised);
+        color: var(--ink);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+      }
+      .search input:focus {
+        border-color: var(--accent-dim);
+        box-shadow: 0 0 0 2px var(--accent-wash-2);
+        outline: none;
+      }
+      .search button {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 8px 12px;
+        color: var(--ink);
+        background: var(--surface-2);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        cursor: pointer;
+      }
+      .search button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .search-hint {
+        flex-basis: 100%;
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: var(--warn);
+      }
+      .howto {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+
       /*
        * Row three: the sections, in four groups. Sticky, so the way around is
        * never scrolled out of reach.
@@ -583,6 +691,28 @@ export class DdShell extends LitElement {
 
       <header class="site">
         <a class="brand" href="/">devnet<span class="dim">.deftrack</span></a>
+        <div class="tools">
+        <form class="search" role="search" aria-label="Search the chain" @submit=${this._onSearch} novalidate>
+          <input
+            type="search"
+            name="q"
+            aria-label="Block height, block hash, transaction id or run key"
+            placeholder="Height, hash, txid or run key"
+            autocomplete="off"
+            spellcheck="false"
+            enterkeyhint="search"
+            aria-describedby=${this._searchHint ? 'search-hint' : nothing}
+            @input=${() => {
+              if (this._searchHint) this._searchHint = '';
+            }}
+          />
+          <button type="submit">Search</button>
+          ${this._searchHint
+            ? html`<span class="search-hint" id="search-hint" role="status">${this._searchHint}</span>`
+            : nothing}
+        </form>
+        <a class="howto" href="/methodology">How we measure</a>
+        </div>
         ${h
           ? this._telemetry(h)
           : fresh.state === 'unavailable'
@@ -827,6 +957,10 @@ export class DdShell extends LitElement {
         return html`<dd-page-experiments .runKey=${id}></dd-page-experiments>`;
       case 'dd-page-simulations':
         return html`<dd-page-simulations .runKey=${id}></dd-page-simulations>`;
+      case 'dd-page-search':
+        return html`<dd-page-search .query=${this._searchQuery()}></dd-page-search>`;
+      case 'dd-page-methodology':
+        return html`<dd-page-methodology></dd-page-methodology>`;
       case 'dd-page-blocks':
         return html`<dd-page-blocks></dd-page-blocks>`;
       case 'dd-page-txs':

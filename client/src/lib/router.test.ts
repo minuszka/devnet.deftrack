@@ -170,11 +170,25 @@ describe('the grouped menu', () => {
     }
   });
 
+  // Detail routes are the ones with an identifier in the path. The two
+  // standalone pages (search, how we measure) are hidden too, and belong to no
+  // section by design -- see the next test.
   it('gives every detail route a section to belong under', () => {
-    for (const route of ROUTES.filter((r) => r.hidden)) {
+    for (const route of ROUTES.filter((r) => r.pattern)) {
       expect(route.section, route.label).toBeDefined();
       expect(ROUTES.some((r) => !r.hidden && r.path === route.section), route.label).toBe(true);
     }
+  });
+
+  it('routes the two standalone pages, and lights nothing for them', () => {
+    for (const [path, tag] of [['/search', 'dd-page-search'], ['/methodology', 'dd-page-methodology']] as const) {
+      const match = matchRoute(path);
+      expect(match.status, path).toBe('matched');
+      expect(match.route.tag, path).toBe(tag);
+      expect(navLocation(match), path).toEqual({ group: null, entry: null, exact: false });
+    }
+    // The query string is not part of the route.
+    expect(matchRoute('/search').route.tag).toBe('dd-page-search');
   });
 
   it('lights nothing for a page that could not be found or read', () => {
