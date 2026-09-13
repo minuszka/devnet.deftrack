@@ -17,7 +17,8 @@ import mongoose from 'mongoose';
  * index. It answers whatever it was written to answer, which is the definition
  * of a test that cannot fail.
  *
- * The files run ONE AT A TIME (`--no-file-parallelism` in the npm script), and
+ * The files run ONE AT A TIME (`fileParallelism: false` in
+ * vitest.integration.config.ts, which the npm script uses), and
  * that is the fix for a flake that stood open from day 6 of the website work.
  * Each file has its own database, so nothing is shared except the mongod -- and
  * fourteen files building indexes and seeding at once against that one server
@@ -85,6 +86,18 @@ export async function syncIndexes(models: Array<{ syncIndexes: () => Promise<unk
 
 export async function dropTestMongo(): Promise<void> {
   if (mongoose.connection.readyState === 1) {
+    /*
+     * Wait out every index build first. Each model builds its indexes in the
+     * background as soon as it is compiled -- and the routes a test imports
+     * compile most of the models in this package -- so a drop that went
+     * through while a build was still running was undone by that build a
+     * moment later: the database came back, empty but for its indexes. Eleven
+     * of fifteen files did this on every run; 167 databases had piled up.
+     * `init()` returns the build that is already under way rather than
+     * starting another, and a build that failed is not this function's
+     * business -- the drop is.
+     */
+    await Promise.all(Object.values(mongoose.models).map((model) => model.init().catch(() => undefined)));
     await mongoose.connection.dropDatabase();
     await mongoose.disconnect();
   }

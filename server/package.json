@@ -12,7 +12,7 @@
     "db:explain": "npm run build --silent && node dist/scripts/explainQueries.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src --exclude '**/*.integration.test.ts'",
-    "test:integration": "vitest run src/integration --no-file-parallelism",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "start:lab": "node dist/labServer.js",
     "dev:lab": "tsx watch src/labServer.ts"
   },
