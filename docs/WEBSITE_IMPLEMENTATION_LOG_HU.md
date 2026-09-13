@@ -2895,7 +2895,22 @@ A 14. napi nginx-fejlécek élnek. Részletesen: [átadási csomag](WEBSITE_HAND
   ([jelentés](WEBSITE_REVIEW_DAYS_01_10_2026-09-12_HU.md),
   [ellenpróbák](review-2026-09-12/regressions.spec.ts)). Mind a hét lezárva a
   J1–J3 javító munkanapokon; az ellenpróbák a rendes kapuban futnak.
-- Független végső review a teljes munkáról: még nem történt meg.
+- **Független végső review a teljes munkáról: 2026-09-13, hét igazolt találat (V1–V7)**
+  ([jelentés](WEBSITE_FINAL_REVIEW_2026-09-13_HU.md),
+  [ellenpróbák](review-2026-09-13/regressions.spec.ts)). A vizsgált állapot a
+  `39e7f80` (#174 merge). Az ellenpróbák a mainen az implementáló gépén is
+  reprodukálódtak: 7 bukott, a C1 kontroll zöld, ugyanazokkal a hibaüzenetekkel.
+  A javítás a `web/review-fixes-2026-09-13` ágon folyik, találatonként külön commitban.
+- **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
+  böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
+  jelentés által hivatkozott `client/test-results/review-final/`-t is:
+  `D:\www\devnet .deftrack-review-artefacts\2026-09-13\` — 21 fájl (7 teszt
+  `error-context.md`-je, 6 hibakép, 7 trace, `.last-run.json`) és egy `SHA256SUMS`.
+  A `SHA256SUMS` sha256-ja
+  `6e3c03440ef964a19fc6f674cc9915da0691a915d643e5ecc1533879f2e4756a`. A hash-eket az
+  eredeti fájlokból számoltam; a `sha256sum -c SHA256SUMS` a másolaton és az eredetin
+  is 21/21 OK. Negatív kontroll egy scratch-másolaton: egy átírt bájt és egy törölt
+  fájl → `FAILED` és `FAILED open or read`, exit 1.
 
 A blokkot, kihagyott tesztet és fennmaradó sérülékenységet ne töröld ki egy későbbi bejegyzéssel: lezáráskor hivatkozz a bizonyítékra, hogy az előzmény követhető maradjon.
 

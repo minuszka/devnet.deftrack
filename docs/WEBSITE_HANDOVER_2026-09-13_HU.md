@@ -201,6 +201,12 @@ helyreállítási bizonyítéka hiányzik.
 - Böngészős trace és hiba-képernyőkép: `client/test-results/` helyben; a CI csak **hibás** futásnál
   tölti fel artefaktumként (`client-browser-tests`, 7 nap).
 - A 2026-09-12-i review ellenpróbái: [review-2026-09-12/](review-2026-09-12/).
+- A **2026-09-13-i végső review** ([jelentés](WEBSITE_FINAL_REVIEW_2026-09-13_HU.md)) ellenpróbái:
+  [review-2026-09-13/](review-2026-09-13/). A futásuk trace-ei és hibaképei a repón kívül vannak
+  megőrizve: `D:\www\devnet .deftrack-review-artefacts\2026-09-13\`, 21 fájl és egy `SHA256SUMS`
+  (sha256 `6e3c03440ef964a19fc6f674cc9915da0691a915d643e5ecc1533879f2e4756a`). Ellenőrzés:
+  `sha256sum -c SHA256SUMS` a mappában. A jelentés eredetileg a `client/test-results/review-final/`
+  mappára hivatkozik, de azt a böngésző-suite következő futása kiüríti.
 
 ## 13. Amit a review-nak külön érdemes néznie
 
