@@ -21,6 +21,7 @@ import './dd-page-staking.js';
 import './dd-page-experiments.js';
 import './dd-page-peers.js';
 import './dd-page-fairness.js';
+import './dd-page-simulations.js';
 import './dd-page-not-found.js';
 
 const HEALTH_REFRESH_MS = 30_000;
@@ -565,6 +566,8 @@ export class DdShell extends LitElement {
         return html`<dd-page-peers></dd-page-peers>`;
       case 'dd-page-experiments':
         return html`<dd-page-experiments .runKey=${id}></dd-page-experiments>`;
+      case 'dd-page-simulations':
+        return html`<dd-page-simulations .runKey=${id}></dd-page-simulations>`;
       case 'dd-page-blocks':
         return html`<dd-page-blocks></dd-page-blocks>`;
       case 'dd-page-txs':

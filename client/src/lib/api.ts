@@ -49,6 +49,8 @@ export type {
   DslEpochRow,
 };
 
+import type { PublicSimulationReport, PublicSimulationRunView } from './simulations.js';
+
 const BASE = '/api/v1';
 
 
@@ -140,6 +142,20 @@ function makeApi(signal?: AbortSignal) {
     experiments: (params?: { limit?: number; offset?: number; status?: string }) =>
       get<Page<ExperimentRow>>('/experiments', params),
     experiment: (runKey: string) => get<ExperimentDetail>(`/experiments/${encodeURIComponent(runKey)}`),
+
+    /*
+     * The PUBLIC simulation results. A different model from the experiments
+     * above, and kept apart from them on purpose: an experiment is a declared
+     * run on the devnet, a simulation run is a planned fault with a measured
+     * outcome. Merging the two views would put a dry-run plan beside a live
+     * rollout as though they were the same kind of evidence.
+     */
+    simulations: (params?: { limit?: number; offset?: number }) =>
+      get<Page<PublicSimulationRunView>>('/simulations', params),
+    simulation: (runKey: string) =>
+      get<PublicSimulationRunView>(`/simulations/${encodeURIComponent(runKey)}`),
+    simulationReport: (runKey: string) =>
+      get<PublicSimulationReport>(`/simulations/${encodeURIComponent(runKey)}/report`),
 
     rounds: (params?: { limit?: number; offset?: number; status?: string; llmqName?: string }) =>
       get<Page<QuorumRoundListItem>>('/quorum-rounds', params),

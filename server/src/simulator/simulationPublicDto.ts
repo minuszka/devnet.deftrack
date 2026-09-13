@@ -104,7 +104,21 @@ export function toPublicSimulationRun(source: PublicSimulationRunSource) {
       faultLeaseExpiresAtMs: source.state.faultLeaseExpiresAtMs,
       faultMayBeActive: source.state.faultMayBeActive,
       abortRequested: source.state.abortRequested,
-      lastTransition: source.state.lastTransition,
+      // Named fields, not the stored object. It used to be passed through whole,
+      // and an integration test that planted a field inside it watched that
+      // field come out of the public route. Every field published before is
+      // still published; nothing new can ride along.
+      lastTransition:
+        source.state.lastTransition === null
+          ? null
+          : {
+              eventId: source.state.lastTransition.eventId,
+              eventType: source.state.lastTransition.eventType,
+              from: source.state.lastTransition.from,
+              to: source.state.lastTransition.to,
+              atMs: source.state.lastTransition.atMs,
+              reason: source.state.lastTransition.reason,
+            },
     },
     preflight: source.preflight.map((item) => ({
       checkId: item.checkId,
@@ -113,7 +127,23 @@ export function toPublicSimulationRun(source: PublicSimulationRunSource) {
       checkedAtMs: item.checkedAtMs,
       publicMessage: item.publicMessage,
     })),
-    dataQuality: source.dataQuality,
+    // Same defect as lastTransition: the Mongo projection selects `dataQuality`
+    // whole, and this line then published whatever the document held under it.
+    dataQuality:
+      source.dataQuality === null
+        ? null
+        : {
+            observerCoveragePercent: source.dataQuality.observerCoveragePercent,
+            staleTargetCount: source.dataQuality.staleTargetCount,
+            explorerLagBlocks: source.dataQuality.explorerLagBlocks,
+            // A document written before this field existed has none. Null says
+            // "not recorded"; an empty array would say "none were missing", and
+            // one legacy document must not take the whole list down with a 500.
+            missingHeights: Array.isArray(source.dataQuality.missingHeights)
+              ? [...source.dataQuality.missingHeights]
+              : null,
+            confidence: source.dataQuality.confidence,
+          },
     experimentRunKey: source.metadata.experimentRunKey,
     baselineRunKey: source.metadata.baselineRunKey,
     createdAt: iso(source.createdAt),
