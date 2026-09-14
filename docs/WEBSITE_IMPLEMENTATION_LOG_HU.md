@@ -3423,7 +3423,17 @@ Hatókör: mentés, MongoDB 8.0.32 + Node 24.21.0, reboot a 6.8.0-139-es kernelr
   - negatív kontrollok: a régi egyenlőség visszaírva pontosan a „recovered” esetet buktatja, az „új unit nem hiba”
     mutáns pontosan a „new failed unit” esetet;
   - ShellCheck tiszta.
-- **Utólagos, célzott független review kérve** (a futtatás előtt nem látta review).
+- **Utólagos, célzott független review kérve** (a futtatás előtt nem látta review). **Eredmény (R5): APPROVED.**
+  - Jóváhagyva a verify-javítás, az ACCEPTED ítélet a mellékelt naplók szerint, és a `systemd-run` végrehajtási
+    eltérés.
+  - A reviewer futásai: kapu 17/17; mindkét negatív kontroll pontosan a megfelelő esetet buktatja; további 7
+    névhatár- és 6 mintapár-próba sikeres.
+  - Új hibajegy nincs.
+  - Korlátok, amelyeket az APPROVED nem tesz bizonyítottá: a szabály unitnevet vet össze, hibaokot nem; a csomagból
+    hiányzott a nyers mintapár és a helyszíni hash-kimenet.
+  - Ez utóbbit a review után csak olvasva pótoltam: `…-r5-verify-fix\addendum-state-files\`, `SHA256SUMS`
+    `f95aa63e…`. A végrehajtott szkript helyszíni sha256-ja `0d9dfe64…`; a két tárolt minta ugyanarról az új bootról
+    szól (`14ebe597…`, a prep előtti `2a1c0653…`), mindkettőben `sample_ok=1`.
 
 **Elfogadási minták a javított verify-jal:**
 
@@ -3452,7 +3462,7 @@ Hatókör: mentés, MongoDB 8.0.32 + Node 24.21.0, reboot a 6.8.0-139-es kernelr
 ```text
 Napi státusz: ÉLESBEN, mérve — kernel 6.8.0-139, MongoDB 8.0.32, Node 24.21.0; verify ACCEPTED
 Éles módosítás: MEGTÖRTÉNT (csomagfrissítés + reboot; alkalmazás változatlan, 65dcadf)
-Független review: a futtatás előtt APPROVED (4. kör); a verify egypontos javítására utólagos review kérve
+Független review: a futtatás előtt APPROVED (4. kör); a verify egypontos javítása utólag APPROVED (R5)
 ```
 
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
@@ -3895,8 +3905,9 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   - A 3. kör lezárta az MR2-1…MR2-3-at és az MW3-at; egy P2 maradt (MR3-1, az FCV-időhatár).
   - A 4. kör **APPROVED** (MR3-1 és MR2-4 lezárva, új jegy nincs). Az ablak 2026-09-14-én 13:27–13:37Z között
     lefutott, a verify ACCEPTED (napló, „VPS karbantartási ablak – futtatás”).
-  - A verify egyetlen, élesben talált hibájának javítására (a helyreállt ismert failed unitot is bukásnak vette)
-    **utólagos célzott review kérve**. Csomag: `…\2026-09-14-maint-window-r5-verify-fix\`.
+  - A verify egyetlen, élesben talált hibájának javítása (a helyreállt ismert failed unitot is bukásnak vette)
+    **utólagos célzott review-n APPROVED (R5)**, új jegy nélkül. Csomag: `…\2026-09-14-maint-window-r5-verify-fix\`,
+    a review után pótolt nyers állapotfájlokkal (`addendum-state-files\`).
 - **Megfigyelés a CI-ban (2026-09-14, #184):** a `pull_request` futás legelső e2e-tesztje
   (`accessibility.spec.ts:79`, „a page names itself in one h1, with its sections under it”) hideg indulás után
   638 ms-nál már látta az `Overview` h1-et, a h2-szekciókat még nem, és bukott. Ugyanannak a commitnak a `push` futása
