@@ -169,6 +169,8 @@ export interface LlmqProfileView {
   formsOnV23Mainnet: boolean;
   mainnetNote: string;
   formationGateHeight: number | null;
+  /** From this height the node forms the profile no more; null for a profile not retired. */
+  formationEndHeight: number | null;
 }
 
 export interface HealthTimelinePoint {

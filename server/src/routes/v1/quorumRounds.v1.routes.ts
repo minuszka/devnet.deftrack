@@ -347,6 +347,7 @@ router.get(
         formsOnV23Mainnet: p.formsOnV23Mainnet,
         mainnetNote: p.mainnetNote,
         formationGateHeight: p.formationGateHeight ?? null,
+        formationEndHeight: p.formationEndHeight ?? null,
       }))
       .sort((a, b) => Number(b.tracked) - Number(a.tracked) || a.dkgInterval - b.dkgInterval || a.llmqName.localeCompare(b.llmqName));
     sendData(res, { items });

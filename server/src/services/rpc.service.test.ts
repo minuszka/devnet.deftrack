@@ -1,6 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The log line an RPC refusal produces is evidence, and its level says whether
@@ -32,7 +32,7 @@ vi.mock('../utils/logger.js', () => ({ logger: state.logs }));
 vi.mock('./metrics.service.js', () => ({ metricsService: { observeRpc: () => undefined } }));
 
 import { config } from '../config.js';
-import { RpcService } from './rpc.service.js';
+import { MAX_CACHE_ENTRIES, RpcService } from './rpc.service.js';
 
 /** How the node refuses: a non-2xx status with the RPC error in the body. */
 function refusal(message: string) {
@@ -108,6 +108,95 @@ describe('a transport failure', () => {
     expect(state.post).toHaveBeenCalledTimes(2);
     expect(state.logs.warn).toHaveBeenCalledTimes(1);
     expect(state.logs.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The response cache is bounded.
+ *
+ * A key carries the call's parameters, and the quorum collector asks
+ * `quorum listextended <height>` once per block. When the TTL only decided
+ * whether an entry could be served, every block's listing stayed in memory for
+ * the life of the process (review, 2026-09-14: 200 heights read, 200 entries
+ * kept, all of them expired).
+ */
+describe('the response cache', () => {
+  let now = 1_000_000;
+  const cacheOf = (rpc: RpcService) => (rpc as unknown as { cache: Map<string, unknown> }).cache;
+  const inFlightOf = (rpc: RpcService) => (rpc as unknown as { inFlight: Map<string, unknown> }).inFlight;
+  /** Let the store, catch and finally callbacks chained onto a call run. */
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+  /** The node answers a listing with the height it was asked at. */
+  const answerWithHeight = async (_url: string, body: { params: unknown[] }) => ({
+    data: { result: { readAt: body.params[1] }, error: null },
+  });
+
+  beforeEach(() => {
+    now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    state.post.mockImplementation(answerWithHeight);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps no expired listing, however many heights it has read', async () => {
+    const rpc = new RpcService();
+    for (let n = 0; n < 200; n++) {
+      now += 151_000; // a block apart, ten times the 15 s TTL
+      await expect(rpc.call('quorum', ['listextended', 14_000 + n], 'listextended')).resolves.toEqual({
+        readAt: 14_000 + n,
+      });
+      await settle();
+    }
+    expect(state.post).toHaveBeenCalledTimes(200);
+    // Only the last listing is left, and it is still inside its TTL.
+    expect([...cacheOf(rpc).keys()]).toEqual(['quorum:listextended|["listextended",14199]']);
+  });
+
+  it('still serves a live entry without asking again, and asks once it has expired', async () => {
+    const rpc = new RpcService();
+    await rpc.call('quorum', ['listextended', 14_000], 'listextended');
+    await settle();
+    now += 14_999;
+    await expect(rpc.call('quorum', ['listextended', 14_000], 'listextended')).resolves.toEqual({ readAt: 14_000 });
+    expect(state.post).toHaveBeenCalledTimes(1);
+    now += 1;
+    await rpc.call('quorum', ['listextended', 14_000], 'listextended');
+    expect(state.post).toHaveBeenCalledTimes(2);
+  });
+
+  it(`holds at most ${MAX_CACHE_ENTRIES} live entries, dropping the oldest stored first`, async () => {
+    const rpc = new RpcService();
+    const extra = 44;
+    for (let n = 0; n < MAX_CACHE_ENTRIES + extra; n++) {
+      now += 1; // every one of them still live
+      await rpc.call('quorum', ['listextended', 20_000 + n], 'listextended');
+      await settle();
+    }
+    expect(cacheOf(rpc).size).toBe(MAX_CACHE_ENTRIES);
+    const asked = state.post.mock.calls.length;
+    // The newest is served from the cache...
+    await rpc.call('quorum', ['listextended', 20_000 + MAX_CACHE_ENTRIES + extra - 1], 'listextended');
+    expect(state.post).toHaveBeenCalledTimes(asked);
+    // ...the oldest kept one too, while the ones stored before it were dropped and are asked again.
+    await rpc.call('quorum', ['listextended', 20_000 + extra], 'listextended');
+    expect(state.post).toHaveBeenCalledTimes(asked);
+    await rpc.call('quorum', ['listextended', 20_000 + extra - 1], 'listextended');
+    expect(state.post).toHaveBeenCalledTimes(asked + 1);
+  });
+
+  it('keeps nothing from a refused call, and asks again on the next one', async () => {
+    const rpc = new RpcService();
+    state.post.mockRejectedValueOnce(refusal('Block height out of range'));
+    await expect(rpc.call('quorum', ['listextended', 15_000], 'listextended')).rejects.toThrow('out of range');
+    await settle();
+    expect(cacheOf(rpc).size).toBe(0);
+    expect(inFlightOf(rpc).size).toBe(0);
+    await expect(rpc.call('quorum', ['listextended', 15_000], 'listextended')).resolves.toEqual({ readAt: 15_000 });
+    expect(state.post).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -21,7 +21,8 @@ import { currentRoundHeight, isSchedulable } from './dkgSchedule.js';
  * Two further rules keep the answer honest:
  *
  * - A profile the node refuses to form below a gate contributes nothing below it
- *   (`formationGateHeight`, the same rule the schedule reconstruction applies).
+ *   (`formationGateHeight`), and a retired profile nothing from its end
+ *   (`formationEndHeight`) -- the same rule the schedule reconstruction applies.
  * - A profile that cannot reach `minSize` contributes nothing at all. Below
  *   minSize a session sends no commitment (`dkgsession.cpp:967-970`), the miner
  *   emits a NULL commitment instead, and a null commitment never reaches
@@ -85,7 +86,7 @@ export function punishingProfilesAtHeight(input: {
     .filter(
       (profile) =>
         canPunishAtSize(profile, input.masternodeCount) &&
-        isSchedulable(input.height, profile.formationGateHeight) &&
+        isSchedulable(input.height, profile.formationGateHeight, profile.formationEndHeight) &&
         isInMiningWindow(profile, input.height)
     );
 }

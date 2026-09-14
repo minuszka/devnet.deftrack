@@ -198,6 +198,7 @@ export function llmqProfile(overrides: Partial<LlmqProfileView> = {}): LlmqProfi
     formsOnV23Mainnet: true,
     mainnetNote: 'Fixture profile; this note is invented.',
     formationGateHeight: 3120,
+    formationEndHeight: null,
     ...overrides,
   };
 }
