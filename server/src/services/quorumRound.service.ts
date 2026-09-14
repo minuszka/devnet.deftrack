@@ -309,8 +309,12 @@ export class QuorumRoundService {
    * another height's listing. For a retired profile that is not harmless: from
    * end - 1 the node omits the profile altogether, so its last real round read
    * as absent and was written `failed`, a verdict shouldRefreshRound never
-   * revisits. Pinned, the height is part of the cache key as well, so a cached
-   * answer is always the listing at that block.
+   * revisits. Pinned, the height is part of the RPC cache key as well, so a
+   * cached answer is the listing read at that height, at most one TTL old. It
+   * is not a snapshot of a block: a reorg that replaces the block at that height
+   * inside the TTL can still be served stale once, and the next tick reads again.
+   * One key per block does not accumulate: the RPC cache drops expired entries
+   * when it stores and holds a bounded number (MAX_CACHE_ENTRIES).
    *
    * A retired profile past its end is read where it was still enabled
    * (retiredObservationHeight). One call per distinct height.

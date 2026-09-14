@@ -23,7 +23,21 @@ const CACHE_TTL_MS: Record<string, number> = {
   'quorum:listextended': 15_000,
 };
 
-type CacheEntry = { value: unknown; atMs: number };
+/**
+ * The most responses one RpcService keeps cached at a time.
+ *
+ * A cache key carries the call's parameters, so a caller that asks at a height
+ * -- the quorum collector reads `quorum listextended <height>` once per block --
+ * adds a key per block. A TTL only decides whether an entry may be served, not
+ * whether it is kept: with nothing else, every block's listing stayed in memory
+ * for the life of the process. Entries past their TTL are therefore dropped
+ * whenever a response is stored, and this bound holds even when many distinct
+ * live keys arrive inside one TTL, oldest first. A miss costs one RPC; nothing
+ * depends on an entry staying.
+ */
+export const MAX_CACHE_ENTRIES = 256;
+
+type CacheEntry = { value: unknown; atMs: number; ttlMs: number };
 
 /**
  * What a caller is prepared to hear back.
@@ -133,16 +147,35 @@ export class RpcService {
 
     const promise = this.doCallWithRetry<T>(method, params, options);
 
-    if (cacheKey) {
+    if (cacheKey && ttl) {
       this.inFlight.set(cacheKey, promise as Promise<unknown>);
       promise
-        .then((value) => this.cache.set(cacheKey, { value, atMs: Date.now() }))
+        .then((value) => this.remember(cacheKey, ttl, value))
         // Never poison the cache on failure; let the next caller retry.
         .catch(() => undefined)
         .finally(() => this.inFlight.delete(cacheKey));
     }
 
     return promise;
+  }
+
+  /**
+   * Store a response and keep the cache bounded: every entry past its own TTL
+   * goes now, and if distinct live keys still exceed MAX_CACHE_ENTRIES, the
+   * oldest stored go first -- a Map iterates in insertion order, and a key
+   * stored again is moved to the end.
+   */
+  private remember(cacheKey: string, ttlMs: number, value: unknown): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache) {
+      if (now - entry.atMs >= entry.ttlMs) this.cache.delete(key);
+    }
+    this.cache.delete(cacheKey);
+    this.cache.set(cacheKey, { value, atMs: now, ttlMs });
+    for (const key of this.cache.keys()) {
+      if (this.cache.size <= MAX_CACHE_ENTRIES) break;
+      this.cache.delete(key);
+    }
   }
 
   /**
