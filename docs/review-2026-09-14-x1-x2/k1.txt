@@ -1,0 +1,79 @@
+﻿
+> @devnet-deftrack/shared@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> devnet-deftrack@0.1.0 typecheck
+> npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client
+
+
+> @devnet-deftrack/shared@0.1.0 typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> @devnet-deftrack/server@0.1.0 typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> @devnet-deftrack/client@0.1.0 typecheck
+> tsc --noEmit
+
+
+> devnet-deftrack@0.1.0 test
+> npm run test -w server && npm run test -w client
+
+
+> @devnet-deftrack/server@0.1.0 test
+> vitest run src --exclude '**/*.integration.test.ts'
+
+
+ RUN  v4.1.11 D:/www/deftrack-review-458b6d0/server
+
+
+ Test Files  92 passed (92)
+      Tests  864 passed (864)
+   Start at  02:21:33
+   Duration  3.41s (transform 6.66s, setup 0ms, import 14.14s, tests 3.21s, environment 16ms)
+
+
+> @devnet-deftrack/client@0.1.0 test
+> vitest run src
+
+
+ RUN  v4.1.11 D:/www/deftrack-review-458b6d0/client
+
+
+ Test Files  18 passed (18)
+      Tests  203 passed (203)
+   Start at  02:21:37
+   Duration  607ms (transform 1.42s, setup 0ms, import 1.98s, tests 182ms, environment 2ms)
+
+
+> devnet-deftrack@0.1.0 build
+> npm run build -w shared && npm run build -w server && npm run build -w client
+
+
+> @devnet-deftrack/shared@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @devnet-deftrack/server@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @devnet-deftrack/client@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 60 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                           0.79 kB │ gzip:  0.47 kB
+dist/assets/index-DaugESNZ.css            3.26 kB │ gzip:  1.36 kB
+dist/assets/index-CNPCV91P.js             2.27 kB │ gzip:  1.12 kB
+dist/assets/shared-DhD6n9A6.js           34.12 kB │ gzip: 11.26 kB
+dist/assets/dd-admin-shell-BaGgOSs6.js   61.15 kB │ gzip: 15.96 kB
+dist/assets/dd-shell-CYDLcZWh.js        257.13 kB │ gzip: 59.06 kB
+
+✓ built in 77ms

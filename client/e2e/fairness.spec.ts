@@ -1,4 +1,5 @@
-import { expect, fail, ok, test, type ApiStubs } from './harness.js';
+import type { Page } from '@playwright/test';
+import { expect, fail, ok, test, type ApiStubs, type AppHarness, type StubResponse } from './harness.js';
 import {
   ACTIVATION_HEIGHT,
   chainLockReport,
@@ -243,6 +244,71 @@ test.describe('selection fairness', () => {
     await expect.poll(() => app.callsTo(FAIRNESS).length).toBeGreaterThan(1);
     expect(app.callsTo(FAIRNESS).at(-1) ?? '').toContain(`llmqName=${V2_PROFILE}`);
     await expect(page.locator('.tiles')).toContainText(V2_PROFILE);
+  });
+
+  /**
+   * W4 of the re-review. The profile the page follows moved with the tip, and
+   * the figures on screen did not know it.
+   *
+   * A change of URL cleared them; a change of the RESOLVED profile -- the tip
+   * crossing the activation height with no profile in the URL -- did not. So
+   * when the new profile's figures failed, or while they were still on their
+   * way, the "at the tip" marker stood on V2 above V1's tables.
+   */
+  async function crossTheGate(app: AppHarness, page: Page, fairness: StubResponse): Promise<void> {
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00.000Z') });
+    await page.clock.pauseAt(new Date('2026-09-11T09:00:01.000Z'));
+    app.stub(fairnessStubs({ '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT - 1 })) } }));
+    await app.goto('/fairness');
+    await expect(page.locator('.tiles')).toContainText(V1_PROFILE);
+
+    app.stub({
+      '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT + 1 })) },
+      [FAIRNESS]: fairness,
+    });
+    await page.clock.fastForward(60_000);
+  }
+
+  test("a tip-driven profile change that fails shows nothing of the old profile's figures under it", async ({
+    app,
+    page,
+  }) => {
+    await crossTheGate(app, page, { status: 503, body: fail('new profile unavailable') });
+
+    await expect(page.locator('.err')).toContainText('new profile unavailable');
+    await expect(page.getByRole('button', { name: `${V2_PROFILE} · at the tip` })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.tiles')).toHaveCount(0);
+    // Said as a failure, not as a load still under way.
+    await expect(page.getByText('Could not be loaded, so what exists is unknown.')).toBeVisible();
+  });
+
+  test("while the new profile's figures load, the old profile's are not shown under it", async ({ app, page }) => {
+    const next = app.gate();
+    await crossTheGate(app, page, {
+      body: ok(selectionFairness({ llmqName: V2_PROFILE })),
+      gate: next,
+    });
+    await next.waitForHeld(1);
+
+    await expect(page.getByRole('button', { name: `${V2_PROFILE} · at the tip` })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.tiles')).toHaveCount(0);
+
+    await next.release();
+    await expect(page.locator('.tiles')).toContainText(V2_PROFILE);
+  });
+
+  /** W4's rule, the other half: the same profile's failed refresh keeps its own figures. */
+  test('a failed refresh of the same resolved profile keeps its figures beside the error', async ({ app, page }) => {
+    await page.clock.install({ time: new Date('2026-09-11T09:00:00.000Z') });
+    await page.clock.pauseAt(new Date('2026-09-11T09:00:01.000Z'));
+    app.stub(fairnessStubs({ '/api/v1/health': { body: ok(healthSnapshot({ chainTip: ACTIVATION_HEIGHT - 1 })) } }));
+    await app.goto('/fairness');
+    await expect(page.locator('.tiles')).toContainText(V1_PROFILE);
+
+    app.stub({ [FAIRNESS]: { status: 503, body: fail('refresh failed') } });
+    await page.clock.fastForward(60_000);
+    await expect(page.locator('.err')).toContainText('refresh failed');
+    await expect(page.locator('.tiles')).toContainText(V1_PROFILE);
   });
 
   /**

@@ -259,11 +259,22 @@ export class DdPageSimulations extends LitElement {
   /* ── list ─────────────────────────────────────────────────────────────── */
 
   private _list(): TemplateResult {
-    if (this._error) return html`<div class="err" role="alert">${this._error}</div>`;
     // The rows on hand are shown only under the page they were read for.
     const current = this._heldFor === this._offset;
+    const error = this._error ? html`<div class="err" role="alert">${this._error}</div>` : nothing;
+    /*
+     * A failure with nothing held for this page is the failure alone: no
+     * invented empty record. A failure with this page's rows on hand -- a
+     * refresh of the same page that failed -- keeps them beside the error.
+     *
+     * The error used to be returned before that question was asked, so a
+     * single failed refresh threw away a list that was still true (W1 of the
+     * re-review); every other paged page keeps its last good rows (day 3).
+     */
+    if (!current && this._error) return html`${error}`;
     const to = Math.min(this._offset + PAGE_SIZE, this._total);
     return html`
+      ${error}
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Recorded runs</h2>

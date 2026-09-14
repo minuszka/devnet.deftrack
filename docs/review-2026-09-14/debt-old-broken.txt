@@ -1,0 +1,157 @@
+﻿node.exe : [WebServer] (node:32296) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([WebServer] (no... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:37404) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:8828) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]   VITE v8.2.2  ready in 238 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:5496/
+
+Running 3 tests using 1 worker
+
+(node:24800) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 0:12:05 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  1 docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action (3.2s)
+(node:37612) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 0:12:09 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  2 docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action (3.1s)
+(node:33436) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 0:12:13 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  3 docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action (3.1s)
+
+
+  1) docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: locator('.run-state')
+    Expected substring: "aborting"
+    Received string:    "Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is fault_active (live lab run)."
+    Timeout: 2500ms
+
+    Call log:
+      - Expect "toContainText" with timeout 2500ms
+      - waiting for locator('.run-state')
+        9 × locator resolved to <div class="state-line run-state">…</div>
+          - unexpected value "Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is fault_active (live lab run)."
+
+
+      91 |     // Several ticks of the stale answer later, the abort still stands.
+      92 |     await page.clock.fastForward(20_000);
+    > 93 |     await expect(page.locator(STATUS)).toContainText('aborting');
+         |                                        ^
+      94 |   });
+      95 |
+      96 |   test('two clicks on one control send one request', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-14\generated\debt-old.spec.ts:93:40
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: locator('.run-state')
+    Expected substring: "aborting"
+    Received string:    "Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is fault_active (live lab run)."
+    Timeout: 2500ms
+
+    Call log:
+      - Expect "toContainText" with timeout 2500ms
+      - waiting for locator('.run-state')
+        9 × locator resolved to <div class="state-line run-state">…</div>
+          - unexpected value "Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is fault_active (live lab run)."
+
+
+      91 |     // Several ticks of the stale answer later, the abort still stands.
+      92 |     await page.clock.fastForward(20_000);
+    > 93 |     await expect(page.locator(STATUS)).toContainText('aborting');
+         |                                        ^
+      94 |   });
+      95 |
+      96 |   test('two clicks on one control send one request', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-14\generated\debt-old.spec.ts:93:40
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat1\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat1\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat1\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat1\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action 
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: locator('.run-state')
+    Expected substring: "aborting"
+    Received string:    "Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is fault_active (live lab run)."
+    Timeout: 2500ms
+
+    Call log:
+      - Expect "toContainText" with timeout 2500ms
+      - waiting for locator('.run-state')
+        9 × locator resolved to <div class="state-line run-state">…</div>
+          - unexpected value "Run sim_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is fault_active (live lab run)."
+
+
+      91 |     // Several ticks of the stale answer later, the abort still stands.
+      92 |     await page.clock.fastForward(20_000);
+    > 93 |     await expect(page.locator(STATUS)).toContainText('aborting');
+         |                                        ^
+      94 |   });
+      95 |
+      96 |   test('two clicks on one control send one request', async ({ app, page }) => {
+        at D:\www\devnet .deftrack\docs\review-2026-09-14\generated\debt-old.spec.ts:93:40
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat2\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat2\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat2\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14\artifacts\debt-old-revision\debt-old-run-status-a-poll-baa6b-state-cannot-undo-an-action-repeat2\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3 failed
+    docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action 
+    docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action 
+    docs\review-2026-09-14\generated\debt-old.spec.ts:70:3 › run status › a poll describing an older state cannot undo an action 

@@ -1,0 +1,295 @@
+﻿node.exe : [WebServer] (node:30480) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([WebServer] (no... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:35824) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:33428) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]   VITE v8.2.2  ready in 230 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:5594/
+
+Running 8 tests using 1 worker
+
+(node:28756) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:23:57 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  1 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a history 503, the 503 arriving first (3.2s)
+(node:26072) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:24:01 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  2 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a history 503, the 401 arriving first (3.1s)
+(node:36400) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:24:05 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  3 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a dry-run 503, the 503 arriving first (3.2s)
+(node:37668) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:24:10 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  4 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a dry-run 503, the 401 arriving first (3.2s)
+(node:39000) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:24:13 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  5 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first history read ends the session beside a dry-run 503, the 503 arriving first (3.2s)
+(node:27972) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:24:17 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 6 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first history read ends the session beside a dry-run 503, the 401 arriving first (642ms)
+[WebServer] 2:24:18 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  x  7 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first dry-run read ends the session beside a history 503, the 503 arriving first (3.1s)
+(node:33228) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:24:22 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 8 ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first dry-run read ends the session beside a history 503, the 401 arriving first (637ms)
+
+
+  1) ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a history 503, the 503 arriving first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      1059 |
+      1060 |   async function expectSignedOut(page: Page): Promise<void> {
+    > 1061 |     await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+           |                                                               ^
+      1062 |     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+      1063 |     await expect(page.locator(STATUS)).toHaveCount(0);
+      1064 |   }
+        at expectSignedOut (D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1061:63)
+        at D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1207:15
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-57489--503-the-503-arriving-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-57489--503-the-503-arriving-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-57489--503-the-503-arriving-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-57489--503-the-503-arriving-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a history 503, the 401 arriving first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      1059 |
+      1060 |   async function expectSignedOut(page: Page): Promise<void> {
+    > 1061 |     await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+           |                                                               ^
+      1062 |     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+      1063 |     await expect(page.locator(STATUS)).toHaveCount(0);
+      1064 |   }
+        at expectSignedOut (D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1061:63)
+        at D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1207:15
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-d5147--503-the-401-arriving-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-d5147--503-the-401-arriving-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-d5147--503-the-401-arriving-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-d5147--503-the-401-arriving-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a dry-run 503, the 503 arriving first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      1059 |
+      1060 |   async function expectSignedOut(page: Page): Promise<void> {
+    > 1061 |     await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+           |                                                               ^
+      1062 |     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+      1063 |     await expect(page.locator(STATUS)).toHaveCount(0);
+      1064 |   }
+        at expectSignedOut (D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1061:63)
+        at D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1207:15
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-8da91--503-the-503-arriving-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-8da91--503-the-503-arriving-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-8da91--503-the-503-arriving-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-8da91--503-the-503-arriving-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a dry-run 503, the 401 arriving first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      1059 |
+      1060 |   async function expectSignedOut(page: Page): Promise<void> {
+    > 1061 |     await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+           |                                                               ^
+      1062 |     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+      1063 |     await expect(page.locator(STATUS)).toHaveCount(0);
+      1064 |   }
+        at expectSignedOut (D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1061:63)
+        at D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1207:15
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-497de--503-the-401-arriving-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-497de--503-the-401-arriving-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-497de--503-the-401-arriving-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-497de--503-the-401-arriving-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first history read ends the session beside a dry-run 503, the 503 arriving first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      1059 |
+      1060 |   async function expectSignedOut(page: Page): Promise<void> {
+    > 1061 |     await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+           |                                                               ^
+      1062 |     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+      1063 |     await expect(page.locator(STATUS)).toHaveCount(0);
+      1064 |   }
+        at expectSignedOut (D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1061:63)
+        at D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1207:15
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-9ebdd--503-the-503-arriving-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-9ebdd--503-the-503-arriving-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-9ebdd--503-the-503-arriving-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-9ebdd--503-the-503-arriving-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6) ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first dry-run read ends the session beside a history 503, the 503 arriving first 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('button', { name: 'Continue to admin dashboard' })
+    Expected: visible
+    Timeout: 2500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 2500ms
+      - waiting for getByRole('button', { name: 'Continue to admin dashboard' })
+
+
+      1059 |
+      1060 |   async function expectSignedOut(page: Page): Promise<void> {
+    > 1061 |     await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+           |                                                               ^
+      1062 |     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+      1063 |     await expect(page.locator(STATUS)).toHaveCount(0);
+      1064 |   }
+        at expectSignedOut (D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1061:63)
+        at D:\www\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1207:15
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-62c05--503-the-503-arriving-first\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-62c05--503-the-503-arriving-first\error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-62c05--503-the-503-arriving-first\trace.zip
+    Usage:
+
+        npx playwright show-trace docs\review-2026-09-14-x1-x2\artifacts\baseline\run-status-run-status-a-40-62c05--503-the-503-arriving-first\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6 failed
+    ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a history 503, the 503 arriving first 
+    ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a history 503, the 401 arriving first 
+    ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a dry-run 503, the 503 arriving first 
+    ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first recovery read ends the session beside a dry-run 503, the 401 arriving first 
+    ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first history read ends the session beside a dry-run 503, the 503 arriving first 
+    ..\deftrack-review-458b6d0\client\e2e\run-status.spec.ts:1186:7 › run status › a 401 on the first dry-run read ends the session beside a history 503, the 503 arriving first 
+  2 passed (28.4s)

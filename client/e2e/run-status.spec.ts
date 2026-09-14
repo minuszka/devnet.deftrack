@@ -88,8 +88,15 @@ test.describe('run status', () => {
     await page.getByRole('button', { name: 'Abort & recover' }).click();
     await expect(page.locator(STATUS)).toContainText('aborting');
 
-    // Several ticks of the stale answer later, the abort still stands.
+    // Several ticks of the stale answer later -- READ, not merely sent -- the
+    // abort still stands. This used to assert straight after moving the clock,
+    // so it held only because the stale poll happened to be processed first:
+    // measured on 2026-09-13 it did catch a broken revision rule 3 times out of
+    // 3, but by timing, not by construction (re-review, test debt).
+    const polls = `/api/v1/admin/simulations/runs/${RUN_A}`;
+    const before = await app.readCount(polls);
     await page.clock.fastForward(20_000);
+    await app.waitUntilRead(polls, before + 1);
     await expect(page.locator(STATUS)).toContainText('aborting');
   });
 
@@ -1046,5 +1053,237 @@ test.describe('run status', () => {
     await proof.release();
     await expect(page.locator('.approval')).toContainText(NONE_RECORDED);
     await expect(page.locator('.approval')).not.toContainText(EVIDENCE_LOADING);
+  });
+
+  const SIGN_IN = 'Continue to admin dashboard';
+
+  async function expectSignedOut(page: Page): Promise<void> {
+    await expect(page.getByRole('button', { name: SIGN_IN })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+    await expect(page.locator(STATUS)).toHaveCount(0);
+  }
+
+  /**
+   * W2 of the re-review. A 401 on the evidence read was an evidence outage.
+   *
+   * The evidence helper V7 introduced turned every failure into "could not be
+   * read", 401 included -- as the refresh's history read had long turned it
+   * into nothing at all. So an expired session left the private panel open,
+   * offering to read the evidence again, and on a finished run no status poll
+   * would come along to notice. A 401 is the session ending, on every read.
+   */
+  test('a 401 on the first evidence read ends the session', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'completed', revision: 9, live: true }),
+      [`${A}/recovery`]: { status: 401, body: fail('no admin session') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+
+    await expectSignedOut(page);
+    await expect(page.getByText(EVIDENCE_UNREAD)).toHaveCount(0);
+  });
+
+  test('a 401 on reading the evidence again ends the session, and still asks for nothing else', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'recovery', live: true, faultMayBeActive: true }),
+      [`${A}/recovery`]: { status: 503, body: fail('the evidence store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/recovery`, 1);
+    await expect(page.locator('.approval')).toContainText(EVIDENCE_UNREAD);
+
+    app.stub({ [`${A}/recovery`]: { status: 401, body: fail('no admin session') } });
+    const before = app.requests.length;
+    await page.getByRole('button', { name: READ_AGAIN }).click();
+    await app.waitUntilRead(`${A}/recovery`, 2);
+
+    await expectSignedOut(page);
+    expect(app.requests.slice(before).filter((entry) => entry.method !== 'GET')).toEqual([]);
+  });
+
+  test('a 401 on a refreshed timeline ends the session', async ({ app, page }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+
+    // The run moves, and the refresh that follows finds the session gone.
+    app.stub({
+      [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'recovery', revision: 4, live: true, faultMayBeActive: true })) },
+      [`${A}/history`]: { status: 401, body: fail('no admin session') },
+    });
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(`${A}/history`, 2);
+
+    await expectSignedOut(page);
+  });
+
+  /**
+   * W2's other half: a 401 belongs to the read that got it. One that arrives
+   * for a run the operator has already left says nothing the reads for the
+   * current run will not say themselves, and must not throw them out.
+   */
+  test('a late 401 for a run the operator has left does not end the session', async ({ app, page }) => {
+    const late = app.gate();
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 3, live: true, faultMayBeActive: true }),
+      ...runStubs({ runKey: RUN_B, status: 'cooldown', revision: 3, live: true }),
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+
+    app.stub({
+      [A]: { body: ok(controlRun({ runKey: RUN_A, status: 'recovery', revision: 4, live: true, faultMayBeActive: true })) },
+      [`${A}/recovery`]: { status: 401, body: fail('no admin session'), gate: late },
+    });
+    await page.clock.fastForward(5_000);
+    await late.waitForHeld(1);
+
+    await page.evaluate((key) => {
+      history.pushState(null, '', `/admin?run=${key}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, RUN_B);
+    await expect(page.locator(STATUS)).toContainText(RUN_B);
+
+    await late.release();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+    await expect(page.locator(STATUS)).toContainText(RUN_B);
+  });
+
+  /**
+   * X1 of the third review: the first read's failures, taken together.
+   *
+   * The plan, the timeline and the evidence are read in parallel, and the load
+   * answered with whichever failure arrived first. A 503 on one read, landing
+   * before another read's 401, was reported as a read failure and the 401 was
+   * never looked at -- the private panel stayed open, Abort and all, on a
+   * session that had ended. The evidence read's 401 was lost in either order,
+   * since that read turns its failure into an answer rather than a rejection.
+   *
+   * Every read that can carry the 401, beside every read that can fail with
+   * it, in both orders.
+   */
+  for (const [failed, expired] of [
+    ['history', 'recovery'],
+    ['dry-run', 'recovery'],
+    ['dry-run', 'history'],
+    ['history', 'dry-run'],
+  ] as const) {
+    for (const first of ['the 503', 'the 401'] as const) {
+      test(`a 401 on the first ${expired} read ends the session beside a ${failed} 503, ${first} arriving first`, async ({
+        app,
+        page,
+      }) => {
+        const held = app.gate();
+        const pageErrors: string[] = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        const failure: StubResponse = { status: 503, body: fail('the store did not answer') };
+        const expiry: StubResponse = { status: 401, body: fail('no admin session') };
+        app.stub({
+          ...adminSessionStubs(),
+          ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true }),
+          [`${A}/${failed}`]: first === 'the 503' ? failure : { ...failure, gate: held },
+          [`${A}/${expired}`]: first === 'the 401' ? expiry : { ...expiry, gate: held },
+        });
+        await stoppedClock(page);
+        await app.goto(`/admin?run=${RUN_A}`);
+        await held.waitForHeld(1);
+        await app.waitUntilRead(`${A}/${first === 'the 503' ? failed : expired}`, 1);
+
+        await held.release();
+        await expectSignedOut(page);
+        await expect(page.getByRole('button', { name: ABORT })).toHaveCount(0);
+        expect(pageErrors).toEqual([]);
+      });
+    }
+  }
+
+  /**
+   * A timeline that cannot be read on the first read, and nothing else wrong.
+   *
+   * The plan and the timeline are one load, so the failure is reported for
+   * both and the panel is the one without a plan; the run still comes from the
+   * status poll, with its way out. Nothing tested this alone: collecting every
+   * answer before deciding made it possible to drop the timeline's failure on
+   * the floor and draw a panel with no timeline and no word about it.
+   */
+  test('a timeline that cannot be read on the first read is said as such, and the run keeps its abort', async ({
+    app,
+    page,
+  }) => {
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true }),
+      [`${A}/history`]: { status: 503, body: fail('the timeline store did not answer') },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await app.waitUntilRead(`${A}/history`, 1);
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(A, 1);
+
+    await expect(page.locator('.alert[role="alert"]').first()).toContainText(
+      `The saved plan and timeline for ${RUN_A} could not be read: the timeline store did not answer`
+    );
+    await expect(page.getByText(PLAN_UNREAD)).toBeVisible();
+    await expect(page.locator(STATUS)).toContainText('fault_active');
+    await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
+  });
+
+  /**
+   * The other half of X1: waiting for every first read must not let a run the
+   * operator has left end the session. Its late 401 arrives after the move to
+   * run B, whose plan cannot be read -- so B's panel is the one without a plan,
+   * and still has its way out.
+   */
+  test('a late first-read 401 for a run the operator has left does not end the session of a run without its plan', async ({
+    app,
+    page,
+  }) => {
+    const late = app.gate();
+    const plan = app.gate();
+    const B = `/api/v1/admin/simulations/runs/${RUN_B}`;
+    app.stub({
+      ...adminSessionStubs(),
+      ...runStubs({ runKey: RUN_A, status: 'fault_active', revision: 9, live: true, faultMayBeActive: true }),
+      ...runStubs({ runKey: RUN_B, status: 'fault_active', revision: 10, live: true, faultMayBeActive: true }),
+      [`${A}/recovery`]: { status: 401, body: fail('no admin session'), gate: late },
+      [`${B}/dry-run`]: { status: 503, body: fail('the plan store did not answer'), gate: plan },
+    });
+    await stoppedClock(page);
+    await app.goto(`/admin?run=${RUN_A}`);
+    await late.waitForHeld(1);
+
+    await page.evaluate((key) => {
+      history.pushState(null, '', `/admin?run=${key}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, RUN_B);
+    await plan.waitForHeld(1);
+    await page.clock.fastForward(5_000);
+    await app.waitUntilRead(B, 1);
+    await expect(page.locator(STATUS)).toContainText(RUN_B);
+
+    await late.release();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
+
+    await plan.release();
+    await expect(page.getByText(PLAN_UNREAD)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+    await expect(page.locator(STATUS)).toContainText(RUN_B);
+    await expect(page.getByRole('button', { name: ABORT })).toBeVisible();
   });
 });

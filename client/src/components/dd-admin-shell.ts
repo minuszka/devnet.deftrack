@@ -72,12 +72,28 @@ function messageOf(error: unknown): string {
 }
 
 /** One read of a run's recovery evidence: what it says, or why it could not be read. */
-type EvidenceAnswer = { read: true; recovery: RecoveryReportView | null } | { read: false; message: string };
+type EvidenceAnswer =
+  | { read: true; recovery: RecoveryReportView | null }
+  | { read: false; message: string; sessionEnded: boolean };
 
+const SESSION_ENDED = 'Your session ended. Sign in again to view the private dashboard.';
+
+/** A 401 from the admin API is the session ending, whichever read received it. */
+function endsSession(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+/**
+ * One read of a run's recovery evidence: what it says, or why it could not be
+ * read -- and whether "why" is that the session has ended.
+ *
+ * That last part was folded into "could not be read" (W2 of the re-review):
+ * an expired session left the private panel open and offering to read again.
+ */
 function readEvidence(runKey: string): Promise<EvidenceAnswer> {
   return adminApi.recovery(runKey).then(
     (answer): EvidenceAnswer => ({ read: true, recovery: answer.recovery }),
-    (error: unknown): EvidenceAnswer => ({ read: false, message: messageOf(error) })
+    (error: unknown): EvidenceAnswer => ({ read: false, message: messageOf(error), sessionEnded: endsSession(error) })
   );
 }
 
@@ -578,14 +594,31 @@ export class DdAdminShell extends LitElement {
    */
   private async _loadHistory(runKey: string, generation: number): Promise<void> {
     const request = ++this._detailRequests;
-    const [detail, history, recovery] = await Promise.all([
-      adminApi.dryRun(runKey),
-      adminApi.history(runKey),
+    /*
+     * Every answer is in before anything is decided (X1 of the third review).
+     *
+     * This was one Promise.all, which answers with whichever failure arrives
+     * first: a 503 on the plan or the timeline, landing before another read's
+     * 401, took the load down as a read failure and the 401 was never looked
+     * at -- the private panel stayed open on a session that had ended.
+     */
+    const [[detail, history], recovery] = await Promise.all([
+      Promise.allSettled([adminApi.dryRun(runKey), adminApi.history(runKey)]),
       // Evidence that is merely unavailable must never read as "clear" -- nor
       // as "none recorded", which is what catching it into null used to say.
       readEvidence(runKey),
     ]);
     if (generation !== this._selectionGeneration) return;
+    // After the generation check, not before: a 401 for a selection the
+    // operator has already left is not this selection's news. And before any
+    // other failure: an ended session outranks a read that could not be done.
+    const failures = [detail, history].flatMap((read) => (read.status === 'rejected' ? [read.reason] : []));
+    if (failures.some(endsSession) || (!recovery.read && recovery.sessionEnded)) {
+      this._endSession(SESSION_ENDED);
+      return;
+    }
+    if (detail.status === 'rejected') throw detail.reason;
+    if (history.status === 'rejected') throw history.reason;
     /*
      * The plan is immutable and is always taken. The run that comes with it is
      * a snapshot like any other, and goes through the same revision rule as the
@@ -597,12 +630,12 @@ export class DdAdminShell extends LitElement {
      * overwritten by an earlier one, so the panel went back to `armed` and
      * offered to start a run whose fault was active.
      */
-    this._acceptRun(detail.run);
-    this._selectedPlan = detail.plan;
+    this._acceptRun(detail.value.run);
+    this._selectedPlan = detail.value.plan;
     this._selectedPreflight = null;
     // The timeline and the evidence are as old as this request, and a refresh
     // issued after it may already have brought newer ones.
-    this._takeHistory(history, request);
+    this._takeHistory(history.value, request);
     this._takeEvidence(recovery, request);
   }
 
@@ -723,7 +756,9 @@ export class DdAdminShell extends LitElement {
   private async _refreshSelectionDetail(runKey: string, generation: number): Promise<void> {
     const request = ++this._detailRequests;
     const [history, recovery] = await Promise.all([
-      adminApi.history(runKey).catch(() => null),
+      // A failed timeline refresh keeps the timeline -- unless it failed
+      // because the session ended, which a null here used to hide.
+      adminApi.history(runKey).catch((error: unknown) => (endsSession(error) ? SESSION_ENDED : null)),
       /*
        * A failed read and "the server says there is no proof" are different
        * answers. Collapsing the two would let a timed-out request report that a
@@ -734,6 +769,10 @@ export class DdAdminShell extends LitElement {
       readEvidence(runKey),
     ]);
     if (generation !== this._selectionGeneration || this._selectedRunKey !== runKey) return;
+    if (history === SESSION_ENDED || (!recovery.read && recovery.sessionEnded)) {
+      this._endSession(SESSION_ENDED);
+      return;
+    }
     if (history !== null) this._takeHistory(history, request);
     this._takeEvidence(recovery, request);
   }
@@ -844,6 +883,8 @@ export class DdAdminShell extends LitElement {
       // A failure belongs to the selection that asked for it. Without this,
       // run A's late 503 wiped the run the operator had already moved to.
       if (generation !== this._selectionGeneration) return;
+      // No 401 arrives here: the load ends the session itself, once it knows the
+      // answers are this selection's and has seen every one of them.
       if (error instanceof ApiError && error.status === 404) {
         this._history = null;
         this._selectedRun = null;
@@ -851,8 +892,6 @@ export class DdAdminShell extends LitElement {
         this._selectedRecovery = null;
         this._evidenceRead = { state: 'loading' };
         this._message = `No run ${runKey} exists on this deployment.`;
-      } else if (error instanceof ApiError && error.status === 401) {
-        this._endSession('Your session ended. Sign in again to view the private dashboard.');
       } else {
         /*
          * What failed is this read, not the run.
