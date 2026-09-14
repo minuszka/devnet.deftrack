@@ -10,12 +10,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * would look absent and be written as a failure that never happened. The
  * collector reads a retired profile at end - 2, plans nothing at or above the
  * end, and removes a pending placeholder written there before the end was known.
+ *
+ * The tick's two reads -- getblockcount, then listextended -- are separate RPCs
+ * behind separate caches, and the node's tip can move between them. The listing
+ * is therefore read at the height the tick judges, never at the node's later
+ * tip; the last describe block below is the ordering that used to write a
+ * permanent `failed` for the last real round.
  */
 const END = 13200;
 const LAST_ROUND = END - 24; // llmq_50_60's last cycle below the end
 
 const state = vi.hoisted(() => ({
   profile: {} as Record<string, unknown>,
+  /** Where the node's own tip is when listextended runs without a height. */
+  nodeTip: 0,
   getBlockCount: vi.fn(),
   call: vi.fn(),
   logs: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -87,18 +95,32 @@ function written(): Map<number, string> {
   return out;
 }
 
-/** The node's answers: the tip omits the retired profile; end - 2 still lists its last round. */
+/** The heights listextended was asked at this tick; `null` for a call without one. */
+function listHeights(): (number | null)[] {
+  return (state.call.mock.calls as [string, unknown[]][])
+    .filter(([m, p]) => m === 'quorum' && p[0] === 'listextended')
+    .map(([, p]) => (typeof p[1] === 'number' ? p[1] : null));
+}
+
+/**
+ * What listextended lists at a block: from end - 1 the retired profile is
+ * omitted; at end - 2 and below its last two rounds are there (both mined by
+ * end - 6, the last window's close).
+ */
+function listingAt(height: number) {
+  if (height > END - 2) return {};
+  return {
+    llmq_50_60: [
+      { aa: { creationHeight: LAST_ROUND - 24, numValidMembers: 50, healthRatio: '1.00', minedBlockHash: 'b1' } },
+      { bb: { creationHeight: LAST_ROUND, numValidMembers: 50, healthRatio: '1.00', minedBlockHash: 'b2' } },
+    ],
+  };
+}
+
+/** The node's answers: a height reads that block, no height reads the node's own tip. */
 function node(method: string, params: unknown[]) {
   if (method === 'quorum' && params[0] === 'listextended') {
-    if (params[1] === END - 2) {
-      return {
-        llmq_50_60: [
-          { aa: { creationHeight: LAST_ROUND - 24, numValidMembers: 50, healthRatio: '1.00', minedBlockHash: 'b1' } },
-          { bb: { creationHeight: LAST_ROUND, numValidMembers: 50, healthRatio: '1.00', minedBlockHash: 'b2' } },
-        ],
-      };
-    }
-    return {};
+    return listingAt(typeof params[1] === 'number' ? params[1] : state.nodeTip);
   }
   if (method === 'quorum') return { members: [] };
   return { enabled: 152, total: 152 };
@@ -113,6 +135,7 @@ beforeEach(() => {
   state.updateMany.mockResolvedValue({});
   state.deleteMany.mockResolvedValue({ deletedCount: 0 });
   state.bulkWrite.mockResolvedValue({});
+  state.nodeTip = END + 30;
   state.getBlockCount.mockResolvedValue(END + 30);
   state.call.mockImplementation(async (method: string, params: unknown[]) => node(method, params));
 });
@@ -123,10 +146,7 @@ describe('a retired profile after its end', () => {
 
     await new QuorumRoundService().collect();
 
-    const listCalls = (state.call.mock.calls as [string, unknown[]][]).filter(
-      ([m, p]) => m === 'quorum' && p[0] === 'listextended'
-    );
-    expect(listCalls.some(([, p]) => p[1] === END - 2)).toBe(true);
+    expect(listHeights()).toContain(END - 2);
     const rounds = written();
     expect(rounds.get(LAST_ROUND)).toBe('formed');
     expect([...rounds.values()]).not.toContain('failed');
@@ -150,11 +170,42 @@ describe('a retired profile after its end', () => {
 
     await new QuorumRoundService().collect();
 
-    const listCalls = (state.call.mock.calls as [string, unknown[]][]).filter(
-      ([m, p]) => m === 'quorum' && p[0] === 'listextended'
-    );
-    expect(listCalls.every(([, p]) => p.length === 1)).toBe(true);
+    expect(listHeights()).toEqual([END + 30]);
     expect(written().get(LAST_ROUND)).toBe('failed');
     expect(state.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('the listing is read at the height the tick judges', () => {
+  it('a block arriving between getblockcount and listextended does not fail the last round', async () => {
+    // getblockcount answers end - 2 (no historical read yet); before listextended
+    // runs the node mines end - 1, where it omits the profile. Read at the node's
+    // tip, the last round came back absent and was written failed -- for good,
+    // since a failed round is never refreshed.
+    state.profile = { ...BASE_PROFILE, formationEndHeight: END };
+    state.getBlockCount.mockResolvedValue(END - 2);
+    state.nodeTip = END - 1;
+
+    await new QuorumRoundService().collect();
+
+    const rounds = written();
+    expect(rounds.get(LAST_ROUND)).toBe('formed');
+    expect([...rounds.values()]).not.toContain('failed');
+    expect(listHeights()).toEqual([END - 2]);
+  });
+
+  it('a cached getblockcount behind the node is judged against the listing at that same height', async () => {
+    // getblockcount is cached for 3 s, listextended for 15 s: the height a tick
+    // judges can trail the node by several blocks, across the end.
+    state.profile = { ...BASE_PROFILE, formationEndHeight: END };
+    state.getBlockCount.mockResolvedValue(END - 3);
+    state.nodeTip = END + 5;
+
+    await new QuorumRoundService().collect();
+
+    const rounds = written();
+    expect(rounds.get(LAST_ROUND)).toBe('formed');
+    expect([...rounds.values()]).not.toContain('failed');
+    expect(listHeights()).toEqual([END - 3]);
   });
 });

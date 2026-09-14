@@ -300,24 +300,31 @@ export class QuorumRoundService {
    *
    * A single `quorum listextended` carries all types, so the response is
    * indexed once here instead of being re-requested per profile.
+   *
+   * Read AT `tip` -- the height every verdict of this tick is judged against --
+   * and never at whatever the node's tip has become by the time the call runs.
+   * The two used to be separate reads: getblockcount, then a listextended with
+   * no height, each behind its own cache (3 s and 15 s). A block arriving in
+   * between, or a cached answer on either side, judged one height against
+   * another height's listing. For a retired profile that is not harmless: from
+   * end - 1 the node omits the profile altogether, so its last real round read
+   * as absent and was written `failed`, a verdict shouldRefreshRound never
+   * revisits. Pinned, the height is part of the cache key as well, so a cached
+   * answer is always the listing at that block.
+   *
+   * A retired profile past its end is read where it was still enabled
+   * (retiredObservationHeight). One call per distinct height.
    */
   private async observedQuorums(tip: number): Promise<ObservedByProfile> {
-    const result = await rpc.call<ListExtendedResult>('quorum', ['listextended'], 'listextended');
     const byProfile: ObservedByProfile = new Map();
-    // A retired profile past its end is omitted at the tip; read it where it was
-    // still enabled (retiredObservationHeight). One call per distinct height.
     const atHeight = new Map<number, ListExtendedResult>();
 
     for (const p of this.profiles) {
-      let source = result;
-      const readAt = retiredObservationHeight(tip, p.formationEndHeight);
-      if (readAt !== null) {
-        let historical = atHeight.get(readAt);
-        if (historical === undefined) {
-          historical = await rpc.call<ListExtendedResult>('quorum', ['listextended', readAt], 'listextended');
-          atHeight.set(readAt, historical);
-        }
-        source = historical;
+      const readAt = retiredObservationHeight(tip, p.formationEndHeight) ?? tip;
+      let source = atHeight.get(readAt);
+      if (source === undefined) {
+        source = await rpc.call<ListExtendedResult>('quorum', ['listextended', readAt], 'listextended');
+        atHeight.set(readAt, source);
       }
       const byHeight: ObservedRounds = new Map();
       for (const wrapper of source[p.llmqName] ?? []) {
