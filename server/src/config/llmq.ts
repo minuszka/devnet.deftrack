@@ -60,6 +60,15 @@ export interface LlmqProfile {
    */
   formationGateHeight?: number;
   /**
+   * The height from which the node forms this profile no more
+   * (Consensus::Params::llmqFormationEndHeights, checked first in
+   * IsQuorumTypeEnabledInternal): no session starts for a cycle based at or above
+   * it. A scheduled height at or above it is not a failed round either, so the
+   * collector leaves it out of the record like a height below the gate. The
+   * profile's older rounds stay as they are. Must match chainparams.cpp.
+   */
+  formationEndHeight?: number;
+  /**
    * Whether this profile forms on the v23 MAINNET -- the network every
    * measurement here is ultimately about. Registry data, never snapshotted
    * onto a round: it is a fact about chainparams.cpp and llmq/options.cpp, not
@@ -80,6 +89,14 @@ export interface LlmqProfile {
   /** Why, in one line a reader can quote. */
   mainnetNote: string;
 }
+
+/**
+ * Where this devnet stops forming llmq_50_60 and llmq_60_75 -- the two profiles
+ * mainnet registers and never forms. One constant for both, because the node sets
+ * one height for both, on both their grids (a multiple of 48). It moves only
+ * together with the Core constant, before the binary that carries it ships.
+ */
+export const DEVNET_UNUSED_PROFILES_FORMATION_END = 13200;
 
 const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
   /**
@@ -121,9 +138,12 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 40, // 80% of size, the mainnet proportion; 3-of-50 was the ban-wave engine
     useRotation: false,
     signingActiveQuorumCount: 2,
+    // retired on this devnet by the formation-end change (chainparams.cpp
+    // llmqFormationEndHeights), the same height as llmq_60_75
+    formationEndHeight: DEVNET_UNUSED_PROFILES_FORMATION_END,
     formsOnV23Mainnet: false,
     mainnetNote:
-      'gated to testnet and devnet by IsQuorumTypeEnabledInternal (llmq/options.cpp:188-191); registered on mainnet but never forms there, and v23 leaves that as it is',
+      'registered on mainnet and testnet but never forms there (IsQuorumTypeEnabledInternal admits it on devnet only since #241); retired on this devnet from its formation end height',
   },
   llmq_60_75: {
     llmqType: 5,
@@ -138,9 +158,10 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 48, // 80% of size, the mainnet proportion (see llmq_50_60)
     useRotation: false,
     signingActiveQuorumCount: 2,
+    formationEndHeight: DEVNET_UNUSED_PROFILES_FORMATION_END,
     formsOnV23Mainnet: false,
     mainnetNote:
-      'gated to testnet and devnet by IsQuorumTypeEnabledInternal (llmq/options.cpp:188-191); registered on mainnet but never forms there, and v23 leaves that as it is',
+      'registered on mainnet and testnet but never forms there (IsQuorumTypeEnabledInternal admits it on devnet only since #241); retired on this devnet from its formation end height',
   },
   llmq_400_85: {
     llmqType: 3,

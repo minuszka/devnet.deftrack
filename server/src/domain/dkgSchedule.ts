@@ -83,9 +83,37 @@ export function absenceIsEvidence(
  * exist, by rule. Recording it as failed is the same error as judging heights
  * beyond the RPC's observation window: a verdict the observation cannot
  * support. Profiles without a gate are schedulable everywhere.
+ *
+ * A retired profile has the mirror image: from its formation end height the node
+ * starts no session (the check runs first in IsQuorumTypeEnabledInternal, keyed on
+ * the cycle base block), so a height at or above the end could not exist either.
+ * The rounds below it are ordinary rounds and keep their verdicts.
  */
-export function isSchedulable(expectedHeight: number, formationGateHeight?: number): boolean {
-  return formationGateHeight === undefined || expectedHeight >= formationGateHeight;
+export function isSchedulable(
+  expectedHeight: number,
+  formationGateHeight?: number,
+  formationEndHeight?: number
+): boolean {
+  if (formationGateHeight !== undefined && expectedHeight < formationGateHeight) return false;
+  if (formationEndHeight !== undefined && expectedHeight >= formationEndHeight) return false;
+  return true;
+}
+
+/**
+ * Where to read a retired profile's commitments from, or null to read at the tip.
+ *
+ * From its formation end height the node no longer lists the profile as enabled,
+ * so `quorum listextended` at the tip omits it entirely -- including the last
+ * rounds below the end, whose commitments are on the chain. Read at that tip, an
+ * unresolved last round would look absent and be written as a failure. At
+ * end - 2 the profile is still enabled for the next block (end - 1), and the last
+ * cycle below the end has mined by then: its window closes at
+ * end - dkgInterval + dkgMiningWindowEnd, which the node's startup check keeps
+ * below the end.
+ */
+export function retiredObservationHeight(tip: number, formationEndHeight?: number): number | null {
+  if (formationEndHeight === undefined || tip < formationEndHeight - 1) return null;
+  return formationEndHeight - 2;
 }
 
 export type RoundOutcome = 'pending' | 'formed' | 'failed' | 'impossible';

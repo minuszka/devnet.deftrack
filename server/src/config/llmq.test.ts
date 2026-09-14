@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHAINLOCK_V2_ACTIVATION_HEIGHT,
+  DEVNET_UNUSED_PROFILES_FORMATION_END,
   DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT,
   LLMQ_PROFILES,
   TRACKED_PROFILE_NAMES,
@@ -43,6 +44,19 @@ describe('llmq profile registry', () => {
     expect(LLMQ_PROFILES.llmq_defcon?.formationGateHeight).toBe(3120);
     for (const p of trackedProfiles()) {
       if (p.llmqName !== 'llmq_defcon') expect(p.formationGateHeight).toBeUndefined();
+    }
+  });
+
+  it('retires exactly the two profiles mainnet never forms, at one height on both grids', () => {
+    // chainparams.cpp llmqFormationEndHeights on devnet; the two must move together.
+    const end = DEVNET_UNUSED_PROFILES_FORMATION_END;
+    expect(LLMQ_PROFILES.llmq_50_60?.formationEndHeight).toBe(end);
+    expect(LLMQ_PROFILES.llmq_60_75?.formationEndHeight).toBe(end);
+    expect(end % 48).toBe(0);
+    for (const p of Object.values(LLMQ_PROFILES)) {
+      if (p.llmqName !== 'llmq_50_60' && p.llmqName !== 'llmq_60_75') expect(p.formationEndHeight).toBeUndefined();
+      // a retired profile is one mainnet never forms
+      if (p.formationEndHeight !== undefined) expect(p.formsOnV23Mainnet).toBe(false);
     }
   });
 

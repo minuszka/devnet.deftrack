@@ -6,6 +6,7 @@ import {
   expectedRoundHeights,
   isSchedulable,
   resolvedByHeight,
+  retiredObservationHeight,
   roundKeyFor,
 } from './dkgSchedule.js';
 
@@ -130,5 +131,46 @@ describe('formation gate', () => {
   it('treats profiles without a gate as schedulable everywhere', () => {
     expect(isSchedulable(0)).toBe(true);
     expect(isSchedulable(2856)).toBe(true);
+  });
+});
+
+describe('formation end', () => {
+  // llmq_50_60 / llmq_60_75 on this devnet, retired from one height on both grids.
+  const end = 13200;
+
+  it('schedules every round below the end and none from it', () => {
+    // The node starts no session for a cycle based at or above the end
+    // (IsQuorumTypeEnabledInternal, checked first); the last real cycle is below.
+    expect(isSchedulable(end - 24, undefined, end)).toBe(true);
+    expect(isSchedulable(end - 48, undefined, end)).toBe(true);
+    expect(isSchedulable(end, undefined, end)).toBe(false);
+    expect(isSchedulable(end + 24, undefined, end)).toBe(false);
+  });
+
+  it('applies gate and end together', () => {
+    expect(isSchedulable(100, 120, 240)).toBe(false);
+    expect(isSchedulable(120, 120, 240)).toBe(true);
+    expect(isSchedulable(216, 120, 240)).toBe(true);
+    expect(isSchedulable(240, 120, 240)).toBe(false);
+  });
+
+  it('reads a retired profile where the node still listed it', () => {
+    // At tip end-2 the profile is enabled for the next block; from tip end-1 the
+    // node omits it at the tip, so its last rounds must be read at end-2.
+    expect(retiredObservationHeight(end - 2, end)).toBeNull();
+    expect(retiredObservationHeight(end - 1, end)).toBe(end - 2);
+    expect(retiredObservationHeight(end + 5000, end)).toBe(end - 2);
+    expect(retiredObservationHeight(end + 5000, undefined)).toBeNull();
+  });
+
+  it('keeps the last cycle below the end inside that read', () => {
+    // Its commitment is mined by (end - dkgInterval) + dkgMiningWindowEnd, which
+    // must not be later than the height the retired profile is read at.
+    for (const [interval, windowEnd] of [
+      [24, 18],
+      [48, 36],
+    ] as const) {
+      expect(end - interval + windowEnd).toBeLessThanOrEqual(end - 2);
+    }
   });
 });

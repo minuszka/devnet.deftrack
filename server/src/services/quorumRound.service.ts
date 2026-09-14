@@ -11,6 +11,7 @@ import {
   currentRoundHeight,
   expectedRoundHeights,
   isSchedulable,
+  retiredObservationHeight,
   roundKeyFor,
 } from '../domain/dkgSchedule.js';
 import { DevnetOperator } from '../models/DevnetOperator.js';
@@ -111,7 +112,7 @@ export class QuorumRoundService {
     // RPC returns all types in a single response, and the available masternode
     // count is a property of the network rather than of a profile. Polling
     // them per profile would triple the round-trips for identical answers.
-    const observed = await this.observedQuorums();
+    const observed = await this.observedQuorums(tip);
     const available = await this.availableMasternodes();
 
     const plans = await Promise.all(this.profiles.map((p) => this.planProfile(p, tip)));
@@ -152,6 +153,24 @@ export class QuorumRoundService {
     const windowSpan = p.dkgInterval * p.signingActiveQuorumCount;
     const oldest = Math.max(0, currentRoundHeight(tip, p.dkgInterval) - windowSpan);
 
+    // A pending row at or above a retired profile's end can only be a placeholder
+    // written before the end was known to this deployment: no session starts
+    // there, so it will never resolve and must not be judged. Remove it rather
+    // than leave a round that waits forever.
+    if (p.formationEndHeight !== undefined) {
+      const removed = await QuorumRound.deleteMany({
+        llmqName: p.llmqName,
+        status: 'pending',
+        expectedHeight: { $gte: p.formationEndHeight },
+      });
+      if (removed.deletedCount > 0) {
+        logger.info(
+          `${p.llmqName}: removed ${removed.deletedCount} pending placeholder round(s) at or above ` +
+            `its formation end height ${p.formationEndHeight}`
+        );
+      }
+    }
+
     const existing = await QuorumRound.find({
       llmqName: p.llmqName,
       $or: [{ expectedHeight: { $gte: oldest } }, { status: 'pending' }],
@@ -167,9 +186,10 @@ export class QuorumRoundService {
     for (const h of expectedRoundHeights(tip, p.dkgInterval)) {
       // New scheduled rounds must be created. Resolved, complete rounds are
       // facts about the past and are deliberately never refreshed. Heights
-      // below the profile's formation gate are not rounds at all -- the node
-      // refuses to form the type there -- so they are never planned.
-      if (!isSchedulable(h, p.formationGateHeight)) continue;
+      // below the profile's formation gate, or at and above a retired profile's
+      // formation end, are not rounds at all -- the node refuses to form the
+      // type there -- so they are never planned.
+      if (!isSchedulable(h, p.formationGateHeight, p.formationEndHeight)) continue;
       if (h >= oldest && shouldRefreshRound(byHeight.get(h))) heights.add(h);
     }
 
@@ -197,9 +217,9 @@ export class QuorumRoundService {
     let uncounted = 0;
 
     for (const expectedHeight of plan.heights) {
-      // Belt to planProfile's braces: a height below the formation gate must
-      // never receive a verdict, whichever path put it in the plan.
-      if (!isSchedulable(expectedHeight, p.formationGateHeight)) continue;
+      // Belt to planProfile's braces: a height outside the formation gate and end
+      // must never receive a verdict, whichever path put it in the plan.
+      if (!isSchedulable(expectedHeight, p.formationGateHeight, p.formationEndHeight)) continue;
       const entry = seen.get(expectedHeight);
       // CalculateQuorum draws from the masternode list AT THE ROUND'S OWN base
       // block, not from today's. Using the current count meant a ban wave
@@ -281,13 +301,26 @@ export class QuorumRoundService {
    * A single `quorum listextended` carries all types, so the response is
    * indexed once here instead of being re-requested per profile.
    */
-  private async observedQuorums(): Promise<ObservedByProfile> {
+  private async observedQuorums(tip: number): Promise<ObservedByProfile> {
     const result = await rpc.call<ListExtendedResult>('quorum', ['listextended'], 'listextended');
     const byProfile: ObservedByProfile = new Map();
+    // A retired profile past its end is omitted at the tip; read it where it was
+    // still enabled (retiredObservationHeight). One call per distinct height.
+    const atHeight = new Map<number, ListExtendedResult>();
 
     for (const p of this.profiles) {
+      let source = result;
+      const readAt = retiredObservationHeight(tip, p.formationEndHeight);
+      if (readAt !== null) {
+        let historical = atHeight.get(readAt);
+        if (historical === undefined) {
+          historical = await rpc.call<ListExtendedResult>('quorum', ['listextended', readAt], 'listextended');
+          atHeight.set(readAt, historical);
+        }
+        source = historical;
+      }
       const byHeight: ObservedRounds = new Map();
-      for (const wrapper of result[p.llmqName] ?? []) {
+      for (const wrapper of source[p.llmqName] ?? []) {
         for (const [quorumHash, entry] of Object.entries(wrapper)) {
           byHeight.set(entry.creationHeight, { ...entry, quorumHash });
         }

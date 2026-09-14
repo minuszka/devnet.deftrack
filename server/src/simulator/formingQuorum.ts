@@ -124,6 +124,11 @@ export async function resolveFormingQuorum(input: FormingQuorumInput): Promise<F
       `${profile.llmqName} cannot form below height ${profile.formationGateHeight}; the cycle at ${cycleBaseHeight} holds no session.`
     );
   }
+  if (profile.formationEndHeight !== undefined && cycleBaseHeight >= profile.formationEndHeight) {
+    return unavailable(
+      `${profile.llmqName} stopped forming at height ${profile.formationEndHeight}; the cycle at ${cycleBaseHeight} holds no session.`
+    );
+  }
   if (input.current === null) {
     return unavailable(
       `No formed ${profile.llmqName} quorum is recorded, so the member selection cannot be verified before it is trusted.`
