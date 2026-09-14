@@ -3036,7 +3036,9 @@ régi folyamaté (SIGTERM utáni leállás); az új folyamat tisztán indult.
 **Két megfigyelés, nem a deploy okozta — a deploy előtt is így volt:**
 
 1. **A report-only CSP semmit nem gyűjt.** Az nginx `Content-Security-Policy-Report-Only` fejlécében nincs
-   `report-uri` és `report-to`, így valós forgalomból nem érkezik jelentés. A böngészőkonzol mind a négy
+   `report-uri` és `report-to` — ez a runbook szerint **szándékos** (nincs gyűjtő ezen a telepítésen) —, így
+   valós forgalomból nem érkezik jelentés, a sértés csak az oldalt megnyitó böngésző konzoljában látszik. Ezért
+   a „valós forgalmat is lásson” indok e nélkül nem teljesül. A böngészőkonzol mind a négy
    oldalon egyetlen üzenetet adott: az `upgrade-insecure-requests` direktíva report-only módban hatástalan.
    CSP-sértést nem mutatott.
 2. **Az `/api/` válaszain duplikált, részben ellentmondó biztonsági fejlécek.** A helmet és az nginx is
