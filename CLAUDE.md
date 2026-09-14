@@ -1150,6 +1150,28 @@ forming-quorum view -- answers 500 with `simulator chain identity pins are not
 configured`, and nothing had asked before, so the gap went unnoticed for weeks.
 A fresh deployment must set them before the simulator is touched.
 
+The explorer database is backed up nightly since 2026-09-14. `ops/mongo-backup.sh` is installed as
+`/usr/local/sbin/deftrack-mongo-backup`, with the `deftrack-mongo-backup.{service,timer}` units.
+It runs mongodump as the read-only user, checks the archive before pruning, and writes a `.sha256` and
+a manifest beside each archive. The procedure, restore check and rollback are in
+[`docs/MONGO_BACKUP_RUNBOOK_HU.md`](docs/MONGO_BACKUP_RUNBOOK_HU.md). The archives hold non-public host
+addresses, so every copy that leaves the VPS must stay private.
+
+**Measure an RPC client change against its mechanism, not only against the error count.** #181 closes pooled
+RPC sockets after 15 s. It was deployed on 2026-09-14, and one visible browser tab polled through a half hour
+on each side of the deploy:
+- **Errors:** no `socket hang up` at all in the half hour before, so a drop in errors could not show anything.
+- **Connections:** new explorer connections to the seed RPC went from about 1 to about 2 per minute. This was
+  sampled every 5 s, so both rates are lower bounds.
+- **Concurrency:** the number of connections open at once barely moved.
+
+That doubling of new connections is the mechanism showing.
+
+**The health endpoint answers 503 for up to one sync interval after any block gap longer than 5 minutes.**
+`evaluateReadiness` measures idleness from `lastSyncedAt`, which only moves when a block is indexed; an idle tick
+writes `heartbeatAt` instead. Measured twice on 2026-09-14 (10:21Z and 11:31:57Z). It is not a sync fault:
+the endpoint recovers at the next tick.
+
 ### Every binary rollout gets an Experiments entry that says what changed
 
 Whenever DeFCoN code is changed, built and shipped to the fleet, the run
