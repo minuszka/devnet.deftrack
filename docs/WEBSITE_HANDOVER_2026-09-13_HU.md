@@ -69,9 +69,18 @@ A K3-hoz egy eldobható mongod kell (`CLAUDE.md`, „Local development environme
 
 A CI eredménye a PR-on: a #174 PR `Typecheck, test, build`, `Scripts, Dockerfile and units` és `Secret scan` jobjai (push és pull_request esemény); ez a tiszta környezetű K2 is.
 
-## 3. Mi fut élesben — mérve, 2026-09-13
+## 3. Mi fut élesben — mérve, 2026-09-14 (a deploy után)
 
-Csak olvasással, a VPS-en:
+| | |
+|---|---|
+| Szerver és kliens | `/opt/devnet-deftrack/app` @ `5237f80` (a #176 és #177 merge utáni `main`), `ops/deploy.sh`-sal telepítve 2026-09-14 01:20Z; a webroot a build `client/dist`-jével azonos, bundle `index-CNPCV91P.js` |
+| Ebben benne van | az 1–20. nap, a J1–J8 (R1–R7, V1–V7, W1–W4, X1–X2) és a C2 roll-szkriptek |
+| Lockfile | byte-azonos a repóéval (sha256 `2f72d372…ffb78`); `npm audit --omit=dev`: 2 moderate `qs` — az elfogadott F13-maradék |
+| nginx | változatlan: a 14. napi fejlécek élnek, CSP **report-only**; az `/api/` alatt most **egy** HSTS (9. pont) |
+
+Részletek és a teljes élő mérés: napló, „Deploy 2026-09-14”.
+
+**Előzmény — mérve 2026-09-13,** csak olvasással, a VPS-en:
 
 | | |
 |---|---|
@@ -83,35 +92,38 @@ Csak olvasással, a VPS-en:
 **Következmény, kimondva:** a 2026-09-12-i független review által talált hibák (R1–R7,
 az F01/F02/F05/F06 újranyitása és a draft-idempotencia) **a VPS-en ma is megvannak**;
 a javításuk a mainben van, tesztelve, de nincs telepítve. A 13. napi függőségjavítás
-(body-parser) sincs kint. A deploy a terv szerint külön lépés (10. pont).
+(body-parser) sincs kint. A deploy a terv szerint külön lépés (10. pont). **2026-09-14:** ez a
+következmény a deployjal megszűnt — a fenti táblázat a mostani állapot.
 
 ## 4. F01–F14 — újraellenőrzés
 
 Minden sor: a javító commit(ok), az automatikus teszt, a böngészős/HTTP-bizonyíték, a
 három státusz, és ami nincs bizonyítva. A részletes mérések és negatív kontrollok
-napra bontva a naplóban.
+napra bontva a naplóban. Az „Élesben” oszlop **2026-09-14-i**, a `5237f80` deployja utáni mérést mutatja;
+ahol változott, a korábbi érték zárójelben áll.
 
 | Pont | Javító commit | Automatikus teszt (böngésző / unit / HTTP) | Kód kész | Ellenőrzött | Élesben | Ami nincs bizonyítva / korlát |
 |---|---|---|---|---|---|---|
-| F01 futamkiválasztás | 05–06. nap `8735d1d` `5fd3307`; J1 `4972341`; J4 `96e6e30` (V1) `451e3e8` (V3) | `run-selection.spec.ts` (13), `adminRunSelection.test.ts` (10); J4: `run-status.spec.ts` V1-esetek (6), `admin.spec.ts` belépés (3) | igen | igen, mindkét review ellenpróbáival | **részben** — a 05–06. napi változat; az R1/R2/R4 és a V1/V3 javítás nem | valódi laborfutamon nem mérve |
-| F02 frissülő futamállapot | 05–07. nap `c1e3605`; J2 `4261e06`; J4 `2e2d56c` (V2) `11bbe63` (V7); J7 `6c94aa0` (W2); J8 `d0f28fe` (X1) | `run-status.spec.ts` (14, szabályozott órával; J4: +4 V2, +6 V7; J7: +4 W2; J8: +10 X1), `simulationRunState.test.ts` | igen | igen | **részben** — az R3, a V2/V7, a W2 és az X1 javítás nem | a mentett terv egyszer olvasódik; laborfutam nincs |
+| F01 futamkiválasztás | 05–06. nap `8735d1d` `5fd3307`; J1 `4972341`; J4 `96e6e30` (V1) `451e3e8` (V3) | `run-selection.spec.ts` (13), `adminRunSelection.test.ts` (10); J4: `run-status.spec.ts` V1-esetek (6), `admin.spec.ts` belépés (3) | igen | igen, mindkét review ellenpróbáival | **igen** (2026-09-14; előtte részben — a 05–06. napi változat) | valódi laborfutamon nem mérve |
+| F02 frissülő futamállapot | 05–07. nap `c1e3605`; J2 `4261e06`; J4 `2e2d56c` (V2) `11bbe63` (V7); J7 `6c94aa0` (W2); J8 `d0f28fe` (X1) | `run-status.spec.ts` (14, szabályozott órával; J4: +4 V2, +6 V7; J7: +4 W2; J8: +10 X1), `simulationRunState.test.ts` | igen | igen | **igen** (2026-09-14; előtte részben — az R3, a V2/V7, a W2 és az X1 javítás nem) | a mentett terv egyszer olvasódik; laborfutam nincs |
 | F03 adatfrissesség | 03. nap `c5c872c` | `freshness.spec.ts` (7), `freshness.test.ts` (15) | igen | igen | igen | a `HealthSnapshot` nem közöl megfigyelési időbélyeget |
 | F04 kísérletlista | 08. nap `6c6fc96` | `experiments.spec.ts` (8), `experimentPaging.integration.test.ts` (7) | igen | igen | igen | — |
-| F05 Fairness profil | 09. nap `881df65`; J3 `6913d1d`; J7 `f2a4873` (W4) | `fairness.spec.ts` (8; J7: +3 W4), HTTP-szűrési teszt | igen | igen | **részben** — az R5 és a W4 javítás nem | — |
-| F06 registry-létszám | 09. nap `881df65`; J3 `e860556` | domain unit (4), `fairnessSelection.integration.test.ts` | igen | igen | **részben** — az R6 javítás nem | — |
+| F05 Fairness profil | 09. nap `881df65`; J3 `6913d1d`; J7 `f2a4873` (W4) | `fairness.spec.ts` (8; J7: +3 W4), HTTP-szűrési teszt | igen | igen | **igen** (2026-09-14; előtte részben — az R5 és a W4 javítás nem) | — |
+| F06 registry-létszám | 09. nap `881df65`; J3 `e860556` | domain unit (4), `fairnessSelection.integration.test.ts` | igen | igen | **igen** (2026-09-14; előtte részben — az R6 javítás nem) | — |
 | F07 hibás escape | 02. nap `db77551`; 14. nap `5262482` | `router.test.ts` (4), `router.spec.ts` (3); élő nginx: 400 | igen | igen | igen | — |
 | F08 ismeretlen útvonal | 02. nap `db77551` | `router.test.ts`, `router.spec.ts` | igen | igen | igen | a szerveroldali SPA fallback szándékosan változatlan |
-| F09 scenario-alapértékek | 04. nap `127e53d`; 15–16. nap `d7469ff` `e4c16d5`; J6 `b7ee9f8` (V5) | `scenario-forms.spec.ts` (10; J6: +5 V5), `complex-scenarios.spec.ts` (15), `scenarioFields.test.ts` (11), `simulationScenarios.integration.test.ts` | igen | igen | **részben** — a 04. nap igen, a 15–16. napi űrlapok és a V5 javítás nem | a `live` mód valódi laborfutama nincs; a review V5-próbája a zárolt mezőn időtúllépésre fut (elfogadott, 14. pont) |
-| F10 biztonsági fejlécek | 14. nap `5262482`; 20. nap `694d5cc` (egy HSTS-tulajdonos) | izolált nginx-mérés (`verify-headers.sh`), `csp.spec.ts` (4), `httpHardening.test.ts` | igen | igen | **részben** — nginx-fejlécek élnek, CSP report-only; a helmet HSTS kivétele nem, ezért az `/api/` ma is két HSTS-t küld | az enforce-ra váltás nincs megtéve (9. pont) |
-| F11 URL-szűrők | 10. nap `700c420`; 11. nap `b954e9b`; J5 `dc05f11` (V4); J7 `35899d4` (W1) | `query-state.spec.ts` (22); J5: `query-identity.spec.ts` (17); J7: `public-simulations.spec.ts` +3 (W1) | igen | igen | **részben** — a 10. napi három oldal igen, a 11. napiak, a V4 és a W1 javítás nem | PoSe, ChainLocks, Sentinel Layer szándékosan paraméter nélkül; a Fairness tip-vezérelt profilváltási rése mérve és javítva (W4, F05 sor) |
-| F12 szemantika, fókusz | 12. nap `1828831`; 18. nap `fc4652d` (cím nélküli részletoldalak); 20. nap `611fdde` (`aria-pressed`) | `accessibility.spec.ts` (h1 minden útvonalon négy állapotban, fókusz, skip link, toggle-sweep), `navigation.spec.ts` (14) | igen | igen | nem | számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás |
-| F13 függőségek | 13. nap `5b8b5a7`; 20. nap `694d5cc` | `npm audit` előtte/utána; `httpHardening.test.ts` (6: a lapos query-feldolgozás valódi kérésen, urlencoded nincs, forrás-sweep mindkét szerverre) | igen | igen | nem (a VPS a 13. nap előtti lockfile-lal fut) | **elfogadott maradék:** 2 moderate `qs` az express 4 saját pinje miatt. Az elfogadás feltevése (simple parser, nincs urlencoded) a 20. napon derült ki, hogy **csak a fő szerverre volt igaz**; a labor-szerverre (`labServer.ts`, alapból `127.0.0.1`) nem. Javítva és teszttel védve, de nincs telepítve |
-| F14 kontraszt | 12. nap `1828831` | `contrast.test.ts`, `accessibility.spec.ts` (mindkét téma) | igen | igen | nem | — |
-| R7 (review) draft-idempotencia | J2 `4261e06` | `draftIdentity.test.ts` (12), `run-status.spec.ts` | igen | igen | nem | — |
-| V6 (végső review) export-besorolás | J6 `f119407` | `simulations.test.ts` (+1), `public-simulations.spec.ts` valódi letöltéssel (+1) | igen | igen | nem | — |
+| F09 scenario-alapértékek | 04. nap `127e53d`; 15–16. nap `d7469ff` `e4c16d5`; J6 `b7ee9f8` (V5) | `scenario-forms.spec.ts` (10; J6: +5 V5), `complex-scenarios.spec.ts` (15), `scenarioFields.test.ts` (11), `simulationScenarios.integration.test.ts` | igen | igen | **igen** (2026-09-14; előtte részben — a 15–16. napi űrlapok és a V5 javítás nem) | a `live` mód valódi laborfutama nincs, és a tulajdonos döntése szerint (2026-09-14) nem is kerül tervbe; a review V5-próbája a zárolt mezőn időtúllépésre fut (elfogadott, 14. pont) |
+| F10 biztonsági fejlécek | 14. nap `5262482`; 20. nap `694d5cc` (egy HSTS-tulajdonos) | izolált nginx-mérés (`verify-headers.sh`), `csp.spec.ts` (4), `httpHardening.test.ts` | igen | igen | **részben** — az nginx-fejlécek élnek, a CSP report-only; a helmet HSTS-ének kivétele 2026-09-14 óta élesben, az `/api/` **egy** HSTS-t küld (mérve; előtte kettőt) | az enforce-ra váltás nincs megtéve (9. pont) |
+| F11 URL-szűrők | 10. nap `700c420`; 11. nap `b954e9b`; J5 `dc05f11` (V4); J7 `35899d4` (W1) | `query-state.spec.ts` (22); J5: `query-identity.spec.ts` (17); J7: `public-simulations.spec.ts` +3 (W1) | igen | igen | **igen** (2026-09-14; előtte részben — a 11. napiak, a V4 és a W1 javítás nem) | PoSe, ChainLocks, Sentinel Layer szándékosan paraméter nélkül; a Fairness tip-vezérelt profilváltási rése mérve és javítva (W4, F05 sor) |
+| F12 szemantika, fókusz | 12. nap `1828831`; 18. nap `fc4652d` (cím nélküli részletoldalak); 20. nap `611fdde` (`aria-pressed`) | `accessibility.spec.ts` (h1 minden útvonalon négy állapotban, fókusz, skip link, toggle-sweep), `navigation.spec.ts` (14) | igen | igen | **igen** (2026-09-14; előtte nem) | számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás |
+| F13 függőségek | 13. nap `5b8b5a7`; 20. nap `694d5cc` | `npm audit` előtte/utána; `httpHardening.test.ts` (6: a lapos query-feldolgozás valódi kérésen, urlencoded nincs, forrás-sweep mindkét szerverre) | igen | igen | **igen** (2026-09-14: a VPS lockfile-ja byte-azonos, az `npm audit` ott is csak a 2 elfogadott `qs`; előtte nem — a 13. nap előtti lockfile) | **elfogadott maradék:** 2 moderate `qs` az express 4 saját pinje miatt. Az elfogadás feltevése (simple parser, nincs urlencoded) a 20. napon derült ki, hogy **csak a fő szerverre volt igaz**; a labor-szerverre (`labServer.ts`, alapból `127.0.0.1`) nem. Javítva és teszttel védve; 2026-09-14 óta telepítve |
+| F14 kontraszt | 12. nap `1828831` | `contrast.test.ts`, `accessibility.spec.ts` (mindkét téma) | igen | igen | **igen** (2026-09-14; előtte nem) | — |
+| R7 (review) draft-idempotencia | J2 `4261e06` | `draftIdentity.test.ts` (12), `run-status.spec.ts` | igen | igen | **igen** (2026-09-14; előtte nem) | — |
+| V6 (végső review) export-besorolás | J6 `f119407` | `simulations.test.ts` (+1), `public-simulations.spec.ts` valódi letöltéssel (+1) | igen | igen | **igen** (2026-09-14; előtte nem) | — |
 
 A 15–19. nap nem auditpont, hanem a terv termékfolyamata (űrlapok, publikus
-szimulációs eredmények, navigáció és mobil, keresés és súgó); egyik sincs élesben.
+szimulációs eredmények, navigáció és mobil, keresés és súgó); 2026-09-14 óta mind élesben (a
+`/simulations`, `/search`, `/methodology` és a `favicon.svg` élőben mérve, 200).
 
 ## 5. A 20. nap célzott javításai
 
@@ -158,10 +170,11 @@ Mind **additív** vagy szűkítő (egy mező kevesebb kerül ki), törölt publi
 
 | Tétel | Státusz | Miért |
 |---|---|---|
-| A 11–20. nap és az R1–R7 javítás nincs élesben | **nyitott — deploy kell** | 10. pont |
-| CSP report-only, nem enforce | nyitott, döntés | az enforce házirend a buildelt bundle-on tisztán fut (`csp.spec.ts`); a report-only értelme, hogy valós forgalmat is lásson |
-| F13: 2 moderate `qs` | elfogadott | express 4 pin; a kódút mindkét szerveren teszttel zárva (5. pont) |
-| A laborfutam nem futott | nyitott | 11. pont |
+| A 11–20. nap és az R1–R7 javítás nincs élesben | **lezárva — telepítve 2026-09-14 (`5237f80`)**; előtte: nyitott, deploy kell | 3. és 10. pont |
+| CSP report-only, nem enforce | nyitott, döntés | az enforce házirend a buildelt bundle-on tisztán fut (`csp.spec.ts`); a report-only értelme, hogy valós forgalmat is lásson. **2026-09-14, élőben mérve:** a report-only fejlécben nincs `report-uri`/`report-to` (a runbook szerint szándékosan: nincs gyűjtő), így valós forgalomból semmi nem gyűlik, a sértés csak a megnyitó böngésző konzoljában látszik; négy élő oldalon a böngészőkonzol CSP-sértést nem mutatott, csak azt, hogy az `upgrade-insecure-requests` report-only módban hatástalan |
+| F13: 2 moderate `qs` | elfogadott | express 4 pin; a kódút mindkét szerveren teszttel zárva (5. pont); 2026-09-14: a VPS-en mérve is ugyanez a kettő |
+| A laborfutam nem futott | **nem kerül tervbe — tulajdonosi döntés, 2026-09-14** | a live szimulátor mód ezért nem elfogadott; a megfigyelő webfelület élesben fut (11. pont) |
+| Az `/api/` válaszain duplikált biztonsági fejlécek | nyitott, alacsony | 2026-09-14, élőben mérve: a helmet és az nginx is küld `X-Frame-Options`-t (`SAMEORIGIN` és `DENY`), `Referrer-Policy`-t és `X-Content-Type-Options`-t, a helmet egy saját CSP-t is. JSON-válaszon gyakorlati hatás nélkül; a deploy előtt is így volt, a 20. nap csak a HSTS-duplikációt szüntette meg |
 | A shell-bundle nőtt | tudomásul véve | 221 → 253 kB (gzip 49 → 58 kB) a 18–19. nap alatt; lazy loading nincs |
 | Az előnézet nem mutat profilnevet | elfogadott | a mentett terv DTO-ja nem hordozza, nem találtam ki (16. nap) |
 | proTxHash-keresés | backlog | nincs masternode-részletoldal (a napló „Backlog" szakasza) |
@@ -169,7 +182,7 @@ Mind **additív** vagy szűkítő (egy mező kevesebb kerül ki), törölt publi
 | A táblázat-görgetési jelzés az adminban nincs | tudomásul véve | a 18. nap a publikus shellre szólt; az admin túlfolyása javítva (`a436d6b`), a jelzés nem |
 | A 4 workeres skip-link flake (16. nap) | nem reprodukálódott | az azóta futtatott teljes suite-okban nem jelent meg; CI egy workerrel fut |
 | A friss klón K2-je nem volt tiszta (2. pont) | **nyitott, figyelendő** | egy nem induló oldal és két navigációs időtúllépés, viselkedési hiba nélkül; ha a CI-ban is megjelenik, a dev szerver alatti tesztidőzítés a gyanúsított. **2026-09-13:** a 12 végigfutott helyi K2-ből 2-ben egy-egy üres oldal; a trace-ben mindkétszer `net::ERR_NO_BUFFER_SPACE` a `/src/main.ts` betöltésén. Ez tünet, nem gyökérok; a TIME_WAIT-hipotézist a mérés nem igazolta (14. pont). **2026-09-14:** a harmadik review teljes K2-jében egy bukás, a trace-ben `ERR_NO_BUFFER_SPACE` a `dd-page-rounds.ts` betöltésén. A J8 három teljes K2-jéből kettő nem volt tiszta (2, illetve 1 bukás, mindegyik trace-ében ugyanez), a harmadik igen; a TIME_WAIT-csúcs a tiszta futásban is ugyanakkora volt (1062, a hibásakban 1070 és 1045) (16. pont). A negyedik review teljes K2-je (külön worktree-ben) 299/299 volt, bukás nélkül; ez a korábbi hibákat nem cáfolja |
-| A J4–J6 (V1–V7), a J7 (W1–W4) és a J8 (X1, X2) javítás nincs élesben | **nyitott — deploy kell, külön engedéllyel** | a független review-k mindet lezárták: a V1–V7-et a második (a V4-et részben) és a harmadik, a W1, W3, W4-et a harmadik, a W2-t (X1-gyel) és az X2-t a negyedik review; 14., 15. és 16. pont |
+| A J4–J6 (V1–V7), a J7 (W1–W4) és a J8 (X1, X2) javítás nincs élesben | **lezárva — telepítve 2026-09-14 (`5237f80`)**, a tulajdonos engedélyével; előtte: nyitott | a független review-k mindet lezárták: a V1–V7-et a második (a V4-et részben) és a harmadik, a W1, W3, W4-et a harmadik, a W2-t (X1-gyel) és az X2-t a negyedik review; 14., 15. és 16. pont |
 | Kezdeti olvasások: egy 503 elnyelte egy másik olvasás 401-ét | **lezárva kódban és tesztben (J8, `d0f28fe`); a negyedik review elfogadta** | a harmadik review X1-e, a W2 maradéka: a `Promise.all` az első hibánál kilépett; most mindhárom válaszra vár, és a kiválasztás-ellenőrzés után bármelyik 401 lezárja a sessiont |
 | A W3 negatív kontrolljában egy időzítő bezárt lapot hívott | **lezárva (J8, `504b8cd`); a negyedik review elfogadta** | a harmadik review X2-e: teszthiba, nem alkalmazáshiba; a kontroll most csak a várt hibával bukik |
 | Az X1 két mellékhatása nincs a rendes kapuban | tudomásul véve — a review elfogadta | a késleltetett terv-hibaüzenet melletti abort és a kettős 503-nál a terv hibája csak a negyedik review saját próbáiban van mérve (`docs/review-2026-09-14-x1-x2/effects.spec.ts`, 3/3), a rendes kapuban nem |
@@ -189,7 +202,8 @@ telepítve, a runbook szerint mentett vhosttal. A snippetek: `ops/nginx/security
   reload, majd az élő válaszok mérése a runbook szerint.
 - **Rollback:** a runbookban rögzített vhost-mentés visszamásolása, `nginx -t`, reload.
 - **Az `/api/` HSTS-e:** a szerver deployja után várhatóan egy fejléc marad (az nginxé). Ezt élesben
-  mérni kell, mielőtt lezártnak számít.
+  mérni kell, mielőtt lezártnak számít. **Mérve 2026-09-14, a deploy után: egy** — az nginxé
+  (`max-age=63072000; includeSubDomains`); a deploy előtt ugyanazon a válaszon kettő volt.
 
 ## 10. Deploy — külön lépés, javasolt sorrend
 
@@ -200,6 +214,9 @@ A terv szerint a review után, külön döntéssel:
 3. A 17–19. nap oldalai élesben (`/simulations`, `/search`, `/methodology`, `favicon.svg`).
 4. Csak ezután, külön: a CSP enforce-ra váltása (9. pont).
 
+**2026-09-14:** az 1–3. lépés megtörtént, a tulajdonos engedélyével (`5237f80`; mérések: napló, „Deploy
+2026-09-14”). A 4. lépés nyitott, és külön engedélyre vár.
+
 ## 11. Laborfutam
 
 **NEM FUTOTT — nem futtatott labor-elfogadás.** Ehhez a megbízáshoz nincs külön engedélyezett
@@ -207,6 +224,10 @@ izolált regtest-laborfuttatás, és a terv tiltja a valódi hálózati faultot.
 böngészős tesztek fedik szintetikus API-válaszokkal; ez **UI-bizonyíték, nem Core- vagy
 laborbizonyíték**. A normál futam és a külön abort/recovery futam mérési és hostoldali
 helyreállítási bizonyítéka hiányzik.
+
+**Tulajdonosi döntés, 2026-09-14:** a laborelfogadás nem kerül tervbe. Következmény, kimondva: a live
+szimulátor mód **nem elfogadott**, és ezt semmilyen zöld UI- vagy HTTP/Mongo-kapu nem váltja ki. A megfigyelő
+webfelület élesben fut.
 
 ## 12. Képek és trace-ek
 
@@ -237,7 +258,7 @@ helyreállítási bizonyítéka hiányzik.
 
 ## 13. Amit a review-nak külön érdemes néznie
 
-- **A 3. pont következménye.** Élesben az R1–R7 előtti kód fut; ha a review élő oldalon ellenőriz, azt méri.
+- **A 3. pont következménye.** Élesben az R1–R7 előtti kód fut; ha a review élő oldalon ellenőriz, azt méri. **2026-09-14 óta nem így van:** élesben a `5237f80` fut, az élő oldal a mostani kódot méri.
 - **A 20. napi `56e85f3`** hat oldal renderelési ágát változtatja (betöltött-e már egyszer); a „sikertelen frissítés megtartja az utolsó jó adatot" viselkedést teszt fedi, de érdemes egy lapozott oldalon (2. oldal hibája) is ránézni: ott a korábbi oldal sorai maradnak az új oldalszám alatt — ez a 3. napi döntés öröksége, nem új. **2026-09-13:** a végső review ezt V4-ként igazolta; a J5 hét oldalon javította (14. pont).
 - **Két elavult-keresés őr** (19. nap): a teszt csak mindkettő kivételekor bukik; a második őr egy ablaka érvelés, nem bizonyíték (a kódkomment is így mondja).
 - **A labor-szerver hardeningje** (`694d5cc`) a fő szerverével azonos függvény; a labor-szervert valódi laborban nem indítottam el.
@@ -246,7 +267,7 @@ helyreállítási bizonyítéka hiányzik.
 
 A végső független review ([jelentés](WEBSITE_FINAL_REVIEW_2026-09-13_HU.md)) a `39e7f80`-on hét
 megmaradt hibát igazolt. Mind a hét javítva van kódban és tesztben a `web/review-fixes-2026-09-13`
-ágon; **egyik sincs élesben**, és a **független újra-review még nem történt meg**. A részletek, a
+ágon; **egyik sem volt élesben** (2026-09-14 óta mind az), és a **független újra-review még nem történt meg**. A részletek, a
 negatív kontrollok és a menet közbeni leletek a naplóban: J4, J5, J6.
 
 | ID | Mit javít | Commit | Teszt (a rendes kapuban) | Negatív kontroll | A review ellenpróbája |
@@ -273,14 +294,14 @@ Vantage points érintett volt és javítva; a Fairness a lekérdezés-váltásn�
 Watch és az Operators nem értelmezhető (nincs lekérdezés).
 
 **Deploy:** a 10. pont sorrendje változatlan; a J4–J6 a 11–20. nappal és a J1–J3-mal együtt kerülne ki,
-külön engedéllyel, a független újra-review után.
+külön engedéllyel, a független újra-review után. **Telepítve 2026-09-14 (`5237f80`).**
 
 ## 15. Az ismételt review hibajegyei — J7 (2026-09-13/14)
 
 Az ismételt független review ([jelentés](WEBSITE_REVIEW_V1_V7_2026-09-13_HU.md)) a `72fec82`-n V1, V2, V3,
 V5, V6 és V7 eredeti hibáját lezárta, a V4-et részben fogadta el, új P1-et nem talált, és négy P2
 hibajegyet adott. Mind a négy javítva van kódban és tesztben a `web/review-fixes-2026-09-13-2` ágon;
-**egyik sincs élesben**, és a **független újra-review még nem történt meg**. Részletek: napló, J7.
+**egyik sem volt élesben** (2026-09-14 óta mind az), és a **független újra-review még nem történt meg**. Részletek: napló, J7.
 
 | ID | Mit javít | Commit | Teszt (a rendes kapuban) | Negatív kontroll | A review ellenpróbája |
 |---|---|---|---|---|---|
@@ -299,14 +320,14 @@ kódolásban, ezért a git binárisnak mutatja őket), a futásainak trace-ei a 
 
 **Deploy:** a 10. pont sorrendje változatlan; a J4–J7 együtt kerülne ki, külön engedéllyel, a független
 újra-review után. A review deploy-véleménye: a megfigyelő webfelület kiadása mérlegelhető; a live szimulátor
-elfogadásához továbbra is valódi laborbizonyíték kell.
+elfogadásához továbbra is valódi laborbizonyíték kell. **Telepítve 2026-09-14 (`5237f80`).**
 
 ## 16. A harmadik review maradéka — J8 (2026-09-14)
 
 A harmadik független review ([jelentés](WEBSITE_REVIEW_W1_W4_2026-09-14_HU.md)) az `eb76773`-n a W1-et, a W4-et
 és a V4-et lezárhatónak, a W3-at a harness működésére lezárhatónak, a régi pollteszt szigorítását indokoltnak
 találta. A W2-t részben fogadta el; egy P2 maradékot (X1) és egy P3 teszthibát (X2) adott, új P1-et nem.
-Mindkettő javítva van kódban és tesztben ugyanazon az ágon (#176); **egyik sincs élesben**, és a **független
+Mindkettő javítva van kódban és tesztben ugyanazon az ágon (#176); **egyik sem volt élesben** (2026-09-14 óta mind az), és a **független
 újra-review még nem történt meg**. Részletek: napló, J8.
 
 | ID | Mit javít | Commit | Teszt (a rendes kapuban) | Negatív kontroll | A review ellenpróbája |
@@ -335,3 +356,6 @@ K2 299/299 első futásra, K3 98 (8 kihagyott), CSP 4/4, ellenpróbák 5/5 és 4
 **Deploy:** a 10. pont sorrendje változatlan; a J4–J8 együtt kerülne ki, **külön tulajdonosi engedéllyel**. A
 review-sorozat a negyedik kör után nem ad kiadást blokkoló hibajegyet. A live szimulátor engedélyezéséhez
 továbbra is valódi laborbizonyíték kell; a megfigyelő webfelület kódelfogadása nem laborengedély.
+
+**Telepítve 2026-09-14 (`5237f80`),** a tulajdonos engedélyével; a mérések a naplóban („Deploy 2026-09-14”) és
+a 3. pontban. A laborelfogadás a tulajdonos döntése szerint nem kerül tervbe (11. pont).
