@@ -1,0 +1,19 @@
+# deftrack-mongo-backup.timer -- one backup a night.
+#
+# 03:30 UTC is 05:30 on the VPS's Berlin clock, clear of its own daily timers as
+# read on 2026-09-14: logrotate and dpkg-db-backup at 00:00, man-db around
+# 03:00, e2scrub on Sundays at 03:10, apt-daily-upgrade from 06:00. The only
+# neighbour is sysstat's ten-minute collector. Persistent= catches up a run the
+# machine was off for; the randomised delay keeps it off the minute boundary.
+
+[Unit]
+Description=Nightly backup of the devnet explorer's MongoDB database
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=15min
+Persistent=true
+Unit=deftrack-mongo-backup.service
+
+[Install]
+WantedBy=timers.target

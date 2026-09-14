@@ -1,0 +1,37 @@
+# deftrack-mongo-backup.service -- one backup of the devnet explorer's MongoDB
+# database, started by deftrack-mongo-backup.timer.
+#
+# The script is installed as a root-owned copy in /usr/local/sbin rather than
+# run from the app checkout: /opt/devnet-deftrack/app is updated by the deploy,
+# and a root service executing a file that a less privileged account can
+# rewrite is a way to become root. Install and verify: docs/MONGO_BACKUP_RUNBOOK_HU.md.
+#
+# A failed run leaves this unit failed, which `systemctl --failed` and the
+# journal show; the script keeps nothing from a failed run and prunes nothing.
+
+[Unit]
+Description=Back up the devnet explorer's MongoDB database
+Documentation=file:/usr/local/sbin/deftrack-mongo-backup
+After=mongod.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/deftrack-mongo-backup
+# A dump competes with the indexer for disk; it can wait, the indexer should not.
+Nice=10
+IOSchedulingClass=idle
+# 584 MB of data dumps in well under a minute; this is a ceiling for a stuck
+# connection, not an estimate.
+TimeoutStartSec=30min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# The only place it writes. The directory must exist before the first start,
+# or systemd cannot set up the namespace; the install step creates it.
+ReadWritePaths=/var/backups/deftrack-mongo
