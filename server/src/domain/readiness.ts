@@ -21,6 +21,12 @@ export interface ReadinessInput {
   syncError: string | null;
   /** When the indexer last advanced; null if it never has. */
   lastSyncedAtMs: number | null;
+  /**
+   * When the indexer last finished a pass -- one that advanced, or one that
+   * found nothing to index (the sync cursor's `heartbeatAt`). Null if it never
+   * has, or for a cursor written before the field existed.
+   */
+  lastSyncPassAtMs: number | null;
   nowMs: number;
   syncIntervalMs: number;
 }
@@ -50,7 +56,14 @@ export function evaluateReadiness(input: ReadinessInput): Readiness {
 
   const behind = input.chainTip >= 0 ? Math.max(0, input.chainTip - input.indexedHeight) : 0;
   const stallAfterMs = Math.max(MIN_STALL_MS, input.syncIntervalMs * STALL_INTERVALS);
-  const idleMs = input.lastSyncedAtMs === null ? Infinity : input.nowMs - input.lastSyncedAtMs;
+  // Idle since the last finished pass, not since the last indexed block. A
+  // quiet chain moves `lastSyncedAt` only when a block arrives, so measured from
+  // it alone every block gap longer than the stall limit read as a stalled
+  // indexer for the seconds between the block reaching the node and the next
+  // pass: 503 at 10:21Z and 11:31:57Z on the devnet on 2026-09-14. A pass that
+  // hangs or throws writes no heartbeat, so a real stall still shows.
+  const lastActiveMs = latest(input.lastSyncedAtMs, input.lastSyncPassAtMs);
+  const idleMs = lastActiveMs === null ? Infinity : input.nowMs - lastActiveMs;
   if (behind > 0 && idleMs > stallAfterMs) failing.push('sync-stalled');
 
   if (failing.length === 0) return { status: 'ok', httpStatus: 200, failing };
@@ -59,4 +72,45 @@ export function evaluateReadiness(input: ReadinessInput): Readiness {
   // still serves correct, merely older, data.
   const down = failing.includes('mongo') || failing.includes('rpc');
   return { status: down ? 'down' : 'degraded', httpStatus: 503, failing };
+}
+
+function latest(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.max(a, b);
+}
+
+/** The stored sync cursor, as far as readiness reads it. */
+export interface SyncCursor {
+  lastSyncedHeight: number;
+  lastSyncedAt?: Date | null;
+  heartbeatAt?: Date | null;
+  error?: string | null;
+}
+
+/**
+ * The readiness input the health endpoint builds from the sync cursor.
+ *
+ * Kept here, beside the decision, so that which cursor field feeds which input
+ * is tested rather than left to the route: the stall above came from reading
+ * one timestamp where two were stored.
+ */
+export function readinessInput(args: {
+  mongoConnected: boolean;
+  chainTip: number;
+  cursor: SyncCursor | null;
+  nowMs: number;
+  syncIntervalMs: number;
+}): ReadinessInput {
+  const { cursor } = args;
+  return {
+    mongoConnected: args.mongoConnected,
+    chainTip: args.chainTip,
+    indexedHeight: cursor?.lastSyncedHeight ?? -1,
+    syncError: cursor?.error ?? null,
+    lastSyncedAtMs: cursor?.lastSyncedAt ? new Date(cursor.lastSyncedAt).getTime() : null,
+    lastSyncPassAtMs: cursor?.heartbeatAt ? new Date(cursor.heartbeatAt).getTime() : null,
+    nowMs: args.nowMs,
+    syncIntervalMs: args.syncIntervalMs,
+  };
 }

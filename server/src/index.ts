@@ -28,7 +28,7 @@ import { Block } from './models/Block.js';
 import { MasternodeState } from './models/MasternodeState.js';
 import v1Routes from './routes/v1/index.js';
 import { sendError } from './utils/http.js';
-import { evaluateReadiness } from './domain/readiness.js';
+import { evaluateReadiness, readinessInput } from './domain/readiness.js';
 import { initializeHostLabelPolicy } from './services/hostLabel.service.js';
 import { currentParticipants } from './services/experiment.service.js';
 import { metricsService } from './services/metrics.service.js';
@@ -98,15 +98,15 @@ app.get('/api/v1/health', async (_req, res) => {
   const stakers =
     tip >= 0 ? await currentParticipants(tip).then((p) => p.stakers).catch(() => -1) : -1;
 
-  const readiness = evaluateReadiness({
-    mongoConnected: mongoose.connection.readyState === 1,
-    chainTip: tip,
-    indexedHeight: state?.lastSyncedHeight ?? -1,
-    syncError: state?.error ?? null,
-    lastSyncedAtMs: state?.lastSyncedAt ? new Date(state.lastSyncedAt).getTime() : null,
-    nowMs: Date.now(),
-    syncIntervalMs: config.sync.intervalMs,
-  });
+  const readiness = evaluateReadiness(
+    readinessInput({
+      mongoConnected: mongoose.connection.readyState === 1,
+      chainTip: tip,
+      cursor: state,
+      nowMs: Date.now(),
+      syncIntervalMs: config.sync.intervalMs,
+    })
+  );
 
   const body: ApiEnvelope<HealthSnapshot> = {
     // success reports whether the request was served, readiness whether the
