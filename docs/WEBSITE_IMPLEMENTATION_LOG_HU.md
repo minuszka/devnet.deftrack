@@ -3313,8 +3313,9 @@ Mit: friss mentés → MongoDB 8.0.29 → 8.0.32 és Node 24.19 → 24.21 (rögz
   7 negatív kontrollal. A devnet2-t külön is méri: header, tip-kor, legfeljebb 2 blokk a seedtől, haladás a párban.
 - **Checksum:** pontosan egy sor, pontosan az archívum neve, és az archívum saját sha256-ja.
 - **FCV:** a futó mongod indulásakori `id 5853300` startup-bejegyzés és az azutáni FCV-események. Az élő
-  `getParameter`-olvasáshoz nincs jogosult felhasználó (mérve: „not authorized on admin”) — erről tulajdonosi döntés
-  kell.
+  `getParameter`-olvasásra a vizsgált olvasó felhasználó (`devnet_ro`) nem jogosult (mérve: „not authorized on
+  admin”). Más jogosult felhasználót nem vizsgáltunk, és a rendelkezésre álló hitelesítő adatok között nincs ilyen.
+  Erről tulajdonosi döntés kell.
 - **Tesztkeret:** 37 eset és 14 mutáns, gépileg ellenőrzött kijelölt esetekkel.
 
 A csomagok a repón kívül vannak:
@@ -3322,6 +3323,28 @@ A csomagok a repón kívül vannak:
   alkönyvtára);
 - `…\2026-09-14-maint-window-r2\`, `SHA256SUMS` sha256 `f93a267c3680f4b06ef6101ff977dfba3f1a16035ed3e9cc89916070815f130b`;
 - `…\2026-09-14-maint-window-r3\` (3. kör), `SHA256SUMS` sha256 `5a567910192be5762ef2062110e1dc32c63fe295f22dacf28042a937fdd0628b`.
+
+**3. review-kör, CHANGES REQUESTED, egy P2:**
+- **Lezárva:** MR2-1, MR2-2, MR2-3 és MW3.
+- **A reviewer ismételt futásai:** 37/37 és 14/14 mutáns; 14/14 verify-kaputeszt; 7 negatív kontroll; azonos minta
+  ismétlése PENDING; élő száraz futás FAIL (7), exit 1.
+- **MR3-1 (az MR2-4 maradéka):** a `t < start - 5` öt másodperccel a processz indulása elé engedte az FCV-bizonyítékot.
+  A reviewer a teljes prepben reprodukálta (startup 4 s-mal az indulás előtt → exit 0, mentés, apt, marker).
+- **A reviewer az FCV-bizonyítékról:** a javítás után ehhez az egyszeri, 8.0-n belüli patch-művelethez technikailag
+  elfogadható, korlátozott helyettesítő bizonyíték, tulajdonosi elfogadással. Nem élő `getParameter`-olvasás.
+
+**4. kör, beadva:**
+- **FCV-kötés:** szigorú `t < start` és mikroszekundumos UTC indulási idő (`--timestamp=us+utc`). A másodperces
+  bélyeg egy másodpercen belüli rést hagyna; mikroszekundum nélküli bélyeg → 12.
+- **Új határesetek:** −4 s, −1 s, −69 ms (ugyanabban a másodpercben) → 12; +31 ms → 0.
+- **Új mutánsok:** a tűrés visszaírása, a másodperces indulási idő, a formátumellenőrzés hiánya — mind a kijelölt
+  eseteken harap. Összesen 42 eset és 17 mutáns.
+- **A mutáns-futtató szigorítása:** a hibás `sed`, az üres vagy érvénytelen szkript és a 3 sornál nagyobb változás
+  érvénytelen kontroll, és nem nulla kilépést ad.
+- **Élő, csak olvasó futás** (csak az FCV-függvény): „FCV at the running mongod's startup 2026-09-11T04:41:23.143000Z
+  (process started 2026-09-11T04:41:21.169185Z): 8.0; later FCV events: none”, rc 0.
+- **Csomag:** `…\2026-09-14-maint-window-r4\`, `SHA256SUMS` sha256
+  `55e8f71cb5578baac8a4752b324f97cd557eafee91d5fab652a395d292855053`.
 
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
@@ -3760,7 +3783,8 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   - A 2. kör négy új P2-t adott: MR2-1 (a verify döntése hiányos párbizonyítéknál is PASS és exit 0), MR2-2 (a
     devnet2 lemaradása nem mért), MR2-3 (a checksum nincs az archívumhoz kötve), MR2-4 (az FCV-kapu történeti
     naplóból következtetett).
-  - A 3. kör beadva; a karbantartás nem futott. A csomagok a repón kívül vannak (napló, „VPS karbantartási ablak”).
+  - A 3. kör lezárta az MR2-1…MR2-3-at és az MW3-at; egy P2 maradt (MR3-1, az FCV-időhatár).
+  - A 4. kör beadva; a karbantartás nem futott. A csomagok a repón kívül vannak (napló, „VPS karbantartási ablak”).
 - **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
   böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
   jelentés által hivatkozott `client/test-results/review-final/`-t is:
