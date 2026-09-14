@@ -1,3 +1,5 @@
+import http from 'node:http';
+import https from 'node:https';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -8,19 +10,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   post: vi.fn(),
   logs: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+  /** Every config handed to axios.create, in order. */
+  created: [] as Array<Record<string, any>>,
 }));
 
 vi.mock('axios', () => ({
   default: {
-    create: () => ({ post: state.post, interceptors: { response: { use: () => undefined } } }),
+    create: (cfg: Record<string, any>) => {
+      state.created.push(cfg);
+      return { post: state.post, interceptors: { response: { use: () => undefined } } };
+    },
   },
 }));
 vi.mock('../config.js', () => ({
-  config: { rpc: { host: '127.0.0.1', port: 1, user: 'u', pass: 'p', timeoutMs: 100 } },
+  config: {
+    rpc: { host: '127.0.0.1', port: 1, user: 'u', pass: 'p', timeoutMs: 100 },
+    peerRpc: { host: '127.0.0.1', port: 2, user: 'u2', pass: 'p2', timeoutMs: 4_000 },
+  },
 }));
 vi.mock('../utils/logger.js', () => ({ logger: state.logs }));
 vi.mock('./metrics.service.js', () => ({ metricsService: { observeRpc: () => undefined } }));
 
+import { config } from '../config.js';
 import { MAX_CACHE_ENTRIES, RpcService } from './rpc.service.js';
 
 /** How the node refuses: a non-2xx status with the RPC error in the body. */
@@ -186,5 +197,42 @@ describe('the response cache', () => {
     expect(inFlightOf(rpc).size).toBe(0);
     await expect(rpc.call('quorum', ['listextended', 15_000], 'listextended')).resolves.toEqual({ readAt: 15_000 });
     expect(state.post).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Production never sets the pool's idle limit: neither `config.rpc` nor
+ * `config.peerRpc` carries one, so both clients run on the default -- and the
+ * default is the whole of the fix for the node closing a 30-second-idle socket
+ * under a reused request. The keep-alive tests all pass an explicit limit, so
+ * a default of 0, which turns the protection off in production, left every one
+ * of them green (review P3, 2026-09-14). These build the two clients the way
+ * production does and read what reaches the agents.
+ */
+describe('the pooled-connection idle limit an endpoint does not set', () => {
+  it('is 15 seconds for the primary and the peer client, on the http and the https agent', () => {
+    state.created.length = 0;
+    new RpcService();
+    new RpcService(config.peerRpc, 'peer:');
+    expect(state.created).toHaveLength(2);
+    for (const cfg of state.created) {
+      expect(cfg.httpAgent).toBeInstanceOf(http.Agent);
+      expect(cfg.httpsAgent).toBeInstanceOf(https.Agent);
+      expect(cfg.httpAgent.options).toMatchObject({ keepAlive: true, maxSockets: 16, timeout: 15_000 });
+      expect(cfg.httpsAgent.options).toMatchObject({ keepAlive: true, maxSockets: 16, timeout: 15_000 });
+      cfg.httpAgent.destroy();
+      cfg.httpsAgent.destroy();
+    }
+  });
+
+  it('leaves the request timeout to the endpoint, apart from the idle limit', () => {
+    state.created.length = 0;
+    new RpcService();
+    new RpcService(config.peerRpc, 'peer:');
+    expect(state.created.map((cfg) => cfg.timeout)).toEqual([100, 4_000]);
+    for (const cfg of state.created) {
+      cfg.httpAgent.destroy();
+      cfg.httpsAgent.destroy();
+    }
   });
 });
