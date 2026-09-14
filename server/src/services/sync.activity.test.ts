@@ -157,34 +157,63 @@ describe('the activity times readiness reads', () => {
     expect(evaluateReadiness(input)).toEqual({ status: 'degraded', httpStatus: 503, failing: ['sync'] });
   });
 
-  it('an overlapping tick and a hung backfill do not refresh the pass time', async () => {
+  it('an overlapping tick and a hung backfill refresh neither activity time', async () => {
+    // Readiness takes the later of the two times, so a write to EITHER one while
+    // a tick is hung would hide the hang. The cursor below keeps every write, as
+    // the database does, and readiness is read from what was actually stored --
+    // not from times the test writes itself (independent review of #186,
+    // H186-R2-01: a tick that wrote only lastSyncedAt on overlap passed the
+    // earlier version of this test).
     const service = serviceAt(100, 100);
-    let release!: () => void;
+    const advancedAt = new Date(Date.now() - 60 * 60_000); // the index last advanced an hour ago
+    state.syncStateDoc.lastSyncedAt = advancedAt;
+    state.syncUpdateOne.mockImplementation(async (_filter: unknown, update: Update) => {
+      Object.assign(state.syncStateDoc, update?.$set ?? {});
+      return {};
+    });
+    let release: (() => void) | undefined;
     vi.spyOn(service as any, 'backfillPayees').mockImplementation(
       () => new Promise<void>((resolve) => (release = resolve))
     );
 
     const hung = service.tick();
-    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-    // The idle pass wrote its heartbeat before the backfill began...
-    expect(heartbeatWrites()).toHaveLength(1);
-    // ...and a tick that overlaps the hung one writes nothing.
-    await service.tick();
-    expect(heartbeatWrites()).toHaveLength(1);
-    expect(state.getBlockCount).toHaveBeenCalledTimes(1);
+    try {
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+      // The idle pass stored its heartbeat before the backfill began, and left the advance time alone.
+      expect(heartbeatWrites()).toHaveLength(1);
+      expect(state.syncStateDoc.lastSyncedAt).toEqual(advancedAt);
+      const passAt = (state.syncStateDoc.heartbeatAt as Date).getTime();
 
-    // So the heartbeat ages, and once a block is waiting past the limit it reads as a stall.
-    const passAt = heartbeatWrites()[0]!.heartbeatAt.getTime();
-    const input = readinessInput({
-      mongoConnected: true,
-      chainTip: 101,
-      cursor: { lastSyncedHeight: 100, lastSyncedAt: new Date(passAt - 60 * 60_000), heartbeatAt: new Date(passAt), error: null },
-      nowMs: passAt + 5 * 60_000 + 1,
-      syncIntervalMs: 20_000,
-    });
-    expect(evaluateReadiness(input).failing).toEqual(['sync-stalled']);
+      // Six minutes after that stored heartbeat -- past the five-minute limit -- a
+      // tick overlaps the hung one. Only Date is faked, and it stands still.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(passAt + 6 * 60_000);
+      const stored = { ...state.syncStateDoc };
+      const writes = state.syncUpdateOne.mock.calls.length;
+      await service.tick();
 
-    release();
-    await hung;
+      // With a block waiting, readiness from the stored cursor reads a stall.
+      const input = readinessInput({
+        mongoConnected: true,
+        chainTip: 101,
+        cursor: {
+          lastSyncedHeight: state.syncStateDoc.lastSyncedHeight as number,
+          lastSyncedAt: state.syncStateDoc.lastSyncedAt as Date | undefined,
+          heartbeatAt: state.syncStateDoc.heartbeatAt as Date | undefined,
+          error: (state.syncStateDoc.error as string | undefined) ?? null,
+        },
+        nowMs: Date.now() + 1,
+        syncIntervalMs: 20_000,
+      });
+      expect(evaluateReadiness(input)).toEqual({ status: 'degraded', httpStatus: 503, failing: ['sync-stalled'] });
+      // Because the overlapping tick wrote nothing at all, and asked the node nothing.
+      expect(state.syncUpdateOne.mock.calls.length).toBe(writes);
+      expect(state.syncStateDoc).toEqual(stored);
+      expect(state.getBlockCount).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      release?.();
+      await hung;
+    }
   });
 });
