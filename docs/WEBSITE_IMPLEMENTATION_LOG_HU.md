@@ -31,6 +31,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | J4–J6 | A végső review (V1–V7) javításai | ELLENŐRZÖTT — az ismételt review V1, V2, V3, V5, V6, V7-et lezárta, V4-et részben | `web/review-fixes-2026-09-13` (#175) |
 | J7 | Az ismételt review (W1–W4) javításai és egy tesztadósság | ELLENŐRZÖTT — a harmadik review W1, W3, W4-et lezárta, W2-t részben (X1) | `web/review-fixes-2026-09-13-2`; lásd a J7 bejegyzést |
 | J8 | A harmadik review maradéka: X1 (W2 maradéka) és X2 (tesztlezárás) | ELLENŐRZÖTT — a negyedik független review X1-et és X2-t lezárta, új hibajegy nélkül | `web/review-fixes-2026-09-13-2` (#176); `d0f28fe`, `504b8cd`; lásd a J8 bejegyzést |
+| Deploy | Élesre telepítés: a 11–20. nap és a J1–J8 | TELEPÍTVE, élőben mérve — a CSP enforce-ra váltása nyitott | `5237f80` a VPS-en 2026-09-14 óta; lásd a „Deploy 2026-09-14” bejegyzést |
 
 A 11–20. nap sorai 2026-09-13-ig `TERVEZETT`-et mutattak, miközben mindegyik napnak megvolt a lezárt bejegyzése; a végső review jelezte. A táblázat most a napi bejegyzések saját „Commit(ok), végső SHA” és „Napi státusz” sorait idézi.
 
@@ -2993,6 +2994,66 @@ Napi státusz: ELLENŐRZÖTT — a független újra-review még nem történt me
 Éles deploy: NEM TÖRTÉNT
 ```
 
+## Deploy 2026-09-14 – a 11–20. nap és a J1–J8 élesre kerül
+
+```text
+Dátum / végrehajtó: 2026-09-14 / Claude Opus 5 (1M)
+Telepített SHA: 5237f80 (main a #176 és a #177 merge után); előtte a VPS-en 83b8710 (#163), azaz 78 commit
+Engedély: a tulajdonos kifejezett engedélye („szinkron+deploy mehet vpsre”), a negyedik független review után
+Hatókör: ops/deploy.sh a VPS-en — szerver és kliens. Nginx-konfig, CSP, flotta, node, adatbázis nem érintve
+```
+
+**Előtte — kapuk a mergelt mainen** (`3a999eb`; a `5237f80` ehhez képest csak az öt `ops/c2-*.sh`
+szkriptet adja, kliens- és szerverkód nem változik): K1 exit 0 — 864 + 203 unit; K2 **299/299** első
+futásra, `ERR_NO_BUFFER_SPACE` nélkül; K3 98 (8 kihagyott); CSP 4/4.
+
+**Előtte — a VPS, csak olvasással:** app `83b8710`, tiszta munkafa; a szolgáltatás 2026-09-12 16:17 óta
+fut; health 200; kiszolgált bundle `index-CkY3rdOC.js`. Új `.env`-kulcs nem kell: a
+`83b8710..5237f80` különbségben az egyetlen új környezetiváltozó-olvasás integrációs tesztben van; a
+szimulátor lánc-azonosító pinjei megvannak. Az élő fejlécek rögzítve (`/`, `/api/v1/health`, `/rounds`,
+`/admin`, ismeretlen útvonal): az `/api/v1/health` válaszában **két** `Strict-Transport-Security`.
+
+**Deploy:** 01:19:46Z–01:20:47Z, exit 0. Pull (fast-forward `83b8710..5237f80`), `npm ci`, build,
+rsync a webrootba, restart (01:20:39Z), readiness: az API azonnal válaszolt, `status: ok`, `chainTip`
+= `indexedHeight` = 13028, `behind` 0. A naplóban az egyetlen figyelmeztetés („MongoDB disconnected”) a
+régi folyamaté (SIGTERM utáni leállás); az új folyamat tisztán indult.
+
+**Utána — mérve:**
+
+| Mit | Eredmény |
+|---|---|
+| VPS | app `5237f80`, tiszta munkafa; a `client/dist` és a webroot **azonos** (`diff -rq`); kiszolgált bundle `index-CNPCV91P.js` — ugyanaz a név, mint a helyi buildé ugyanabból a kliensforrásból |
+| Lockfile | a VPS `package-lock.json` sha256-ja `2f72d372…ffb78`, byte-azonos a repóéval — a 13. napi `body-parser` javítás élesben |
+| `npm audit --omit=dev` a VPS-en | 2 moderate: `qs`, az `express`-en át — pontosan az elfogadott F13-maradék |
+| Szolgáltatás, 01:32:06Z | aktív, 0 újraindulás; health `ok`, tip = indexed = 13033, `behind` 0; az új folyamat 59 naplósorából 0 warn, 0 error |
+| Fejlécek, az előtte-állapothoz képest | **egyetlen különbség:** az `/api/v1/health` válaszából eltűnt a helmet HSTS-e — **egy** maradt, az nginxé (a 20. napi `694d5cc` élesben mérve) |
+| A 17–19. nap oldalai | `/simulations`, `/search`, `/methodology`: 200 `text/html`; `favicon.svg`: 200 |
+| Bundle | az új 200, `Cache-Control: public, max-age=31536000, immutable`; a régi 404 (az rsync `--delete`) |
+| Router | hibás escape 400; ismeretlen API-útvonal JSON 404 |
+| Publikus API | `/api/v1/simulations?limit=25`: 200, `success: true`, 0 futam; `/api/v1/chainlocks`: 200 |
+| Valódi böngésző (élő oldal) | Overview, Simulations, DKG Rounds, Admin betölt; az Overview hét API-hívása 200; az Admin a belépési képernyőt mutatja, a `/api/v1/admin/session` 401-e a várt „nincs session” |
+
+**Két megfigyelés, nem a deploy okozta — a deploy előtt is így volt:**
+
+1. **A report-only CSP semmit nem gyűjt.** Az nginx `Content-Security-Policy-Report-Only` fejlécében nincs
+   `report-uri` és `report-to`, így valós forgalomból nem érkezik jelentés. A böngészőkonzol mind a négy
+   oldalon egyetlen üzenetet adott: az `upgrade-insecure-requests` direktíva report-only módban hatástalan.
+   CSP-sértést nem mutatott.
+2. **Az `/api/` válaszain duplikált, részben ellentmondó biztonsági fejlécek.** A helmet és az nginx is
+   küld `X-Frame-Options`-t (`SAMEORIGIN` és `DENY`), `Referrer-Policy`-t (`no-referrer` és
+   `strict-origin-when-cross-origin`) és `X-Content-Type-Options`-t, a helmet pedig egy saját CSP-t. JSON-
+   válaszon gyakorlati hatása nincs; a HSTS-duplikáció megszűnt, a többi nem volt a 20. nap célja.
+
+**Ami nem történt meg:** a CSP enforce-ra váltása (átadási csomag 10. pont, 4. lépés) — külön engedélyre vár.
+**Tulajdonosi döntés, 2026-09-14:** a live szimulátor laborelfogadása **nem kerül tervbe**; a live mód
+ezért nem elfogadott, a megfigyelő webfelület élesben fut.
+
+```text
+Telepített SHA: 5237f80
+Napi státusz: TELEPÍTVE, élőben mérve — a CSP enforce-ra váltása nyitott; laborfutam: nem kerül tervbe
+Éles deploy: MEGTÖRTÉNT (szerver + kliens, ops/deploy.sh)
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -3313,6 +3374,11 @@ Napi státusz: ELLENŐRZÖTT
 ```
 
 ## Auditpontok lezárási mátrixa
+
+**Élesben, mérve 2026-09-14, a deploy után:** a VPS a `5237f80`-et futtatja. Az alábbi sorok „nincs
+telepítve” jelzései ezzel lezárultak, és minden F- és V-javítás élesben van. Kivétel az F10 CSP-je, amely
+továbbra is report-only. Részletek: „Deploy 2026-09-14” bejegyzés. Az alábbi 2026-09-13-i bekezdés és a
+sorok szövege előzményként változatlan.
 
 **Élesben, mérve 2026-09-13:** a VPS a `83b8710`-et futtatja (a #163 merge, 2026-09-12 16:17): ebben
 az 1–10. nap (#162) benne van, a J1–J3 (#164, az R1–R7 review-javítások) és a 11–20. nap
