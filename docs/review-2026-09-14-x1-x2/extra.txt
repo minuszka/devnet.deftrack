@@ -1,0 +1,33 @@
+﻿node.exe : [WebServer] (node:26812) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([WebServer] (no... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:37820) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:35268) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]   VITE v8.2.2  ready in 217 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:5594/
+
+Running 4 tests using 1 worker
+
+(node:23516) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:23:36 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 1 ..\deftrack-review-458b6d0\docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial history read fails first (651ms)
+[WebServer] 2:23:37 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 2 ..\deftrack-review-458b6d0\docs\review-2026-09-14\extra.spec.ts:11:3 › X1 recovery 401 is not lost when the initial dry-run read fails first (571ms)
+[WebServer] 2:23:37 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 3 ..\deftrack-review-458b6d0\docs\review-2026-09-14\extra.spec.ts:31:1 › C3 a late initial evidence 401 after selecting a planless B cannot end B session (615ms)
+  ok 4 ..\deftrack-review-458b6d0\docs\review-2026-09-14\extra.spec.ts:53:1 › C4 abandoning a held answer aborts it without giving its body to the page (225ms)
+
+  4 passed (5.2s)

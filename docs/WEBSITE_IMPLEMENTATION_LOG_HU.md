@@ -30,7 +30,7 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | J1–J3 | Az 01–10. napi review (R1–R7) javításai | ELLENŐRZÖTT | `4972341`, `4261e06`, `6913d1d`, `e860556` (#164) |
 | J4–J6 | A végső review (V1–V7) javításai | ELLENŐRZÖTT — az ismételt review V1, V2, V3, V5, V6, V7-et lezárta, V4-et részben | `web/review-fixes-2026-09-13` (#175) |
 | J7 | Az ismételt review (W1–W4) javításai és egy tesztadósság | ELLENŐRZÖTT — a harmadik review W1, W3, W4-et lezárta, W2-t részben (X1) | `web/review-fixes-2026-09-13-2`; lásd a J7 bejegyzést |
-| J8 | A harmadik review maradéka: X1 (W2 maradéka) és X2 (tesztlezárás) | ELLENŐRZÖTT — a független újra-review még nem történt meg | `web/review-fixes-2026-09-13-2` (#176); `d0f28fe`, `504b8cd`; lásd a J8 bejegyzést |
+| J8 | A harmadik review maradéka: X1 (W2 maradéka) és X2 (tesztlezárás) | ELLENŐRZÖTT — a negyedik független review X1-et és X2-t lezárta, új hibajegy nélkül | `web/review-fixes-2026-09-13-2` (#176); `d0f28fe`, `504b8cd`; lásd a J8 bejegyzést |
 
 A 11–20. nap sorai 2026-09-13-ig `TERVEZETT`-et mutattak, miközben mindegyik napnak megvolt a lezárt bejegyzése; a végső review jelezte. A táblázat most a napi bejegyzések saját „Commit(ok), végső SHA” és „Napi státusz” sorait idézi.
 
@@ -3324,7 +3324,7 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
 | Pont | Javító nap | Kód / commit | Ellenőrzés | Éles bizonyíték / korlát |
 |---|---|---|---|---|
 | F01 | 05–06, **J1**, **J4** | `8735d1d`, `5fd3307`, `4972341`, `96e6e30`, `451e3e8` | unit: `adminRunSelection.test.ts` 10 eset; E2E: 13 eset — a 9 eredeti plusz a review R1/R2/R4 ellenpróbái és a panel őrszemének fehér dobozos esete; J4: `run-status.spec.ts` +6 (V1), `admin.spec.ts` +3 (V3) | **A review újranyitotta** (R1, R2, R4): futamváltás közben a régi futamra ment volna az abort, késői hiba törölte az újat, a megerősítés átvándorolt. A J1 mindhármat lezárta, őrszemenként külön negatív kontrollal. **A végső review ismét újranyitotta** (V1: késői terv visszatekerte a futamot, a terv hibája elvitte az abortot; V3: belépés után nem töltődött be a dashboard). A J4 lezárta, 7 + 3 negatív kontrollal; nincs telepítve |
-| F02 | 05–07, **J2** | `8735d1d`, `5fd3307`, `c1e3605`, `4261e06` | unit: `simulationRunState.test.ts`; E2E: 14 eset szabályozott órával — a 8 eredeti plusz automatikus átmenet, sikertelen bizonyítékfrissítés, operátori recovery, Refresh, és a két idempotencia-eset | **A review újranyitotta** (R3): a státuszpoll csak a futamot frissítette, a bizonyítékot és az idővonalat nem, a Refresh pedig a kiválasztást nem olvasta újra. A J2 lezárta; a mentett terv továbbra is egyszer olvasódik. **A végső review ismét újranyitotta** (V2: az egymást keresztező bizonyíték-frissítések közül az utolsó érkező nyert; V7: a kezdeti olvasás hibája „nincs bizonyíték” lett). A J4 lezárta (`2e2d56c`, `11bbe63`; +4 és +6 E2E, 5 és 7 negatív kontroll); nincs telepítve. **Az ismételt review W2-je**: a recovery- és history-olvasás 401-e nem zárta le a sessiont — a J7 lezárta (`6c94aa0`; +4 E2E, 5 negatív kontroll); nincs telepítve. **A harmadik review a W2-t részben fogadta el** (X1: a kezdeti terv- vagy idővonal-olvasás 503-a után egy másik olvasás 401-e elveszett) — a J8 lezárta (`d0f28fe`; +10 E2E, 6 negatív kontroll); nincs telepítve |
+| F02 | 05–07, **J2** | `8735d1d`, `5fd3307`, `c1e3605`, `4261e06` | unit: `simulationRunState.test.ts`; E2E: 14 eset szabályozott órával — a 8 eredeti plusz automatikus átmenet, sikertelen bizonyítékfrissítés, operátori recovery, Refresh, és a két idempotencia-eset | **A review újranyitotta** (R3): a státuszpoll csak a futamot frissítette, a bizonyítékot és az idővonalat nem, a Refresh pedig a kiválasztást nem olvasta újra. A J2 lezárta; a mentett terv továbbra is egyszer olvasódik. **A végső review ismét újranyitotta** (V2: az egymást keresztező bizonyíték-frissítések közül az utolsó érkező nyert; V7: a kezdeti olvasás hibája „nincs bizonyíték” lett). A J4 lezárta (`2e2d56c`, `11bbe63`; +4 és +6 E2E, 5 és 7 negatív kontroll); nincs telepítve. **Az ismételt review W2-je**: a recovery- és history-olvasás 401-e nem zárta le a sessiont — a J7 lezárta (`6c94aa0`; +4 E2E, 5 negatív kontroll); nincs telepítve. **A harmadik review a W2-t részben fogadta el** (X1: a kezdeti terv- vagy idővonal-olvasás 503-a után egy másik olvasás 401-e elveszett) — a J8 lezárta (`d0f28fe`; +10 E2E, 6 negatív kontroll), a negyedik független review elfogadta; nincs telepítve |
 | F03 | 03 | `c5c872c` | unit: `freshness.test.ts` 15 eset; E2E: 7 eset szabályozott órával | Kliensoldalon lezárva. A `HealthSnapshot` nem közöl megfigyelési időbélyeget, így a forrásidő jelzése a `behind` marad |
 | F04 | 08 | `6c6fc96` | E2E: 8 eset (34 rekord végiglapozása, szűrő, betöltés/hiba/üres, részletváltás); HTTP: `experimentPaging.integration.test.ts` 7 eset | Kliensoldalon lezárva. A szerver eddig is helyesen lapozott és adta a valódi `total`-t; a kliens egyiket sem használta |
 | F05 | 09, **J3** | `881df65`, `6913d1d` | E2E: 8 eset — a 4 eredeti plusz mozgó tip, átmeneti feloldási hiba utáni újrapróbálkozás, és az explicit profil + aggregát érinthetetlensége; HTTP: a szűrő tényleg szűkíti a mintát (2 / 1 / 3 kör) | **A review újranyitotta** (R5): a feloldás `_resolved === null` mögött ült, és a „nem feloldható” sem null, ezért mindkét válasz beragadt. A J3 lezárta; a profil-registry cache-e indokoltként megmaradt. **Az ismételt review W4-e**: tip-vezérelt profilváltásnál a régi profil adata az új jelölés alatt maradt — a J7 lezárta (`f2a4873`; +3 E2E, 4 negatív kontroll); nincs telepítve |
@@ -3385,11 +3385,25 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   ugyanazon az ágon (`web/review-fixes-2026-09-13-2`, #176), a J8 munkanapon.
   **Mindkettő javítva kódban és tesztben** (`d0f28fe` X1, `504b8cd` X2), negatív kontrollokkal; a review
   négy új ellenpróbája (X1 ×2, C3, C4) és öt korábbi ellenpróbája (W1–W4, C2) az `504b8cd`-n zöld.
-  **Független újra-review: még nem történt meg.**
+  **Független újra-review: a negyedik review, lásd a következő pontot.**
   A reviewer `docs/review-2026-09-14/artifacts/` és `generated/` mappái (a review saját `.gitignore`-ja
   kizárja őket; 61 fájl) a repón kívül is megőrizve: `D:\www\devnet .deftrack-review-artefacts\2026-09-14\`,
   `SHA256SUMS` sha256 `f27855033ef9c19ab0e9f6752221822e93df6f6e3a7724c534af89e05c47cf8c`; `sha256sum -c`
   a másolaton és az eredetin is 61/61, negatív kontroll (egy átírt bájt, egy törölt fájl) exit 1.
+- **Negyedik, célzott független review az X1–X2-ről: 2026-09-14, a `458b6d0`-n**
+  ([jelentés](WEBSITE_REVIEW_X1_X2_2026-09-14_HU.md), [ellenpróbák és naplók](review-2026-09-14-x1-x2/)).
+  **X1 és X2 lezárva; új hibajegy nincs.** A `_loadSelectedRun` catch-ágából kivett 401-ág a jelenlegi
+  útvonalon valóban elérhetetlen. A J8 két kimondott mellékhatása elfogadható: a reviewer saját próbákkal mérte
+  (a késleltetett üzenet mellett az abort engedélyezett; kettős 503-nál mindkét sorrendben a terv hibája
+  látszik) — **3/3 zöld, de ezek a próbák nincsenek a rendes kapuban**. A reviewer kapui: K1 **1067** unit, K2
+  **299/299 első futásra**, `ERR_NO_BUFFER_SPACE` nélkül; K3 **98** (8 kihagyott); CSP **4/4**; ellenpróbák 5/5
+  és 4/4. Saját kontrolljai: a J8 mátrixa az `eb76773` shelljével 6 piros + 2 zöld (a J8 állítása szerint), az X2
+  öntesztjei a régi harnessszel 2 piros, cleanup-hiba nélkül. A vizsgálat külön worktree-ben
+  (`D:\www\deftrack-review-458b6d0`) futott; a mellékelt config erre az útvonalra mutat. Laborfutam: 0.
+  Kimenetei (`artifacts/`, `generated/`, a review `.gitignore`-ja kizárja őket; 33 fájl) a repón kívül:
+  `D:\www\devnet .deftrack-review-artefacts\2026-09-14-x1-x2\`, `SHA256SUMS` sha256
+  `5474c3a49ae2a9ce5d557a34a27f3f048ff80346b8f9a853abeba6f2138e6bfc`; `sha256sum -c` a másolaton és az
+  eredetin is 33/33, negatív kontroll (egy átírt bájt, egy törölt fájl) exit 1.
 - **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
   böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
   jelentés által hivatkozott `client/test-results/review-final/`-t is:

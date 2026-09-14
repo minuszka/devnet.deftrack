@@ -1,0 +1,17 @@
+﻿
+> devnet-deftrack@0.1.0 test:integration
+> npm run test:integration -w server
+
+
+> @devnet-deftrack/server@0.1.0 test:integration
+> vitest run --config vitest.integration.config.ts
+
+
+ RUN  v4.1.11 D:/www/deftrack-review-458b6d0/server
+
+
+ Test Files  15 passed (15)
+      Tests  98 passed | 8 skipped (106)
+   Start at  02:23:35
+   Duration  35.87s (transform 1.22s, setup 0ms, import 4.51s, tests 28.41s, environment 2ms)
+

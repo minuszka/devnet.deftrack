@@ -168,10 +168,11 @@ Mind **additív** vagy szűkítő (egy mező kevesebb kerül ki), törölt publi
 | Telefonon a fejléc ~370 px a menü előtt | tudomásul véve | a terv nem kéri a fejléc átrendezését |
 | A táblázat-görgetési jelzés az adminban nincs | tudomásul véve | a 18. nap a publikus shellre szólt; az admin túlfolyása javítva (`a436d6b`), a jelzés nem |
 | A 4 workeres skip-link flake (16. nap) | nem reprodukálódott | az azóta futtatott teljes suite-okban nem jelent meg; CI egy workerrel fut |
-| A friss klón K2-je nem volt tiszta (2. pont) | **nyitott, figyelendő** | egy nem induló oldal és két navigációs időtúllépés, viselkedési hiba nélkül; ha a CI-ban is megjelenik, a dev szerver alatti tesztidőzítés a gyanúsított. **2026-09-13:** a 12 végigfutott helyi K2-ből 2-ben egy-egy üres oldal; a trace-ben mindkétszer `net::ERR_NO_BUFFER_SPACE` a `/src/main.ts` betöltésén. Ez tünet, nem gyökérok; a TIME_WAIT-hipotézist a mérés nem igazolta (14. pont). **2026-09-14:** a harmadik review teljes K2-jében egy bukás, a trace-ben `ERR_NO_BUFFER_SPACE` a `dd-page-rounds.ts` betöltésén. A J8 három teljes K2-jéből kettő nem volt tiszta (2, illetve 1 bukás, mindegyik trace-ében ugyanez), a harmadik igen; a TIME_WAIT-csúcs a tiszta futásban is ugyanakkora volt (1062, a hibásakban 1070 és 1045) (16. pont) |
-| A J4–J6 (V1–V7), a J7 (W1–W4) és a J8 (X1, X2) javítás nincs élesben | **nyitott — deploy kell, a független újra-review után** | 14., 15. és 16. pont |
-| Kezdeti olvasások: egy 503 elnyelte egy másik olvasás 401-ét | **lezárva kódban és tesztben (J8, `d0f28fe`)** | a harmadik review X1-e, a W2 maradéka: a `Promise.all` az első hibánál kilépett; most mindhárom válaszra vár, és a kiválasztás-ellenőrzés után bármelyik 401 lezárja a sessiont |
-| A W3 negatív kontrolljában egy időzítő bezárt lapot hívott | **lezárva (J8, `504b8cd`)** | a harmadik review X2-e: teszthiba, nem alkalmazáshiba; a kontroll most csak a várt hibával bukik |
+| A friss klón K2-je nem volt tiszta (2. pont) | **nyitott, figyelendő** | egy nem induló oldal és két navigációs időtúllépés, viselkedési hiba nélkül; ha a CI-ban is megjelenik, a dev szerver alatti tesztidőzítés a gyanúsított. **2026-09-13:** a 12 végigfutott helyi K2-ből 2-ben egy-egy üres oldal; a trace-ben mindkétszer `net::ERR_NO_BUFFER_SPACE` a `/src/main.ts` betöltésén. Ez tünet, nem gyökérok; a TIME_WAIT-hipotézist a mérés nem igazolta (14. pont). **2026-09-14:** a harmadik review teljes K2-jében egy bukás, a trace-ben `ERR_NO_BUFFER_SPACE` a `dd-page-rounds.ts` betöltésén. A J8 három teljes K2-jéből kettő nem volt tiszta (2, illetve 1 bukás, mindegyik trace-ében ugyanez), a harmadik igen; a TIME_WAIT-csúcs a tiszta futásban is ugyanakkora volt (1062, a hibásakban 1070 és 1045) (16. pont). A negyedik review teljes K2-je (külön worktree-ben) 299/299 volt, bukás nélkül; ez a korábbi hibákat nem cáfolja |
+| A J4–J6 (V1–V7), a J7 (W1–W4) és a J8 (X1, X2) javítás nincs élesben | **nyitott — deploy kell, külön engedéllyel** | a független review-k mindet lezárták: a V1–V7-et a második (a V4-et részben) és a harmadik, a W1, W3, W4-et a harmadik, a W2-t (X1-gyel) és az X2-t a negyedik review; 14., 15. és 16. pont |
+| Kezdeti olvasások: egy 503 elnyelte egy másik olvasás 401-ét | **lezárva kódban és tesztben (J8, `d0f28fe`); a negyedik review elfogadta** | a harmadik review X1-e, a W2 maradéka: a `Promise.all` az első hibánál kilépett; most mindhárom válaszra vár, és a kiválasztás-ellenőrzés után bármelyik 401 lezárja a sessiont |
+| A W3 negatív kontrolljában egy időzítő bezárt lapot hívott | **lezárva (J8, `504b8cd`); a negyedik review elfogadta** | a harmadik review X2-e: teszthiba, nem alkalmazáshiba; a kontroll most csak a várt hibával bukik |
+| Az X1 két mellékhatása nincs a rendes kapuban | tudomásul véve — a review elfogadta | a késleltetett terv-hibaüzenet melletti abort és a kettős 503-nál a terv hibája csak a negyedik review saját próbáiban van mérve (`docs/review-2026-09-14-x1-x2/effects.spec.ts`, 3/3), a rendes kapuban nem |
 | Gyenge mintájú régi teszt | **lezárva kódban és tesztben (J7, `c82db16`)** | „a poll describing an older state cannot undo an action” a válasz feldolgozása előtt állított (J4 lelet, a review megerősítette). Mérve: a régi változat is 3/3 elkapta a hibát — konstrukciós, nem megfigyelt hiba volt; most megvárja a régi válasz elolvasását |
 | Fairness: tip-vezérelt profilváltás | **lezárva kódban és tesztben (J7, `f2a4873`)** — előtte: nyitott, nem mérve | ha a tip átlép egy aktiválási magasságot és az új profil kérése hibázik, a régi profil adata az új „at the tip” gomb alatt maradhat — kódolvasásból; a review böngészőben reprodukálta (W4) |
 | A `ResponseGate` URL szerinti olvasás-azonosítása | **lezárva (J7, `2bd3139`)** | a #175 saját harness-hibája (W3): a `release()` egy azonos URL-ű másik válasz olvasását is elfogadta; most válaszonkénti azonosító |
@@ -228,6 +229,11 @@ helyreállítási bizonyítéka hiányzik.
   [review-2026-09-14/](review-2026-09-14/) (UTF-8 naplók); a kimenetei (`artifacts/`, `generated/`) a repón
   kívül: `D:\www\devnet .deftrack-review-artefacts\2026-09-14\`, 61 fájl, `SHA256SUMS` sha256
   `f27855033ef9c19ab0e9f6752221822e93df6f6e3a7724c534af89e05c47cf8c`.
+- A **negyedik review** ([jelentés](WEBSITE_REVIEW_X1_X2_2026-09-14_HU.md)) mellékletei:
+  [review-2026-09-14-x1-x2/](review-2026-09-14-x1-x2/) (UTF-8 naplók; a config és a mellékhatás-próbák a
+  `D:\www\deftrack-review-458b6d0` review-worktree-re mutatnak). A kimenetei (`artifacts/`, `generated/`) a
+  repón kívül: `D:\www\devnet .deftrack-review-artefacts\2026-09-14-x1-x2\`, 33 fájl, `SHA256SUMS` sha256
+  `5474c3a49ae2a9ce5d557a34a27f3f048ff80346b8f9a853abeba6f2138e6bfc`.
 
 ## 13. Amit a review-nak külön érdemes néznie
 
@@ -320,6 +326,12 @@ ellenpróbái: a korábbi öt **5/5**, az új négy **4/4**. A `d0f28fe` saját 
 **A review mellékletei** a repóban (`docs/review-2026-09-14/`, UTF-8 naplók); a kimenetei a repón kívül
 (12. pont).
 
-**Deploy:** a 10. pont sorrendje változatlan; a J4–J8 együtt kerülne ki, külön engedéllyel, a független
-újra-review után. A review deploy-véleménye: feltétel nélküli admin-elfogadást X1 javítása előtt nem adott; X2
-nem runtime deploy-blokkoló; a live szimulátor engedélyezéséhez továbbra is valódi laborbizonyíték kell.
+**Negyedik független review (2026-09-14, a `458b6d0`-n):** [jelentés](WEBSITE_REVIEW_X1_X2_2026-09-14_HU.md).
+**X1 és X2 lezárva, új hibajegy nincs.** A catch-ágból kivett 401-ág a jelenlegi útvonalon valóban
+elérhetetlen; a második W3-önteszt nem gyengült. A két mellékhatást a reviewer elfogadhatónak minősítette, és
+saját próbákkal mérte (3/3), amelyek **nem részei a rendes kapunak** (8. pont). A reviewer kapui: K1 1067 unit,
+K2 299/299 első futásra, K3 98 (8 kihagyott), CSP 4/4, ellenpróbák 5/5 és 4/4. Laborfutam: 0.
+
+**Deploy:** a 10. pont sorrendje változatlan; a J4–J8 együtt kerülne ki, **külön tulajdonosi engedéllyel**. A
+review-sorozat a negyedik kör után nem ad kiadást blokkoló hibajegyet. A live szimulátor engedélyezéséhez
+továbbra is valódi laborbizonyíték kell; a megfigyelő webfelület kódelfogadása nem laborengedély.

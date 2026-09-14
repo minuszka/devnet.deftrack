@@ -1,0 +1,39 @@
+﻿node.exe : [WebServer] (node:12820) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([WebServer] (no... env being set.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:35100) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:33268) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:23:26 [vite] (client) Re-optimizing dependencies because vite config has changed
+[WebServer] 
+[WebServer]   VITE v8.2.2  ready in 231 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:5594/
+
+Running 5 tests using 1 worker
+
+(node:29100) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 2:23:28 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 1 ..\deftrack-review-458b6d0\docs\review-2026-09-13-followup\followup.spec.ts:14:1 › W1 simulations retains the last good list on a same-query poll failure (512ms)
+[WebServer] 2:23:29 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 2 ..\deftrack-review-458b6d0\docs\review-2026-09-13-followup\followup.spec.ts:26:1 › W2 a recovery 401 expires the session rather than becoming an evidence outage (329ms)
+[WebServer] 2:23:29 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 3 ..\deftrack-review-458b6d0\docs\review-2026-09-13-followup\followup.spec.ts:36:1 › W3 gate release must observe its own response, not another read of the same URL (1.3s)
+[WebServer] 2:23:30 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 4 ..\deftrack-review-458b6d0\docs\review-2026-09-13-followup\followup.spec.ts:67:1 › C2 switching away from a planless run never sends its abort under the new selection (657ms)
+[WebServer] 2:23:31 [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.
+dev/msg/dev-mode for more information.
+  ok 5 ..\deftrack-review-458b6d0\docs\review-2026-09-13-followup\followup.spec.ts:95:1 › W4 automatic Fairness profile change does not keep the old profile under the new selection (507ms)
+
+  5 passed (6.3s)
