@@ -59,11 +59,43 @@ describe('a refusal the caller declared it expects', () => {
     expect(state.logs.info).not.toHaveBeenCalled();
   });
 
-  it('is an error, as before, when nothing was declared', async () => {
+  it('is an error, as before, when nothing was declared, and is never retried', async () => {
     state.post.mockRejectedValueOnce(refusal('quorum not found'));
     const rpc = new RpcService();
     await expect(rpc.call('quorum', ['info', 100, 'abcd'])).rejects.toThrow('quorum not found');
     expect(state.logs.error).toHaveBeenCalledTimes(1);
     expect(state.logs.info).not.toHaveBeenCalled();
+    // The node answered; repeating the question cannot change the answer.
+    expect(state.post).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A dropped connection is retried once, and only the retry's outcome is news.
+ *
+ * The first failure used to be logged as an error even when the retry then
+ * succeeded, so the explorer's journal filled with "failed" lines for calls
+ * that every caller saw succeed (measured on the VPS, 2026-09-14).
+ */
+describe('a transport failure', () => {
+  const hangUp = () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+
+  it('that the retry recovers is a warning, not an error', async () => {
+    state.post.mockRejectedValueOnce(hangUp()).mockResolvedValueOnce({ data: { result: 7, error: null } });
+    const rpc = new RpcService();
+    await expect(rpc.call('uptime')).resolves.toBe(7);
+    expect(state.post).toHaveBeenCalledTimes(2);
+    expect(state.logs.error).not.toHaveBeenCalled();
+    expect(state.logs.warn).toHaveBeenCalledTimes(1);
+    expect(String(state.logs.warn.mock.calls[0]?.[0])).toContain('socket hang up');
+  });
+
+  it('that the retry does not recover is one error, after the warning', async () => {
+    state.post.mockRejectedValueOnce(hangUp()).mockRejectedValueOnce(hangUp());
+    const rpc = new RpcService();
+    await expect(rpc.call('uptime')).rejects.toThrow('socket hang up');
+    expect(state.post).toHaveBeenCalledTimes(2);
+    expect(state.logs.warn).toHaveBeenCalledTimes(1);
+    expect(state.logs.error).toHaveBeenCalledTimes(1);
   });
 });
