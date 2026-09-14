@@ -96,7 +96,7 @@ export interface LlmqProfile {
  * one height for both, on both their grids (a multiple of 48). It moves only
  * together with the Core constant, before the binary that carries it ships.
  */
-export const DEVNET_UNUSED_PROFILES_FORMATION_END = 13536;
+export const DEVNET_UNUSED_PROFILES_FORMATION_END = 13488;
 
 const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
   /**
