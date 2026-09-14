@@ -3346,6 +3346,115 @@ A csomagok a repón kívül vannak:
 - **Csomag:** `…\2026-09-14-maint-window-r4\`, `SHA256SUMS` sha256
   `55e8f71cb5578baac8a4752b324f97cd557eafee91d5fab652a395d292855053`.
 
+**4. review-kör: APPROVED** a runbook szerinti végrehajtásra. Az MR3-1 és vele az MR2-4 lezárva; minden jegy
+lezárva, új nincs. A reviewer ismételt futásai:
+- 42/42 eset, 17/17 mutáns a kijelölt eseteken, 14/14 verify-kaputeszt;
+- a saját FCV-reprodukciója most elutasít; a mikroszekundumos határ ellenpróbái: .169 elutasítás, .170 elfogadás
+  a .169185-ös indulásnál.
+
+Indítás előtt két dolgot kellett rögzíteni: a tulajdonosi FCV-döntést és a „mehet”-et. A futtatás a következő
+szakaszban van.
+
+## VPS karbantartási ablak – futtatás 2026-09-14 13:24–13:37Z
+
+```text
+Dátum / végrehajtó: 2026-09-14 / Claude Opus 5 (1M)
+Engedély: a tulajdonos „mehet folytasd készre vpsre” (13:2xZ) — az ablak, az FCV-helyettesítő bizonyíték
+  elfogadása (a runbook 0. pontja) és az, hogy közben nem fut más beavatkozás a VPS-en
+Szkriptek: vps-maint.sh 0d9dfe64… (4. körben APPROVED); vps-maint-verify.sh az elfogadáshoz 8147a18c… (lent)
+Hatókör: mentés, MongoDB 8.0.32 + Node 24.21.0, reboot a 6.8.0-139-es kernelre; alkalmazás-deploy nem történt
+```
+
+**0. lépés, csak olvasva (13:24Z):**
+- tip 13314; a seed és a devnet2 hash-e egyezik; 171 peer;
+- health `ok`; futó md5 `5c8fab67`/`c9898910`; mongod 8.0.29, node 24.19.0;
+- failed unit: `cloud-init`, `systemd-networkd-wait-online`;
+- flotta: `hosts=16 instances=160 same-chain=160 forked=0 unreachable=0`;
+- futó frissítés nincs: az egyetlen `unattended-upgr` folyamat a boot óta várakozó
+  `unattended-upgrade-shutdown --wait-for-signal`, az `apt-daily` unitok inaktívak.
+
+**Végrehajtási eltérés a runbooktól — a szkript változatlan:**
+- A szkript nem `bash -s`-sel, SSH-csatornáról olvasva futott. A pontosan review-zott fájl feltöltve a VPS-re
+  (`/root/maintenance-20260914/vps-maint.sh`); a sha256-ja egyezett.
+- `systemd-run --wait` tranziens unitként futott, így egy SSH-szakadás az apt közben nem állíthatta volna le. A
+  kimenet a journalban is megvan.
+
+**1. lépés, `prep` (13:27:38–13:28:12Z, 34,6 s, exit 0):**
+- **Előfeltételek:** a hét csomag 8.0.29-en, a node 24.19.0-n, audit tiszta. Élő FCV-bizonyíték: „FCV at the running
+  mongod's startup 2026-09-11T04:41:23.143000Z (process started 2026-09-11T04:41:21.169185Z): 8.0; later FCV events:
+  none”.
+- **Mentés:** `deftrack_devnet-20260914T132739Z.archive.gz`, 20 805 205 bájt; a saját sha256-ja egyezik a
+  sidecarral, a manifest megvan.
+- **apt:** 8 csomag frissítve; audit tiszta; a verziók a rögzítettek; a `mongod.conf` változatlan, új conffile-másolat
+  nincs.
+- **Utána:** a mongod (8.0.29) és az explorer (node 24.19.0) a régi processzen futott tovább, a health `ok` maradt.
+
+**2. lépés, `reboot`:**
+- A szkript 13:28:56Z-kor kérte, a 13316-os magasságon (+20): `blocks=13315`, `headers=13316`, tip-kor 182 s. A
+  48-as ablakot (`llmq_60_75`, a 13316-nál nyílik) megjegyzésként rögzítette, a tulajdonosi döntés szerint
+  megfigyelési rés.
+- Az új boot 13:29:05Z-kor indult, az SSH 13:29:21Z-kor válaszolt. A `systemd-networkd-wait-online` ezúttal kb.
+  10 s alatt végzett, nem timeoutolt, így minden unit 13:29:16–22Z között elindult.
+
+**Kiesési határok** (nem pontos kiesés):
+
+| Esemény | Idő (UTC) |
+|---|---|
+| A seed utolsó tipje a leállás előtt (13315) | 13:28:28 |
+| `defcond-devnet` Stopping / Stopped | 13:28:57 |
+| Az előző boot utolsó journal-bejegyzése | 13:28:58 |
+| A mostani bootban Started | 13:29:16 |
+| „Done loading” | 13:29:18 |
+| Első tip (13316) | 13:29:26 |
+
+- A 13316-os blokk header-ideje 13:28:26Z volt: a seed a headert már ismerte, a blokkot a reboot után kapcsolta be.
+- A seed kiesése kb. 21 s, a Q60-sávon (+10…+18) kívül.
+- Az explorer első két, átmeneti sora (13:29:19Z): warn „no authenticated masternode among the peers”, error
+  „getbestchainlock: Unable to find any ChainLock”. Transzporthiba nem volt.
+
+**Elfogadás — a review-zott verify egy élesben talált hibája, és a javítása:**
+- **A hiba:** a 4. körben jóváhagyott verify (`24b6ec48…`) írásmentes futása `VERDICT FAIL (1)`-et adott, 26 PASS
+  mellett. Egyetlen FAIL: „failed units 'cloud-init.service' differ from the known set …”. A reboot után a
+  `wait-online` már nem bukott; az egyenlőségvizsgálat tehát eggyel **kevesebb** hibás unitot is bukásnak vett, a
+  runbook szándéka („nincs új failed unit”) ellenére.
+- **A javítás:** egyetlen logikai pont — egy failed unit csak akkor FAIL, ha nincs az ismert készletben — és három új
+  kaputeszt-eset. A többi kód byte-azonos (`8147a18c…`).
+  - kapu: 17/17;
+  - negatív kontrollok: a régi egyenlőség visszaírva pontosan a „recovered” esetet buktatja, az „új unit nem hiba”
+    mutáns pontosan a „new failed unit” esetet;
+  - ShellCheck tiszta.
+- **Utólagos, célzott független review kérve** (a futtatás előtt nem látta review).
+
+**Elfogadási minták a javított verify-jal:**
+
+| Minta | Idő (UTC) | Verdikt | Exit | PASS |
+|---|---|---|---|---|
+| 1. | 13:31:50 | PENDING (first sample) | 2 | 26 |
+| 2. | 13:37:06 | **ACCEPTED** | **0** | 31 |
+
+- A seed és a devnet2 futó exe-hash-e változatlan; mongod `db version v8.0.32`, node `v24.21.0` a processzeken;
+  csomagok a rögzített verzión, audit tiszta.
+- A két node egyezik a 13313-as blokkon (teljes hash), egymástól 0 blokkra.
+- A devnet2 minter a boot óta fut (`minter_running_since` 13:29:18Z, a naplóban „threadstakeminer thread start”
+  13:29:18Z), 316 s alatt változatlan, hibamező üres.
+- Mindkét node 2 blokkot haladt; az index nőtt; a ZMQ nőtt, `missed 0`; a health `ok`, `behind 0`.
+
+**Utána, kívülről és a flottán:**
+- `/`, `/rounds`, a hivatkozott JS/CSS és az `/api/v1/health` 200;
+- flotta: 160/160 egy láncon, 0 fork;
+- utána-pillanatkép: kernel `6.8.0-139-generic`, 172 peer, egy aktív tip, 3 mentés; failed unit csak a `cloud-init`.
+
+**Bizonyítékok:** a repón kívül, `D:\www\devnet .deftrack-review-artefacts\2026-09-14-maint-window-r5-verify-fix\`
+(a prep- és reboot-napló, a verify-futások, a pillanatképek, a verify-diff és kaputesztje), `SHA256SUMS` sha256
+`f570bb7b22253635e8146db463512791e643802b6e39b6d5ab08a838b9b5461a`. A VPS-en megmaradt állapotfájlok:
+`/root/maintenance-20260914/`.
+
+```text
+Napi státusz: ÉLESBEN, mérve — kernel 6.8.0-139, MongoDB 8.0.32, Node 24.21.0; verify ACCEPTED
+Éles módosítás: MEGTÖRTÉNT (csomagfrissítés + reboot; alkalmazás változatlan, 65dcadf)
+Független review: a futtatás előtt APPROVED (4. kör); a verify egypontos javítására utólagos review kérve
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -3784,7 +3893,15 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
     devnet2 lemaradása nem mért), MR2-3 (a checksum nincs az archívumhoz kötve), MR2-4 (az FCV-kapu történeti
     naplóból következtetett).
   - A 3. kör lezárta az MR2-1…MR2-3-at és az MW3-at; egy P2 maradt (MR3-1, az FCV-időhatár).
-  - A 4. kör beadva; a karbantartás nem futott. A csomagok a repón kívül vannak (napló, „VPS karbantartási ablak”).
+  - A 4. kör **APPROVED** (MR3-1 és MR2-4 lezárva, új jegy nincs). Az ablak 2026-09-14-én 13:27–13:37Z között
+    lefutott, a verify ACCEPTED (napló, „VPS karbantartási ablak – futtatás”).
+  - A verify egyetlen, élesben talált hibájának javítására (a helyreállt ismert failed unitot is bukásnak vette)
+    **utólagos célzott review kérve**. Csomag: `…\2026-09-14-maint-window-r5-verify-fix\`.
+- **Megfigyelés a CI-ban (2026-09-14, #184):** a `pull_request` futás legelső e2e-tesztje
+  (`accessibility.spec.ts:79`, „a page names itself in one h1, with its sections under it”) hideg indulás után
+  638 ms-nál már látta az `Overview` h1-et, a h2-szekciókat még nem, és bukott. Ugyanannak a commitnak a `push` futása
+  299/299, az újrafuttatás zöld volt. A teszt a szekciók megjelenését nem várja ki — időzítésérzékeny, **nincs rá
+  jegy**.
 - **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
   böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
   jelentés által hivatkozott `client/test-results/review-final/`-t is:
