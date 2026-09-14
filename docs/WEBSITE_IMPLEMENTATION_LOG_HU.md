@@ -3121,6 +3121,208 @@ Napi státusz: ÉLESBEN, mérve — a CSP enforce alatt fut
 Éles módosítás: MEGTÖRTÉNT (egy nginx-snippet; mentés a VPS-en)
 ```
 
+## MongoDB-mentés 2026-09-14 – telepítve, két ellenőrzött futás
+
+```text
+Dátum / végrehajtó: 2026-09-14 / Claude Opus 5 (1M) — a telepítés és a visszaállítás-próba az előző ügynöké,
+  ez a bejegyzés a 11:29Z-s csak olvasó ellenőrzéssel rögzíti
+Engedély: a tulajdonos engedélye a #180 telepítésére
+Hatókör: /usr/local/sbin/deftrack-mongo-backup, /etc/deftrack-backup/mongodump.yaml (600),
+  /var/backups/deftrack-mongo/ (700/600), deftrack-mongo-backup.{service,timer}; runbook: MONGO_BACKUP_RUNBOOK_HU.md
+```
+
+**A VPS journaljából, 11:29Z** (a szkript saját összegző sora):
+
+| Futás (UTC) | Archívum | Méret | Gyűjtemény | Dokumentum | Idő |
+|---|---|---|---|---|---|
+| 03:12:03 (kézi, első éles) | `deftrack_devnet-20260914T031203Z.archive.gz` | 20 315 669 bájt | 26 | 560 104 | 5 s |
+| 03:39:55 (időzítő) | `deftrack_devnet-20260914T033955Z.archive.gz` | 20 331 432 bájt | 26 | 560 619 | 6 s |
+
+- **Az unit utolsó futása:** `Result=success`, `ExecMainStatus=0`.
+- **Következő futás:** 2026-09-15 03:44:18Z. Az időzítő 03:30 UTC-t és legfeljebb 15 perc késleltetést ad.
+
+**A visszaállítás-próba** az előző ügynök átadási jegyzete szerint készült; ezt nem ismételtem meg:
+- a helyi, eldobható mongodra (27018), átnevezett névtérbe állította vissza az archívumot;
+- 560 104 dokumentum, mind a 26 gyűjtemény darabszáma egyezett a manifesttel, 125 index-definíció;
+- utána a névteret törölte.
+
+**Nyitott:** a gépen kívüli mentés helye tulajdonosi döntésre vár. Az archívum nem publikus host-címeket tartalmaz,
+ezért csak privát hely jöhet szóba. Jelenleg az egyetlen gépen kívüli példány egy kézi másolat az implementáló
+gépén.
+
+## Deploy 2026-09-14 (#181) – a pooled RPC-kapcsolatok 15 s után zárulnak
+
+```text
+Dátum / végrehajtó: 2026-09-14 11:19:27–11:20:13Z / Claude Opus 5 (1M)
+Engedély: a tulajdonos kifejezett engedélye („a #181 telepítése a main-ről”); a független review (Astra)
+  APPROVED, egy nem blokkoló P3-mal
+Hatókör: ops/deploy.sh a main 65dcadf-jén (#178–#181); a nodeokhoz és a mongodhoz nem nyúlt; a #182 nem
+```
+
+**Előtte:**
+- **Ellenőrzés közvetlenül a deploy előtt:** `origin/main` = `65dcadf`, a #182 `OPEN`; a VPS app `5237f80`, tiszta
+  munkafa; a VPS is `65dcadf`-et látott az `origin/main`-en.
+- **Terhelés mindkét mérési ablakban:** egy látható böngészőlap (Playwright), a nyilvános Overview oldal, 30 s-os
+  health-polling. A lap 10:45:00Z-től a mérés végéig `visible` maradt.
+- **RPC-kapcsolatok mintavétele:** csak olvasó szkript, 5 s-onként, az explorer processz kapcsolatai a seed RPC-portjára
+  (forrásport-listák). Kimenet a helyi gépen, a VPS-re nem írt.
+
+**Deploy:** `Updating 5237f80..65dcadf`, `npm ci`, build, rsync, restart 11:20:07Z, readiness azonnal `ok`, kiszolgált
+bundle `index-CNPCV91P.js` (a kliens nem változott), exit 0.
+- **Az egyetlen `warn` sor** („MongoDB disconnected”) a **régi** processzé (PID 782617), 24 ms-mal a
+  „SIGTERM received” után.
+- **Az új processz (806642)** tisztán indult, 0 újraindulással.
+
+**Mérés, két egyenlő, 30 perces ablak:**
+
+| | Előtte, 10:50:07–11:20:07Z | Utána, 11:20:08–11:50:07Z |
+|---|---|---|
+| journal | 102 info, 0 warn, 0 error | 116 info, **0 warn, 0 error** |
+| `socket hang up` / transzporthiba sor | 0 | 0 |
+| különböző RPC-kapcsolat a mintákban | 29 (0,97/perc) | **61 (2,03/perc)** |
+| átlagosan nyitott RPC-kapcsolat mintánként | 1,82 | 2,21 |
+| health-válaszidő (böngésző, 200-asok) | 61 kérés 10:45–11:00: p50 80 ms, p90 353 ms, max 808 ms; 8 kérés 11:18–11:20: p50 54 ms | 118 kérés: p50 60 ms, p90 112 ms, max 613 ms |
+
+**Amit ez bizonyít, és amit nem:**
+- **A hibaszám nem bizonyít semmit.** A deploy előtti 30 percben ugyanezzel a terheléssel egyetlen `socket hang up`
+  sem volt. A napi 35 (02:18–03:54Z) + 4 (04:00–04:26Z) hiba más terhelés mellett keletkezett. A „0 → 0” összhangban
+  van a javítással, de nem igazolja.
+- **A mechanizmus mérhető.** Az új kapcsolatok száma kb. megduplázódott, miközben az egyszerre nyitott kapcsolatok száma
+  alig nőtt. Ez a 15 s-os tétlen-zárás várt nyoma: a 20 s-os sync-tick és a 30 s-os poll most új kapcsolatot nyit.
+  - A mintavétel 5 s-os, a rövidebb életű kapcsolatokat nem látja, ezért mindkét szám alsó becslés.
+  - Az arány a becsült érték, nem a két abszolút szám.
+- **A válaszidő nem romlott.** A p50 hasonló, a p90 és a max kisebb. Egyetlen lap és kis minta; nem terhelésmérés.
+
+**Mellékesen talált, nem a #181 okozza:** a mérés alatt egyetlen health-kérés **503**-at kapott (11:31:57Z az nginx
+szerint). A válasz törzsét nem láttam: a `sync-stalled` ok a lenti kódból és időpontokból levezetett, nem kiolvasott
+érték.
+- **Ok, kódból és naplóból:** az indexelő a `lastSyncedAt`-et csak új blokk írásakor frissíti
+  (`server/src/services/sync.service.ts:405-417`); a tétlen tick csak a `heartbeatAt`-et (`:372-373`). A readiness
+  viszont a `lastSyncedAt`-ből számolja a tétlenséget (`server/src/index.ts:106`, `server/src/domain/readiness.ts:53`).
+  Így egy 5 percnél hosszabb blokk-köz után az új blokk érkezésétől a következő tickig (≤ 20 s) `behind 1` és
+  „5 percnél régebbi szinkron” áll fenn: 503.
+- **Mérve:**
+  - 13271 indexelve 11:26:49.6Z, 13272 header-idő 11:31:46Z, az 503 11:31:57Z, indexelve 11:32:09.7Z;
+  - ugyanez a deploy előtt: 13242 10:15:47.7Z, 503-ak 10:21:16 és 10:21:26 (egy másik böngészőből), 13243 10:21:27.7Z.
+- **Gyakoriság:** mért 161,6 s-os átlagos blokkidővel a blokkok kb. 16%-a előtt nagyobb a köz 5 percnél.
+- **Nincs rá jegy; javítás külön döntéssel.**
+
+```text
+Napi státusz: ÉLESBEN, mérve — a #181 fut (65dcadf)
+Éles módosítás: MEGTÖRTÉNT (szerverkód; a kliens-bundle változatlan)
+```
+
+## Bináris-takarítás 2026-09-14 – 50 daemon-mentés törölve, md5 szerint
+
+```text
+Dátum / végrehajtó: 2026-09-14 10:44–10:49Z / Claude Opus 5 (1M)
+Engedély: a tulajdonos kifejezett engedélye, megtartandó md5-listával
+  (5c8fab67, c9898910, 6987a13b, d555bdaa, 83409a08, 455d516e)
+Hatókör: csak /usr/local/bin/defcond.bak-* és defcond-nobdb.bak-*; a CLI- és hook-mentésekhez nem nyúltam
+```
+
+**Előtte, csak olvasással (10:44:33–10:45:29Z):**
+- 54 daemon-mentés, mind különböző md5-tel: 28 `defcond.bak-*` és 26 `defcond-nobdb.bak-*`, együtt 16,71 GB.
+- A futó binárisok: seed `5c8fab67…` (`/usr/local/bin/defcond`), devnet2 `c9898910…` (`defcond-nobdb`).
+- Unit- és drop-in-hivatkozás `.bak` binárisra nincs. Az aktív unitok `ExecStart`-jai: `defcond`, `defcond-nobdb`,
+  `defcon-enable-staking`. Két régi unit-mentés (`*.service.bak-20260910-0953`) is ezekre mutat.
+- A megtartandó négy mentés a C2 visszaállítási célpontja: `6987a13b` és `d555bdaa` (`.bak-20260913-2212`), valamint
+  `83409a08` és `455d516e` (`.bak-20260913-2006`).
+
+**Törlés (10:48:03–10:48:50Z):**
+- A szkript minden fájlnál abban a pillanatban újraszámolta az md5-öt, és csak akkor törölt, ha:
+  - az egyezett a listázottal;
+  - nem volt a megtartandók között;
+  - nem a futó exe volt;
+  - a név `defcond.bak-` vagy `defcond-nobdb.bak-` alakú volt.
+- Előtte egy WSL-beli álkönyvtáron kipróbáltam mind az öt ágat: egyező → törölve; megváltozott, megtartandó, hiányzó és
+  rossz nevű → kihagyva; listán kívüli → érintetlen.
+
+**Utána:**
+
+| Mit | Eredmény |
+|---|---|
+| Törölve / kihagyva | **50 / 0** |
+| Lemez | foglalt 47 G → 33 G |
+| `/usr/local/bin` | 17 G → 2,5 G |
+| Megmaradt daemon-fájlok | pontosan a hat megtartandó md5 |
+| Futó md5 | seed `5c8fab67`, devnet2 `c9898910` — változatlan; mindkét unit `active` |
+
+**Nem törölve:** 9 `defcon-cli.bak-*`, 3 `defcon-cli-nobdb.bak-*`, 2 `defcon-enable-staking.bak-*`, együtt kb.
+200 MB. A megtartásukról nem született döntés.
+
+```text
+Éles módosítás: MEGTÖRTÉNT (fájltörlés a /usr/local/bin-ben; szolgáltatás nem változott)
+```
+
+## VPS karbantartási ablak – előkészítés és két review-kör (a futtatás még nem történt meg)
+
+```text
+Mit: friss mentés → MongoDB 8.0.29 → 8.0.32 és Node 24.19 → 24.21 (rögzített verziókkal) → reboot a felrakott
+  linux-image-6.8.0-139 és az új libc6 miatt; a #181 külön lépés
+Állapot: NEM FUTOTT — a második review-kör eredményére és a tulajdonos indítási engedélyére vár
+```
+
+**Időzítési lelet a csak olvasó előkészítésben:**
+- A 13104 = 144·91, vagyis a 24-, 48- és 72-es ciklus közös bázisa.
+- Az átadott szkript őre csak a Q60 24-es ciklusát nézte (a `-gt 31` felső határa `h % 24 ≤ 23` miatt sosem
+  teljesült). Így a +19-es kezdés után a reboot a 13124-ben nyíló `llmq_60_75` [+20,+36] és `llmq_400_60`
+  [+20,+28] bányászati ablak elejére esett volna (`src/llmq/params.h`).
+- A seed `quorum list`-je az `llmq_400_85`-öt (576, [+20,+48]) is mutatja.
+- A `dpkg --audit && echo` `set -e` alatt nem állította volna meg a rebootot, és a csomagverziók nem voltak rögzítve.
+
+**1. review-kör (Astra), CHANGES REQUESTED**, négy jegy:
+- MW1/P1: a kiesés nem volt a tiltott sávhoz kötve; nem volt visszatérési időkeret és folytatási terv;
+- MW2/P2: a diagnosztikai `grep | head/tail` pipefail mellett megakasztotta a hibakezelést — reprodukálva, exit 1 és
+  141;
+- MW3/P2: a minter visszatérésének elfogadása nem volt bizonyító erejű;
+- MW4/P2: a snapshot kimenete nem publikálható automatikusan.
+
+**Tulajdonosi döntések:**
+1. kemény feltétel csak a Q60-ablak (+10…+18); a 48/72/576-os ablakot a szkript kiírja, és megfigyelési résként
+   rögzítjük;
+2. MW4-re átmeneti megoldás: privát kimenet, publikálás csak kézzel, titokkereséssel;
+3. a javítás mehet.
+
+**2. kör, beadva:**
+- Két fázis:
+  - `prep`: mentés Result/ExecMainStatus + új, checksummal ellenőrzött archívum; hétcsomagos előfeltétel; audit előtte
+    és utána; FCV `8.0` a mongod naplójából; conffile-őr; rögzített verziók;
+  - `reboot`: külön lépés, friss tip, legalább 12 blokk tiszta sáv, tehát csak +19/+20/+21.
+- Mért visszatérési idők: utolsó boot 3 perc 25 s, ebből 2 perc a `systemd-networkd-wait-online` timeoutja; a seed
+  leállása 5 s, az indulása ~1 s. Költségvetés 10 perc, VNC-eszkaláció, számszerűsített maradék kockázat.
+- A teljes szkript tesztje PATH-csonkokkal: 27 eset zöld; 10 mutánsból 9 harap, egy szándékosan rétegzett őr
+  egyedül nem.
+- Elfogadási szkript két mintával. Élő száraz futása a reboot előtt pontosan a várt hét hibát adta, és semmit nem
+  írt.
+
+**2. review-kör, CHANGES REQUESTED.**
+- Lezárva: MW1, MW2, és MW4 az elfogadott átmeneti eljárásra. MW3 részben.
+- A reviewer 27/27 tesztkeret-esetet, 8/8 verify-öntesztet és egy élő, írásmentes száraz futást (VERDICT FAIL (7))
+  ismételt meg.
+- Négy új P2:
+  - MR2-1: túl korai vagy blokk nélküli párnál is PASS, és hibánál is exit 0;
+  - MR2-2: a 100 blokkal lemaradt devnet2-t is elfogadja;
+  - MR2-3: egy másik fájl checksum-sorával is továbbenged;
+  - MR2-4: az FCV-kapu bármely eseményből vagy régi startup-sorból következtet.
+- **Az én hibám is:** a mérési dokumentumban a `TimeoutStartUSec` és a `TimeoutStopUSec` fel volt cserélve, mert a
+  `systemctl show -p A,B --value` a systemd sorrendjében ír.
+
+**3. kör, beadva:**
+- **Verify:** háromállapotú verdikt (ACCEPTED 0 / PENDING 2 / FAIL 1), `sample_ok`, tényfájlos kaputeszt 14 esettel és
+  7 negatív kontrollal. A devnet2-t külön is méri: header, tip-kor, legfeljebb 2 blokk a seedtől, haladás a párban.
+- **Checksum:** pontosan egy sor, pontosan az archívum neve, és az archívum saját sha256-ja.
+- **FCV:** a futó mongod indulásakori `id 5853300` startup-bejegyzés és az azutáni FCV-események. Az élő
+  `getParameter`-olvasáshoz nincs jogosult felhasználó (mérve: „not authorized on admin”) — erről tulajdonosi döntés
+  kell.
+- **Tesztkeret:** 37 eset és 14 mutáns, gépileg ellenőrzött kijelölt esetekkel.
+
+A csomagok a repón kívül vannak:
+- `D:\www\devnet .deftrack-review-artefacts\2026-09-14-maint-window\` (1. kör, benne a review `review\`
+  alkönyvtára);
+- `…\2026-09-14-maint-window-r2\`, `SHA256SUMS` sha256 `f93a267c3680f4b06ef6101ff977dfba3f1a16035ed3e9cc89916070815f130b`;
+- `…\2026-09-14-maint-window-r3\` (3. kör), `SHA256SUMS` sha256 `5a567910192be5762ef2062110e1dc32c63fe295f22dacf28042a937fdd0628b`.
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -3538,6 +3740,27 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
   `D:\www\devnet .deftrack-review-artefacts\2026-09-14-x1-x2\`, `SHA256SUMS` sha256
   `5474c3a49ae2a9ce5d557a34a27f3f048ff80346b8f9a853abeba6f2138e6bfc`; `sha256sum -c` a másolaton és az
   eredetin is 33/33, negatív kontroll (egy átírt bájt, egy törölt fájl) exit 1.
+- **Független review a #181-ről (RPC keep-alive): 2026-09-14, a `65dcadf`-en**
+  ([jelentés](WEBSITE_REVIEW_RPC_KEEPALIVE_2026-09-14_HU.md), [mellékletek](review-2026-09-14-rpc/)).
+  - **APPROVED**, a karbantartási ablak utánra; a tulajdonos a telepítést az ablak előtt, külön engedélyezte.
+  - Egy nem blokkoló P3: a 15 000 ms-os pool-defaultot egyik célzott teszt sem fedte. Ez a **#183** PR
+    (`ded49b4`, nyitva, CI zöld).
+  - A reviewer szerint az ok erősen alátámasztott, de nem socket-szinten bizonyított.
+  - Kérése: a telepítés után a warn és az error sorokat külön kell számolni. Ez megtörtént, és a mechanizmus is mérve
+    van (napló, „Deploy 2026-09-14 (#181)”).
+  - A tizenkét git-ignore-olt futási napló a repón kívül: `D:\www\devnet .deftrack-review-artefacts\2026-09-14-rpc\`,
+    `SHA256SUMS` sha256 `2d323dde3739ffb0992d35fa5a8948edddaea67376be63b54482c56037d72dfc`; `sha256sum -c` a
+    másolaton és az eredetin is 12/12, negatív kontroll exit 1.
+  - A review saját fájljai változatlanul kerülnek a repóba, egyedül a sorvégeket normálja LF-re a `.gitattributes`.
+    A `run-own-default.py` fájl végén egy üres sor van, amelyre a `git diff --check` jelez; ahogy a negyedik review
+    anyagánál, a bizonyítékhoz nem nyúltam.
+- **Független review a VPS karbantartási ablakról: 2026-09-14, két kör, mindkettő CHANGES REQUESTED.**
+  - Az 1. kör az MW1–MW4-et adta; a 2. kör az MW1-et, az MW2-t és az MW4-et (az elfogadott átmeneti eljárással)
+    lezárta, az MW3-at részben.
+  - A 2. kör négy új P2-t adott: MR2-1 (a verify döntése hiányos párbizonyítéknál is PASS és exit 0), MR2-2 (a
+    devnet2 lemaradása nem mért), MR2-3 (a checksum nincs az archívumhoz kötve), MR2-4 (az FCV-kapu történeti
+    naplóból következtetett).
+  - A 3. kör beadva; a karbantartás nem futott. A csomagok a repón kívül vannak (napló, „VPS karbantartási ablak”).
 - **A reviewer helyi trace-ei és hibaképei a repón kívül vannak megőrizve**, mert a
   böngésző-suite induláskor kiüríti a `client/test-results/` mappát, benne a
   jelentés által hivatkozott `client/test-results/review-final/`-t is:

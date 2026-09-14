@@ -1,0 +1,21 @@
+{
+  "head": "ba7ff13a7caa48a34c9cec1c0b5ab4b3f6935ba2",
+  "src/httpserver.h": {
+    "sha256": "06742816301cbd364eadbe72dd7be47c3157a731f7d6d66330f4a0266c088687",
+    "matches": [
+      {
+        "line": 13,
+        "text": "static const int DEFAULT_HTTP_SERVER_TIMEOUT=30;"
+      }
+    ]
+  },
+  "src/httpserver.cpp": {
+    "sha256": "5e642ccec7dc29dba92a2e13d188c275131a80911c215f3e360b405680d9235c",
+    "matches": [
+      {
+        "line": 425,
+        "text": "    evhttp_set_timeout(http, gArgs.GetArg(\"-rpcservertimeout\", DEFAULT_HTTP_SERVER_TIMEOUT));"
+      }
+    ]
+  }
+}

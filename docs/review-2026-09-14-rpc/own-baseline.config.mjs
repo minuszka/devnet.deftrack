@@ -1,0 +1,1 @@
+import base from './baseline.config.mjs';export default {...base,test:{include:["D:/www/devnet .deftrack/docs/review-2026-09-14-rpc/defaults.test.ts"]}};

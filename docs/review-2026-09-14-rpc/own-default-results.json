@@ -1,0 +1,18 @@
+[
+  {
+    "variant": "baseline",
+    "exit_code": 0,
+    "summary": [
+      "Tests  1 passed (1)"
+    ]
+  },
+  {
+    "variant": "missing-default",
+    "exit_code": 1,
+    "summary": [
+      "Tests  1 failed (1)",
+      "\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 1 \u23af\u23af\u23af\u23af\u23af\u23af\u23af",
+      "AssertionError: expected +0 to be 15000 // Object.is equality"
+    ]
+  }
+]
