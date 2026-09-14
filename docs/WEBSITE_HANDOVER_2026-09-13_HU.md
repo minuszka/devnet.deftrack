@@ -76,9 +76,9 @@ A CI eredménye a PR-on: a #174 PR `Typecheck, test, build`, `Scripts, Dockerfil
 | Szerver és kliens | `/opt/devnet-deftrack/app` @ `5237f80` (a #176 és #177 merge utáni `main`), `ops/deploy.sh`-sal telepítve 2026-09-14 01:20Z; a webroot a build `client/dist`-jével azonos, bundle `index-CNPCV91P.js` |
 | Ebben benne van | az 1–20. nap, a J1–J8 (R1–R7, V1–V7, W1–W4, X1–X2) és a C2 roll-szkriptek |
 | Lockfile | byte-azonos a repóéval (sha256 `2f72d372…ffb78`); `npm audit --omit=dev`: 2 moderate `qs` — az elfogadott F13-maradék |
-| nginx | változatlan: a 14. napi fejlécek élnek, CSP **report-only**; az `/api/` alatt most **egy** HSTS (9. pont) |
+| nginx | a 14. napi fejlécek élnek; a CSP **2026-09-14 02:07:57Z óta enforce** (előtte report-only); az `/api/` alatt **egy** HSTS (9. pont) |
 
-Részletek és a teljes élő mérés: napló, „Deploy 2026-09-14”.
+Részletek és a teljes élő mérés: napló, „Deploy 2026-09-14” és „CSP enforce 2026-09-14”.
 
 **Előzmény — mérve 2026-09-13,** csak olvasással, a VPS-en:
 
@@ -113,7 +113,7 @@ ahol változott, a korábbi érték zárójelben áll.
 | F07 hibás escape | 02. nap `db77551`; 14. nap `5262482` | `router.test.ts` (4), `router.spec.ts` (3); élő nginx: 400 | igen | igen | igen | — |
 | F08 ismeretlen útvonal | 02. nap `db77551` | `router.test.ts`, `router.spec.ts` | igen | igen | igen | a szerveroldali SPA fallback szándékosan változatlan |
 | F09 scenario-alapértékek | 04. nap `127e53d`; 15–16. nap `d7469ff` `e4c16d5`; J6 `b7ee9f8` (V5) | `scenario-forms.spec.ts` (10; J6: +5 V5), `complex-scenarios.spec.ts` (15), `scenarioFields.test.ts` (11), `simulationScenarios.integration.test.ts` | igen | igen | **igen** (2026-09-14; előtte részben — a 15–16. napi űrlapok és a V5 javítás nem) | a `live` mód valódi laborfutama nincs, és a tulajdonos döntése szerint (2026-09-14) nem is kerül tervbe; a review V5-próbája a zárolt mezőn időtúllépésre fut (elfogadott, 14. pont) |
-| F10 biztonsági fejlécek | 14. nap `5262482`; 20. nap `694d5cc` (egy HSTS-tulajdonos) | izolált nginx-mérés (`verify-headers.sh`), `csp.spec.ts` (4), `httpHardening.test.ts` | igen | igen | **részben** — az nginx-fejlécek élnek, a CSP report-only; a helmet HSTS-ének kivétele 2026-09-14 óta élesben, az `/api/` **egy** HSTS-t küld (mérve; előtte kettőt) | az enforce-ra váltás nincs megtéve (9. pont) |
+| F10 biztonsági fejlécek | 14. nap `5262482`; 20. nap `694d5cc` (egy HSTS-tulajdonos) | izolált nginx-mérés (`verify-headers.sh`), `csp.spec.ts` (4), `httpHardening.test.ts` | igen | igen | **igen** (2026-09-14: a CSP enforce, 17 élő útvonalon 0 sértés pozitív kontrollal; az `/api/` **egy** HSTS-t küld, előtte kettőt; előtte részben — CSP report-only) | az `/api/` válaszain a helmet és az nginx fejlécei duplikáltak (8. pont) |
 | F11 URL-szűrők | 10. nap `700c420`; 11. nap `b954e9b`; J5 `dc05f11` (V4); J7 `35899d4` (W1) | `query-state.spec.ts` (22); J5: `query-identity.spec.ts` (17); J7: `public-simulations.spec.ts` +3 (W1) | igen | igen | **igen** (2026-09-14; előtte részben — a 11. napiak, a V4 és a W1 javítás nem) | PoSe, ChainLocks, Sentinel Layer szándékosan paraméter nélkül; a Fairness tip-vezérelt profilváltási rése mérve és javítva (W4, F05 sor) |
 | F12 szemantika, fókusz | 12. nap `1828831`; 18. nap `fc4652d` (cím nélküli részletoldalak); 20. nap `611fdde` (`aria-pressed`) | `accessibility.spec.ts` (h1 minden útvonalon négy állapotban, fókusz, skip link, toggle-sweep), `navigation.spec.ts` (14) | igen | igen | **igen** (2026-09-14; előtte nem) | számított fókusz- és szerkezetmérés, nem képernyőolvasós tanúsítás |
 | F13 függőségek | 13. nap `5b8b5a7`; 20. nap `694d5cc` | `npm audit` előtte/utána; `httpHardening.test.ts` (6: a lapos query-feldolgozás valódi kérésen, urlencoded nincs, forrás-sweep mindkét szerverre) | igen | igen | **igen** (2026-09-14: a VPS lockfile-ja byte-azonos, az `npm audit` ott is csak a 2 elfogadott `qs`; előtte nem — a 13. nap előtti lockfile) | **elfogadott maradék:** 2 moderate `qs` az express 4 saját pinje miatt. Az elfogadás feltevése (simple parser, nincs urlencoded) a 20. napon derült ki, hogy **csak a fő szerverre volt igaz**; a labor-szerverre (`labServer.ts`, alapból `127.0.0.1`) nem. Javítva és teszttel védve; 2026-09-14 óta telepítve |
@@ -171,7 +171,7 @@ Mind **additív** vagy szűkítő (egy mező kevesebb kerül ki), törölt publi
 | Tétel | Státusz | Miért |
 |---|---|---|
 | A 11–20. nap és az R1–R7 javítás nincs élesben | **lezárva — telepítve 2026-09-14 (`5237f80`)**; előtte: nyitott, deploy kell | 3. és 10. pont |
-| CSP report-only, nem enforce | nyitott, döntés | az enforce házirend a buildelt bundle-on tisztán fut (`csp.spec.ts`); a report-only értelme, hogy valós forgalmat is lásson. **2026-09-14, élőben mérve:** a report-only fejlécben nincs `report-uri`/`report-to` (a runbook szerint szándékosan: nincs gyűjtő), így valós forgalomból semmi nem gyűlik, a sértés csak a megnyitó böngésző konzoljában látszik; négy élő oldalon a böngészőkonzol CSP-sértést nem mutatott, csak azt, hogy az `upgrade-insecure-requests` report-only módban hatástalan |
+| CSP report-only, nem enforce | **lezárva — enforce 2026-09-14 02:07:57Z óta**, a tulajdonos engedélyével; mérve: 17 élő útvonalon és a keresésnél 0 sértés, egy befecskendezett inline script blokkolva (napló, „CSP enforce 2026-09-14”); előtte: nyitott, döntés | az enforce házirend a buildelt bundle-on tisztán fut (`csp.spec.ts`); a report-only értelme, hogy valós forgalmat is lásson. **2026-09-14, élőben mérve:** a report-only fejlécben nincs `report-uri`/`report-to` (a runbook szerint szándékosan: nincs gyűjtő), így valós forgalomból semmi nem gyűlik, a sértés csak a megnyitó böngésző konzoljában látszik; négy élő oldalon a böngészőkonzol CSP-sértést nem mutatott, csak azt, hogy az `upgrade-insecure-requests` report-only módban hatástalan |
 | F13: 2 moderate `qs` | elfogadott | express 4 pin; a kódút mindkét szerveren teszttel zárva (5. pont); 2026-09-14: a VPS-en mérve is ugyanez a kettő |
 | A laborfutam nem futott | **nem kerül tervbe — tulajdonosi döntés, 2026-09-14** | a live szimulátor mód ezért nem elfogadott; a megfigyelő webfelület élesben fut (11. pont) |
 | Az `/api/` válaszain duplikált biztonsági fejlécek | nyitott, alacsony | 2026-09-14, élőben mérve: a helmet és az nginx is küld `X-Frame-Options`-t (`SAMEORIGIN` és `DENY`), `Referrer-Policy`-t és `X-Content-Type-Options`-t, a helmet egy saját CSP-t is. JSON-válaszon gyakorlati hatás nélkül; a deploy előtt is így volt, a 20. nap csak a HSTS-duplikációt szüntette meg |
@@ -199,8 +199,11 @@ telepítve, a runbook szerint mentett vhosttal. A snippetek: `ops/nginx/security
 `ops/nginx/verify-headers.sh` a `test-vhost.conf`-fal.
 
 - **Enforce-ra váltás:** a `csp-enforce.conf` tartalma ugyanarra a snippet-névre, `nginx -t`,
-  reload, majd az élő válaszok mérése a runbook szerint.
-- **Rollback:** a runbookban rögzített vhost-mentés visszamásolása, `nginx -t`, reload.
+  reload, majd az élő válaszok mérése a runbook szerint. **Megtörtént 2026-09-14 02:07:57Z-kor**; a
+  report-only snippet mentése a VPS-en: `/root/nginx-backups/deftrack-csp.conf.report-only-20260914-040757`.
+- **Rollback:** a runbookban rögzített vhost-mentés visszamásolása, `nginx -t`, reload. Ha csak a CSP-t kell
+  visszavenni: a fenti snippet-mentés vissza a `/etc/nginx/snippets/deftrack-csp.conf` helyére, `nginx -t`,
+  reload — a vhosthoz nem kell nyúlni.
 - **Az `/api/` HSTS-e:** a szerver deployja után várhatóan egy fejléc marad (az nginxé). Ezt élesben
   mérni kell, mielőtt lezártnak számít. **Mérve 2026-09-14, a deploy után: egy** — az nginxé
   (`max-age=63072000; includeSubDomains`); a deploy előtt ugyanazon a válaszon kettő volt.
@@ -215,7 +218,8 @@ A terv szerint a review után, külön döntéssel:
 4. Csak ezután, külön: a CSP enforce-ra váltása (9. pont).
 
 **2026-09-14:** az 1–3. lépés megtörtént, a tulajdonos engedélyével (`5237f80`; mérések: napló, „Deploy
-2026-09-14”). A 4. lépés nyitott, és külön engedélyre vár.
+2026-09-14”). A 4. lépés nyitott, és külön engedélyre vár. **Ugyanaznap, külön engedéllyel a 4. lépés is
+megtörtént** (02:07:57Z; napló, „CSP enforce 2026-09-14”) — a 10. pont sorrendje ezzel teljesen lefutott.
 
 ## 11. Laborfutam
 
