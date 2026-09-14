@@ -230,16 +230,35 @@ jobs:
           echo "parsed $count python scripts"
           python3 -m unittest discover -s ops/tests -p 'test_*.py' -v
 
+      # The backup script against a fake mongodump: what it keeps, what it
+      # refuses, what it prunes. No database, no network.
+      - name: Test the MongoDB backup script
+        run: bash ops/tests/mongo-backup.sh
+
       # The unit is verified against the real command, installed where the unit
       # says it lives: otherwise systemd only reports that the path is missing,
       # which says nothing about the unit.
+      #
+      # Any output fails the step, not only a non-zero exit. Measured with
+      # systemd 255: a misspelt directive (`ProtectSystm=strict`) is printed as
+      # "Unknown key name ..., ignoring" and verify still exits 0, so a unit that
+      # silently lost its sandbox passed. All four units here verify silent.
       - name: Verify the systemd units
         run: |
           set -euo pipefail
           sudo install -m 755 ops/chaos/defcon-chaos /usr/local/sbin/defcon-chaos
-          systemd-analyze verify \
+          sudo install -m 755 ops/mongo-backup.sh /usr/local/sbin/deftrack-mongo-backup
+          out=$(systemd-analyze verify \
             ops/chaos/defcon-chaos-recover.service \
-            ops/chaos/defcon-chaos-recover.timer
+            ops/chaos/defcon-chaos-recover.timer \
+            ops/systemd/deftrack-mongo-backup.service \
+            ops/systemd/deftrack-mongo-backup.timer 2>&1) || { printf '%s\n' "$out"; exit 1; }
+          if [ -n "$out" ]; then
+            printf '%s\n' "$out"
+            echo "systemd-analyze verify printed the above; a unit setting is being ignored or rejected"
+            exit 1
+          fi
+          echo "4 units verified, nothing ignored"
 
       # Lint, not build. A real build needs the pre-built `defcond` at the
       # context root -- an artefact this public repository does not and must not
