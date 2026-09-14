@@ -38,6 +38,23 @@ export interface CallOptions {
   tolerated?: RegExp;
 }
 
+/**
+ * How long a pooled connection may sit idle before this client closes it.
+ *
+ * The node drops an idle HTTP connection after `-rpcservertimeout` seconds, 30
+ * by default (src/httpserver.h:13), and nothing tells the client. A request
+ * written on such a socket crosses the node's close and fails with "socket hang
+ * up". The health endpoint's `getnetworkinfo` rode a socket used once every 30
+ * seconds -- the node's limit exactly -- and hit it seven times in eleven
+ * minutes on 2026-09-14, each time on a :01 or :31 second. Closing idle sockets
+ * well inside the limit leaves the end of a connection to the client instead of
+ * the race. A node run with a lower -rpcservertimeout needs this lowered too.
+ */
+const DEFAULT_IDLE_SOCKET_MS = 15_000;
+
+/** The failures that mean the connection broke, not that the node answered. */
+const TRANSPORT_ERROR = /socket hang up|ECONNRESET|ETIMEDOUT|EPIPE/i;
+
 /** Where an instance talks, so a second daemon can be read without a second class. */
 export interface RpcEndpoint {
   host: string;
@@ -45,6 +62,8 @@ export interface RpcEndpoint {
   user: string;
   pass: string;
   timeoutMs: number;
+  /** Idle limit for pooled connections; DEFAULT_IDLE_SOCKET_MS when absent. */
+  idleSocketMs?: number;
 }
 
 export class RpcService {
@@ -63,6 +82,7 @@ export class RpcService {
 
   constructor(endpoint: RpcEndpoint = config.rpc, metricsPrefix = '') {
     this.metricsPrefix = metricsPrefix;
+    const idleSocketMs = endpoint.idleSocketMs ?? DEFAULT_IDLE_SOCKET_MS;
     this.client = axios.create({
       baseURL: `http://${endpoint.host}:${endpoint.port}/`,
       auth: { username: endpoint.user, password: endpoint.pass },
@@ -70,8 +90,10 @@ export class RpcService {
       timeout: endpoint.timeoutMs,
       // Keep-alive avoids fd exhaustion: indexing a block fans out one RPC per
       // transaction, and without pooling each would open a fresh TCP socket.
-      httpAgent: new http.Agent({ keepAlive: true, maxSockets: 16 }),
-      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 16 }),
+      // `timeout` on a keep-alive agent closes a socket that has waited in the
+      // pool that long; a request in progress is bounded by `timeout` above.
+      httpAgent: new http.Agent({ keepAlive: true, maxSockets: 16, timeout: idleSocketMs }),
+      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 16, timeout: idleSocketMs }),
       maxRedirects: 0,
     });
 
@@ -134,18 +156,23 @@ export class RpcService {
    */
   private async doCallWithRetry<T>(method: string, params: unknown[], options: CallOptions): Promise<T> {
     try {
-      return await this.doCall<T>(method, params, options);
+      return await this.doCall<T>(method, params, options, true);
     } catch (error: unknown) {
-      const transient =
-        error instanceof Error && /socket hang up|ECONNRESET|ETIMEDOUT|EPIPE/i.test(error.message);
+      const transient = error instanceof Error && TRANSPORT_ERROR.test(error.message);
       if (!transient) throw error;
       await new Promise((resolve) => setTimeout(resolve, 250));
-      logger.warn(`RPC ${method}: transport error, retrying once`);
-      return this.doCall<T>(method, params, options);
+      return this.doCall<T>(method, params, options, false);
     }
   }
 
-  private async doCall<T>(method: string, params: unknown[], options: CallOptions): Promise<T> {
+  /**
+   * One request. `willRetry` says a transport failure here is not yet the
+   * call's outcome: the caller repeats it once, and only that repeat's result
+   * is news. It used to be logged as an error regardless, so every retry that
+   * succeeded still left an error line behind -- a failure that never reached
+   * any caller, filed where the real ones are.
+   */
+  private async doCall<T>(method: string, params: unknown[], options: CallOptions, willRetry = false): Promise<T> {
     const id = ++this.requestId;
     const startedAt = performance.now();
     let failed = true;
@@ -179,6 +206,8 @@ export class RpcService {
 
       if (options.tolerated?.test(sanitised)) {
         logger.info(`RPC ${method}: ${sanitised} (expected by the caller, which retries or does without)`);
+      } else if (willRetry && TRANSPORT_ERROR.test(sanitised)) {
+        logger.warn(`RPC ${method}: ${sanitised} (transport error, retrying once)`);
       } else {
         logger.error(`RPC ${method} failed: ${sanitised}`);
       }
