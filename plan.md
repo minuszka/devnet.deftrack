@@ -1635,6 +1635,29 @@ Gini 0.216, ChainLock coverage 1.00, nobody punished.
   **E4b is therefore unblocked.** It is an experiment and needs its own
   Experiments record; the reinstall above is maintenance and is not that run.
 
+- **The seed and devnet2 were down for a VPS maintenance reboot on 2026-09-14,
+  and the gap is an observation gap, not a data fault.** The VPS had a kernel
+  update (6.8.0-136 → 6.8.0-139), MongoDB 8.0.29 → 8.0.32 and Node 24.19.0 →
+  24.21.0 applied.
+  - **Timing:** the reboot was requested at 13:28:56Z at height 13316, which is
+    Q60 offset +20, outside the +10..+18 mining window.
+  - **Seed:** `defcond-devnet` stopped at 13:28:57Z and loaded at 13:29:18Z. Its
+    last tip before the stop was 13315, at 13:28:28Z. Its first tip after the
+    restart was 13316, at 13:29:26Z; that block's header time is 13:28:26Z,
+    so the seed held the header but not the block when it went down.
+  - **ZMQ:** first-seen times for 13316 are therefore late by about a minute,
+    and do not describe the network.
+  - **devnet2:** it restarted at the same time, and its minter thread came back
+    at 13:29:18Z.
+  - **Binaries and chain:** both run the same binaries as before (md5
+    `5c8fab67` and `c9898910`), and the fleet read 160/160 on one chain before
+    and after.
+  - **Explained window:** llmq_60_75's mining window opened at 13316, inside
+    the gap. Treat any event-time oddity for 13315-13316 as this, not as a
+    network event.
+  - **Record:** `docs/WEBSITE_IMPLEMENTATION_LOG_HU.md`, section "VPS
+    karbantartási ablak – futtatás 2026-09-14".
+
 ## 5. v23 / M-02 — DROPPED from v23 (user, 2026-09-05)
 
 **M-02 gets no mainnet or testnet height in v23.** Nothing is reverted: the

@@ -75,7 +75,8 @@ A CI eredménye a PR-on: a #174 PR `Typecheck, test, build`, `Scripts, Dockerfil
 |---|---|
 | Szerver és kliens | `/opt/devnet-deftrack/app` @ **`65dcadf`** (a #181 merge utáni `main`), `ops/deploy.sh`-sal telepítve **2026-09-14 11:20Z**; előtte `5237f80`, 01:20Z óta. A kliens-bundle nem változott: `index-CNPCV91P.js` |
 | Ebben benne van | az 1–20. nap, a J1–J8 (R1–R7, V1–V7, W1–W4, X1–X2), a C2 roll-szkriptek, a #178–#180 (docs, MongoDB-mentés szkriptje és runbookja) és a **#181** (a pooled RPC-kapcsolatok 15 s után zárulnak; a visszaálló transzporthiba `warn`) |
-| MongoDB-mentés | éjszakai, ellenőrzött `mongodump` 2026-09-14 óta: két sikeres futás (03:12Z, 03:39Z), a következő 2026-09-15 03:44Z-kor; runbook: [MONGO_BACKUP_RUNBOOK_HU.md](MONGO_BACKUP_RUNBOOK_HU.md) |
+| MongoDB-mentés | éjszakai, ellenőrzött `mongodump` 2026-09-14 óta: két sikeres futás (03:12Z, 03:39Z), a következő 2026-09-15 03:44Z-kor; runbook: [MONGO_BACKUP_RUNBOOK_HU.md](MONGO_BACKUP_RUNBOOK_HU.md). A karbantartás előtt egy harmadik, ellenőrzött mentés is készült (13:27:39Z) |
+| Operációs rendszer és futtatókörnyezet | a 2026-09-14 13:29Z-s reboot óta: kernel `6.8.0-139-generic`, MongoDB **8.0.32**, Node **24.21.0** (előtte 6.8.0-136, 8.0.29, 24.19.0); a seed és a devnet2 binárisa változatlan (`5c8fab67`/`c9898910`) |
 | Lockfile | byte-azonos a repóéval (sha256 `2f72d372…ffb78`); `npm audit --omit=dev`: 2 moderate `qs` — az elfogadott F13-maradék |
 | nginx | a 14. napi fejlécek élnek; a CSP **2026-09-14 02:07:57Z óta enforce** (előtte report-only); az `/api/` alatt **egy** HSTS (9. pont) |
 
@@ -192,9 +193,10 @@ Mind **additív** vagy szűkítő (egy mező kevesebb kerül ki), törölt publi
 | Fairness: tip-vezérelt profilváltás | **lezárva kódban és tesztben (J7, `f2a4873`)** — előtte: nyitott, nem mérve | ha a tip átlép egy aktiválási magasságot és az új profil kérése hibázik, a régi profil adata az új „at the tip” gomb alatt maradhat — kódolvasásból; a review böngészőben reprodukálta (W4) |
 | A `ResponseGate` URL szerinti olvasás-azonosítása | **lezárva (J7, `2bd3139`)** | a #175 saját harness-hibája (W3): a `release()` egy azonos URL-ű másik válasz olvasását is elfogadta; most válaszonkénti azonosító |
 | RPC `socket hang up` a health `getnetworkinfo`-hívásán | **telepítve 2026-09-14 11:20Z (#181, `65dcadf`), mechanizmusában mérve** | 2026-09-14 02:18–04:26Z között 39 ilyen hibasor, mind :01/:31 másodperckor. A #181 a pooled socketeket 15 s után zárja, a visszaálló hibát `warn`-ként naplózza. Utómérés egy látható lappal, két 30 perces ablakban: 0 warn / 0 error mindkettőben — de előtte is 0 volt, így ez **nem bizonyíték**; az új RPC-kapcsolatok száma kb. 1-ről 2-re nőtt percenként, ez a tétlen-zárás nyoma. Napló, „Deploy 2026-09-14 (#181)” |
-| A #181 pool-defaultjának (15 000 ms) tesztje hiányzott (review P3) | **PR nyitva: #183** (`ded49b4`), CI zöld; a merge a tulajdonosé | 0-s defaulttal a nyolc célzott teszt zöld maradt; az új teszt a fő és a peer klienst a production módján építi, http és https agentre; hat negatív kontroll |
+| A #181 pool-defaultjának (15 000 ms) tesztje hiányzott (review P3) | **lezárva — mergelve 2026-09-14 (#183, `a68ccb5`)**; előtte: PR nyitva | 0-s defaulttal a nyolc célzott teszt zöld maradt; az új teszt a fő és a peer klienst a production módján építi, http és https agentre; hat negatív kontroll |
 | A health 503-at ad egy 5 percnél hosszabb blokk-köz után, legfeljebb egy sync-intervallumig | **nyitott, új lelet (2026-09-14)**, nincs jegy | a readiness a tétlenséget a `lastSyncedAt`-ből számolja, amely csak blokk indexelésekor frissül; a tétlen tick a `heartbeatAt`-et írja (`sync.service.ts:372-373`, `:405-417`; `readiness.ts:53`). Mérve 10:21Z-kor és 11:31:57Z-kor. Hamis `sync-stalled` jelzés, nem szinkronhiba; a mért blokkidő-eloszlással a blokkok kb. 16%-a előtt ilyen a köz |
-| VPS: kernel-, MongoDB- és Node-frissítés (reboot) | **nyitott — review alatt**, nem futott | a futtatandó szkript három review-körön ment át (CHANGES REQUESTED: MW1–MW4, MR2-1…MR2-4, majd egy maradék P2, MR3-1); a 4. kör beadva. Az FCV élő kiolvasására a vizsgált olvasó felhasználó nem jogosult; a naplóalapú, processzhez kötött helyettesítő bizonyítékot a review technikailag elfogadhatónak tartja, **az elfogadás tulajdonosi döntés** (napló, „VPS karbantartási ablak”) |
+| VPS: kernel-, MongoDB- és Node-frissítés (reboot) | **lezárva — lefutott 2026-09-14 13:27–13:37Z, verify ACCEPTED**; előtte: nyitott, review alatt | a futtatott szkriptet a 4. review-kör APPROVED-dal hagyta jóvá (előtte három CHANGES REQUESTED: MW1–MW4, MR2-1…MR2-4, MR3-1); a tulajdonos elfogadta a naplóalapú FCV-helyettesítő bizonyítékot. Kernel 6.8.0-139, MongoDB 8.0.32, Node 24.21.0; a seed kiesése kb. 21 s, a Q60-sávon kívül; flotta 160/160 egy láncon. A verify egy élesben talált hibáját (a helyreállt ismert failed unitot is bukásnak vette) egy ponton javítottam; **ezt az utólagos, célzott review (R5) APPROVED-dal jóváhagyta**, az ACCEPTED ítélettel és a `systemd-run` végrehajtással együtt, új jegy nélkül. Korlát: a failed-unit szabály unitnevet vet össze, hibaokot nem (napló, „VPS karbantartási ablak – futtatás”) |
+| A CI első e2e-tesztje hideg indulásnál bukhat | **nyitott, új megfigyelés (2026-09-14)**, nincs jegy | `accessibility.spec.ts:79`: a h1 megvolt, a h2-szekciók még nem (638 ms); ugyanaz a commit push-futásban és újrafuttatásban zöld. A teszt nem várja ki a szekciókat |
 | A `/usr/local/bin` bináris-mentései (15,8 GB) | **lezárva 2026-09-14** | 50 daemon-mentés md5-ellenőrzött törlése, a hat megtartandó md5 megmaradt; a 14 CLI/hook-mentés érintetlen (döntés nincs) |
 | Gépen kívüli MongoDB-mentés | **nyitott, tulajdonosi döntés** | az archívum nem publikus host-címeket tartalmaz, ezért csak privát hely jöhet szóba |
 | A harness teardown-kori megszakítása | tudomásul véve | a teszt vége után visszatartott kérés megszakításának nincs saját tesztje a rendes kapuban; a teljes suite-ok csak azt mutatják, hogy semmit nem akaszt meg. **2026-09-14:** a harmadik review saját C4-e az `abandonHeld()` primitívet méri (zöld); a teljes fixture-életciklusra a review sem általánosítja |
@@ -277,8 +279,12 @@ webfelület élesben fut.
   - A review `SHA256SUMS`-a ezeket a naplókat is felsorolja, ezért a repóban a naplók nélkül nem teljes.
 - A **VPS karbantartási ablak reviewjai** a repón kívül vannak, a szkriptekkel és a bizonyítékokkal együtt:
   `D:\www\devnet .deftrack-review-artefacts\2026-09-14-maint-window\` (1. kör),
-  `…-maint-window-r2\` (2. kör) és `…-maint-window-r3\` (3. kör). A kimenetük privát: nem publikus
-  infrastruktúra-adatot is tartalmazhat.
+  `…-maint-window-r2\` (2. kör), `…-maint-window-r3\` (3. kör), `…-maint-window-r4\` (4. kör, APPROVED) és
+  `…-maint-window-r5-verify-fix\` (a futtatás bizonyítékai és a verify utólagos reviewra adott javítása). A kimenetük
+  privát: nem publikus infrastruktúra-adatot is tartalmazhat.
+- A #181 review átadott eredeti példányai (CRLF-es fájlok és a naplók) a
+  `D:\www\devnet .deftrack-review-artefacts\2026-09-14-rpc\as-delivered\` mappában vannak; ott a review saját
+  `SHA256SUMS`-a 38/38 egyezik. A repóban lévő példányok ugyanazok, LF sorvéggel.
 
 ## 13. Amit a review-nak külön érdemes néznie
 
