@@ -31,7 +31,8 @@ Státuszok: TERVEZETT; FOLYAMATBAN; KÓD KÉSZ / ELLENŐRZÉS FÜGGŐ; ELLENŐRZ
 | J4–J6 | A végső review (V1–V7) javításai | ELLENŐRZÖTT — az ismételt review V1, V2, V3, V5, V6, V7-et lezárta, V4-et részben | `web/review-fixes-2026-09-13` (#175) |
 | J7 | Az ismételt review (W1–W4) javításai és egy tesztadósság | ELLENŐRZÖTT — a harmadik review W1, W3, W4-et lezárta, W2-t részben (X1) | `web/review-fixes-2026-09-13-2`; lásd a J7 bejegyzést |
 | J8 | A harmadik review maradéka: X1 (W2 maradéka) és X2 (tesztlezárás) | ELLENŐRZÖTT — a negyedik független review X1-et és X2-t lezárta, új hibajegy nélkül | `web/review-fixes-2026-09-13-2` (#176); `d0f28fe`, `504b8cd`; lásd a J8 bejegyzést |
-| Deploy | Élesre telepítés: a 11–20. nap és a J1–J8 | TELEPÍTVE, élőben mérve — a CSP enforce-ra váltása nyitott | `5237f80` a VPS-en 2026-09-14 óta; lásd a „Deploy 2026-09-14” bejegyzést |
+| Deploy | Élesre telepítés: a 11–20. nap és a J1–J8 | TELEPÍTVE, élőben mérve — a CSP enforce-ra váltása azóta megtörtént (következő sor) | `5237f80` a VPS-en 2026-09-14 óta; lásd a „Deploy 2026-09-14” bejegyzést |
+| CSP | A CSP enforce-ra váltása (átadási csomag 10. pont, 4. lépés) | ÉLESBEN, mérve — 17 útvonalon és a keresésnél 0 sértés, pozitív kontrollal | egy nginx-snippet cseréje 2026-09-14 02:07:57Z; lásd a „CSP enforce 2026-09-14” bejegyzést |
 
 A 11–20. nap sorai 2026-09-13-ig `TERVEZETT`-et mutattak, miközben mindegyik napnak megvolt a lezárt bejegyzése; a végső review jelezte. A táblázat most a napi bejegyzések saját „Commit(ok), végső SHA” és „Napi státusz” sorait idézi.
 
@@ -3056,6 +3057,70 @@ Napi státusz: TELEPÍTVE, élőben mérve — a CSP enforce-ra váltása nyitot
 Éles deploy: MEGTÖRTÉNT (szerver + kliens, ops/deploy.sh)
 ```
 
+## CSP enforce 2026-09-14 – a report-only házirend érvénybe lép
+
+```text
+Dátum / végrehajtó: 2026-09-14 / Claude Opus 5 (1M)
+Engedély: a tulajdonos kifejezett engedélye (a deploy-rögzítés után, „folytasd”)
+Hatókör: egyetlen nginx-snippet cseréje a runbook szerint (/etc/nginx/snippets/deftrack-csp.conf); a vhost,
+  a többi fejléc, a szerver és a kliens nem változott
+```
+
+**Előtte, csak olvasással:**
+- Az élő snippet házirend-sora byte-azonos a repó `ops/nginx/csp-report-only.conf`-jáéval.
+- Az enforce fájl ugyanezt a szöveget hordozza, csak a fejléc neve más (`diff` üres).
+- A vhost a snippetet a `server` blokkban, az `= /index.html` és az `/assets/` locationben emeli be; az
+  nginx.conf nem használ `snippets/*` globot.
+- Az admin belépés `fetch`, a két `<form>` (keresés, szimuláció-előkészítés) `preventDefault()`-ot hív, így
+  a `form-action 'none'` nem blokkol valós műveletet.
+
+**Csere, 02:07:57Z:**
+- A feltöltött `csp-enforce.conf` sha256-ja (`18b43187…2d842e`) egyezett a helyivel.
+- Mentés: `/root/nginx-backups/deftrack-csp.conf.report-only-20260914-040757` (az nginx-konfig fán kívül).
+- `install`, `nginx -t` rendben, `systemctl reload nginx`. A szkript hibás `nginx -t` esetén
+  visszamásolta volna a mentést, és nem töltött volna újra.
+
+**Utána — fejlécek (curl):**
+- A `Content-Security-Policy` (enforce) megvan ezeken: `/`, `/rounds`, `/admin`, SPA-fallback útvonal,
+  content-hash-elt asset, valódi 404 (`/assets/nope.js`).
+- `Content-Security-Policy-Report-Only` sehol nincs.
+- A többi fejléc változatlan; az `/api/` alatt továbbra is egy HSTS.
+- Az `/api/v1/health` válaszán most két *érvényes* CSP van (a helmeté és az nginxé), JSON-válaszon hatás
+  nélkül. Ez a 2026-09-14-i duplikált-fejléc megfigyelés része.
+
+**Utána — valódi böngésző az élő oldalon:**
+
+| Mit | Eredmény |
+|---|---|
+| A dokumentum tényleg enforce alatt fut | cache-kerülő URL-lel betöltve; a friss válasz `content-security-policy` fejléccel, `…-report-only` nélkül |
+| Pozitív kontroll | egy befecskendezett inline `<script>` **nem futott le**; `securitypolicyviolation`: `script-src-elem`, `disposition: enforce`, `blocked: inline` |
+| 17 útvonal az alkalmazás routerével, egy dokumentumban, egy `securitypolicyviolation`-figyelővel | **0 sértés**: Overview, PoSe Watch, Masternodes, ChainLocks, Sentinel Layer, Staking, Vantage points, Experiments, Simulations, Blocks, Transactions, Operators, Fairness, How we measure, Search (`?q=13000`), Block 13,000, DKG Rounds; minden oldal a saját `h1`-ével renderelt. A számolt `style=` attribútumos oldalak is (Staking 22, Fairness 56, Sentinel Layer 4, ChainLocks 3) |
+| Fejléc-keresés elküldése (`requestSubmit`) | a keresés a 13000-es blokkra vitt, 0 sértés. A konzol 3 hibája a keresés saját próbája (`/api/v1/experiments/13000` → 404: „nem futamkulcs”, `client/src/lib/search.ts:160`), nem CSP |
+| `/rounds` friss betöltés | a konzol üres — a report-only módban látott `upgrade-insecure-requests`-megjegyzés enforce alatt eltűnt |
+| `/admin` friss betöltés | a belépési képernyő renderelt (az admin chunk betöltött); az egyetlen konzolüzenet a várt `/api/v1/admin/session` 401 |
+
+**Mérési megjegyzés — a tulajdonos ugyanabban a böngészőben követte a mérést.** A fül a hívásaim között
+`/admin` → `/` → `/blocks` → `/` útvonalra váltott. Az nginx access-log szerint 04:11:39-kor ugyanabból a
+böngészőből egy `POST /api/v1/admin/session` ment ki, 404-gyel. Ez a „Continue to admin dashboard” gomb, a
+szerver zárt válaszával: „browser sign-in is not enabled on this deployment”,
+`server/src/routes/v1/adminSession.v1.routes.ts:49-51`. A navigációk és a gombnyomás a tulajdonostól
+jöttek, aki nézte, mit csinálok; utólag megerősítette. A mérés ettől érvényes:
+- az útvonal-bejárás egyetlen, lapon belüli szkriptben futott — egy közbenső navigáció megszakította volna,
+  és mind a 17 lépés a várt oldalt látta;
+- az admin-ellenőrzés egymás utáni betöltés → snapshot → konzol sorrendben készült;
+- a kliensben nincs programozott navigáció a `/`-re; a váltásokat nem az oldal okozta.
+
+A production admin oldalon inline-script-próbát az ügynök-jogosultság nem engedett; a pozitív kontroll a
+publikus oldalon készült, ugyanazzal a snippet-házirenddel.
+
+**Visszaállítás, ha kell:** a mentés visszamásolása a snippet helyére, `nginx -t`, `systemctl reload nginx`
+— a vhosthoz nem kell nyúlni.
+
+```text
+Napi státusz: ÉLESBEN, mérve — a CSP enforce alatt fut
+Éles módosítás: MEGTÖRTÉNT (egy nginx-snippet; mentés a VPS-en)
+```
+
 ## J1 javító munkanap – a vezérlés nem küldhet parancsot más futamra
 
 ```text
@@ -3379,7 +3444,8 @@ Napi státusz: ELLENŐRZÖTT
 
 **Élesben, mérve 2026-09-14, a deploy után:** a VPS a `5237f80`-et futtatja. Az alábbi sorok „nincs
 telepítve” jelzései ezzel lezárultak, és minden F- és V-javítás élesben van. Kivétel az F10 CSP-je, amely
-továbbra is report-only. Részletek: „Deploy 2026-09-14” bejegyzés. Az alábbi 2026-09-13-i bekezdés és a
+továbbra is report-only — **ez is lezárult 2026-09-14 02:07:57Z-kor**, a CSP azóta enforce (lásd a „CSP
+enforce 2026-09-14” bejegyzést). Részletek: „Deploy 2026-09-14” bejegyzés. Az alábbi 2026-09-13-i bekezdés és a
 sorok szövege előzményként változatlan.
 
 **Élesben, mérve 2026-09-13:** a VPS a `83b8710`-et futtatja (a #163 merge, 2026-09-12 16:17): ebben
