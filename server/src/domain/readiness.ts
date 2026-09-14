@@ -22,9 +22,11 @@ export interface ReadinessInput {
   /** When the indexer last advanced; null if it never has. */
   lastSyncedAtMs: number | null;
   /**
-   * When the indexer last finished a pass -- one that advanced, or one that
-   * found nothing to index (the sync cursor's `heartbeatAt`). Null if it never
-   * has, or for a cursor written before the field existed.
+   * The sync cursor's `heartbeatAt`: when the indexer last recorded progress --
+   * a checkpoint inside a batch, or the end of one -- or last finished a pass
+   * that found nothing to index. It says the indexer was working then, not that
+   * the rest of that tick succeeded. Null if never written, or for a cursor
+   * written before the field existed.
    */
   lastSyncPassAtMs: number | null;
   nowMs: number;
@@ -56,12 +58,15 @@ export function evaluateReadiness(input: ReadinessInput): Readiness {
 
   const behind = input.chainTip >= 0 ? Math.max(0, input.chainTip - input.indexedHeight) : 0;
   const stallAfterMs = Math.max(MIN_STALL_MS, input.syncIntervalMs * STALL_INTERVALS);
-  // Idle since the last finished pass, not since the last indexed block. A
-  // quiet chain moves `lastSyncedAt` only when a block arrives, so measured from
-  // it alone every block gap longer than the stall limit read as a stalled
-  // indexer for the seconds between the block reaching the node and the next
-  // pass: 503 at 10:21Z and 11:31:57Z on the devnet on 2026-09-14. A pass that
-  // hangs or throws writes no heartbeat, so a real stall still shows.
+  // Idle since the indexer's last recorded activity, not since the last indexed
+  // block. A quiet chain moves `lastSyncedAt` only when a block arrives, so
+  // measured from it alone every block gap longer than the stall limit read as a
+  // stalled indexer for the seconds between the block reaching the node and the
+  // next pass: 503 at 10:21Z and 11:31:57Z on the devnet on 2026-09-14. The
+  // heartbeat can be fresh in a tick that later fails -- a checkpoint writes it
+  // -- but that failure is recorded and fails `sync` above. A pass that hangs,
+  // or a tick dropped for overlapping it, writes nothing more, so the last
+  // activity ages into `sync-stalled`.
   const lastActiveMs = latest(input.lastSyncedAtMs, input.lastSyncPassAtMs);
   const idleMs = lastActiveMs === null ? Infinity : input.nowMs - lastActiveMs;
   if (behind > 0 && idleMs > stallAfterMs) failing.push('sync-stalled');

@@ -158,7 +158,7 @@ describe('the readiness input built from the sync cursor', () => {
     });
   });
 
-  it('end to end: the 11:31:57Z cursor is ready, not stalled', () => {
+  it('mapped, then decided: the 11:31:57Z cursor is ready, not stalled', () => {
     const cursor = {
       lastSyncedHeight: 13271,
       lastSyncedAt: new Date(1_000_000),
