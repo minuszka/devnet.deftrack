@@ -7,15 +7,20 @@ S=13488
 C="sudo -n -u defcon /usr/local/bin/defcon-cli -datadir=/home/defcon/.defcon -conf=/home/defcon/.defcon/defcon.conf"
 C2="sudo -n -u defcon /usr/local/bin/defcon-cli -datadir=/home/defcon/.defcon2 -conf=/home/defcon/.defcon2/defcon.conf"
 tip=$($C getblockcount)
+# shellcheck disable=SC2086  # $tip is always the numeric getblockcount result; no word-splitting/globbing risk
 echo "UTC $(date -u '+%F %T')  tip $tip (end height $S, tip - S = $((tip - S)))  devnet2 tip $($C2 getblockcount)  same hash: $([ "$($C getblockhash $tip)" = "$($C2 getblockhash $tip 2>/dev/null)" ] && echo yes || echo no)"
 echo "quorum list types at tip: $($C quorum list | grep -oE '"llmq_[a-z0-9_]+"' | tr -d '"' | tr '\n' ' ')"
 echo "best chainlock: $($C getbestchainlock | grep -oE '"height": [0-9]+|"llmqType": "[a-z0-9_]+"' | tr '\n' ' ')"
 
 # Commitments (type 6) by llmqType and quorum height, from S-96 to the tip.
-from=$((S - 96)); [ $tip -lt $S ] && from=$((tip - 96)); [ $from -lt 1 ] && from=1
+from=$((S - 96))
+# shellcheck disable=SC2086  # $tip is always numeric (getblockcount result)
+[ $tip -lt $S ] && from=$((tip - 96)); [ $from -lt 1 ] && from=1
 $C getblockhash $from > /dev/null || exit 1
 tmp=$(mktemp -d)
+# shellcheck disable=SC2086  # $tip is always numeric (getblockcount result)
 for h in $(seq $from $tip); do
+  # shellcheck disable=SC2086  # $h is always numeric (seq output)
   $C getblock "$($C getblockhash $h)" 2 > "$tmp/$h.json" 2>/dev/null
 done
 python3 - "$tmp" "$from" "$tip" "$S" <<'PY'
