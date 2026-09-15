@@ -80,6 +80,10 @@ test.describe('semantics and focus', () => {
     app.stub(overviewStubs());
     await app.goto('/');
     await expect(page.locator('.page-title')).toHaveText('Overview');
+    // The h2 cards render after a second, data-dependent pass; a cold start
+    // can catch the h1 alone, which is what made this test flaky in CI (#184,
+    // 2026-09-14). Wait for the sections before taking the heading snapshot.
+    await expect(page.locator('h2').first()).toBeVisible();
 
     const list = await headings(page);
     const h1s = list.filter((h) => h.level === 1);
