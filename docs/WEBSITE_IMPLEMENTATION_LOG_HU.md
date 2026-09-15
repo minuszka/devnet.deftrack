@@ -3926,6 +3926,92 @@ A végső review (2026-09-13) V1–V7 javításai (J4–J6) szintén **csak kód
 
 A blokkot, kihagyott tesztet és fennmaradó sérülékenységet ne töröld ki egy későbbi bejegyzéssel: lezáráskor hivatkozz a bizonyítékra, hogy az előzmény követhető maradjon.
 
+## Deploy 2026-09-14 (#182, #183, #184, #185) – a C6a első rolljával, `65dcadf` → `0a27df0`
+
+```text
+Dátum / végrehajtó: 2026-09-14 15:44:21Z / Opus 5-munkamenet (a C6a rollt vivő ügynök)
+Engedély: a C6a roll-ablak tulajdonosi jóváhagyása („roll mehet a flottára full”); az explorer deploy a roll részeként,
+  legkésőbb a 13535-ös tip előtt
+Hatókör: `deftrack-devnet` újraindítása a mergelt `0a27df0`-n (#182 formationEndHeight/isSchedulable, #183 RPC-pool
+  teszt, #184 docs, #185 maint-window docs); a nodeokhoz és a mongodhoz nem nyúlt
+```
+
+**Mérve, `journalctl -u deftrack-devnet` (UTC, a szerver CEST-ben naplóz):** `SIGTERM received` 15:44:21.336Z, tip a
+leállításkor 13370; az új processz 15:44:22.091Z-kor csatlakozott a Mongóhoz, a gyűjtők azonnal elindultak. Readiness
+közvetlenül a restart után: `status ok`, `chainTip 13370`, `behind 0`, `rounds` formed 1162 / failed 21 / pending 98 /
+impossible 35. A kiszolgált bundle `assets/index-CNPCV91P.js` — a kliens nem változott, csak a szerverkód.
+
+```text
+Éles módosítás: MEGTÖRTÉNT (szerverkód; a kliens-bundle változatlan)
+```
+
+## Deploy 2026-09-14 (#186) – a health-endpoint 5 perces blokk-köz utáni téves 503-a, `0a27df0` → `75ec3a3`
+
+```text
+Dátum / végrehajtó: 2026-09-14 17:50:05Z / Opus 5-munkamenet
+Engedély: a C6a roll-ablak tulajdonosi jóváhagyása alatt, önálló javításként a #181 mérésnél talált, nem a #181
+  okozta hiba nyomán (ld. a Deploy 2026-09-14 (#181) szakasz „Mellékesen talált” pontját)
+Hatókör: `server/src/domain/readiness.ts`, `server/src/index.ts` — a tétlen tick mostantól a `heartbeatAt`-et is
+  frissíti, a readiness abból számol; 3 fájl, 375+/12- sor a #182 rollal együtt beérkezett ágból
+```
+
+**Mérve:** `SIGTERM received` 17:50:05.402Z, tip a leállításkor 13419; readiness a restart után `status ok`,
+`behind 0`, `rounds` formed 1168 / failed 22 / pending 97 / impossible 35. A korábbi téves 503-at az
+`evaluateReadiness` `lastSyncedAt`-alapú tétlenség-számítása okozta (ld. #181 bejegyzés); külön mérés a javításra
+ez a PR-hez nem tartozik, a mechanizmus ugyanaz, mint amit a #181 bejegyzés dokumentált.
+
+```text
+Éles módosítás: MEGTÖRTÉNT (szerverkód; a kliens-bundle változatlan)
+```
+
+## Deploy 2026-09-14 (#188) – devnet formációs vég 13488, a flotta-roll alatt, `75ec3a3` → `9751a65`
+
+```text
+Dátum / végrehajtó: 2026-09-14 19:10:57Z / Opus 5-munkamenet
+Engedély: a C6a2 futtatás tulajdonosi időnyerési döntése — a #188 review nélkül megy ki, mert a Core #244 konszenzusa
+  a 13488-as blokkban aktiválódik; független review utólag, retrospektíven APPROVED
+Hatókör: `server/src/config/llmq.ts` (a `llmq_50_60`/`llmq_60_75` `formationEndHeight` 13536 → 13488, a Core #244
+  aktiválási magasságával egyezően), `server/src/services/sync.activity.test.ts`; a nodeokhoz nem nyúlt
+```
+
+**Mérve:** `SIGTERM received` 19:10:57.884Z, tip a leállításkor 13450 — a flotta-roll ablakán belül (19:09:40–
+19:27:16Z, 16/16 host); readiness a restart után `status ok`, `behind 0`, `rounds` formed 1170 / failed 22 /
+pending 98 / impossible 35. A #187 (`test/sync-overlap-activity`) csak teszt volt, önálló deploy nem tartozott hozzá
+— a hozzá tartozó tesztfájl-változás ebbe a rollba és a #186-éba lett felosztva.
+
+```text
+Éles módosítás: MEGTÖRTÉNT (szerverkód; a kliens-bundle változatlan)
+```
+
+## C6a lekapcsolás és a két futás lezárása – 2026-09-14/15
+
+Két Experiments-futás vitte a C6a-t: `fleet-rollout-c6a-243-2026-09-14` (zárva 13439-en, a karbantartás miatt a
+feladás előtt lement flotta-rollal indult) és `fleet-rollout-c6a-end13488-2026-09-14` (zárva **2026-09-15 08:57Z**,
+`endHeight` **13781**). A befagyasztott outcome a 13439–13781-es ablakban: **19 formed / 3 failed / 1 pending, 0
+büntetett**, ChainLock 343/343, dsl 12/15 (absent: 559, 560, 566); csak a mainneten is futó profilok 18 formed / 1
+failed / 1 pending, 0 büntetett. Flotta 160/160 egy láncon 13781-en, mind `14583e7c`; seed `a7822e1b` és devnet2
+`14583e7c` azonos tip-hash-sel. InstantSend a záráskor 3/3 lockolva (1400/1991/3210 ms), seeden és devnet2-n
+`instantlock_internal=true` a megerősítés előtt.
+
+**Független review (2026-09-15), F1–F5, egy mondatban:**
+- **F1** — a roll a Q60-bázis +10-én, a staker-hostokkal kezdődött; a bázis 13440 végleges commitmentje csak
+  memóriában élt, és elveszett a restarttal, tehát az a Q60-kör elveszett (mainnet-releváns).
+- **F2** — ugyanez a mechanizmus a `llmq_50_60` 13440-es körét is elvitte, deklaráció nélkül.
+- **F3** — két Sentinel-epocha (559, 566) magyarázat nélkül maradt ki, egyik sem esik egybe ismert beavatkozással.
+- **F4** — a seed/devnet2 a flottánál korábban állt át, ami 18:47–19:27Z között érvénytelenítette az átadó
+  visszaállítási ágát — a rollt ez nem érintette.
+- **F5** (látens) — egy `dkgInterval-1`-nél záruló bányászati ablakú profil utolsó commitmentje olyan blokkban
+  születhet, amit a `quorum listextended` egyetlen magasságon sem mutat meg; a jelenlegi két profilt nem érinti.
+
+Részletek: a review — `D:\www\devnet .deftrack-review-artefacts\2026-09-15-c6a2-review\C6A2_REVIEW_2026-09-15_HU.md`
+—, a zárás — `D:\www\devnet .deftrack-ops-handover\2026-09-15-c6a2-close\` (`close2-notes.txt`,
+`experiment-after-close.json`, `instantsend-close.txt`, `s-close.log`, `SHA256SUMS`).
+
+```text
+Éles módosítás: NEM TÖRTÉNT ebben a bejegyzésben (a #244/#188 rollja a fenti három Deploy-szakaszban;
+  ez a szakasz csak a lezárás és a review dokumentálása)
+```
+
 ---
 
 ## Backlog — ami nem ennek a tervnek a része
