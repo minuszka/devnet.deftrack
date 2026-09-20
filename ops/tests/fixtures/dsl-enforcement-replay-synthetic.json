@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "Synthetic fourteen-masternode chain for ops/tests/test_dsl_enforcement_replay.py.",
+    "Fourteen and not fewer: with six members one missed masternode is already 16.7% of the",
+    "list and the 15% mass-outage guard swallows every epoch -- the first draft of this fixture",
+    "did exactly that and no counter ever moved. With fourteen, one miss is 7.1%, two are 14.3%",
+    "(below the guard), three are 21.4% (the guard opens).",
+    "The proTxHashes are chosen so that display order (01.., 02.., ..., 0e..) is the REVERSE of",
+    "the node's internal byte order (last byte 22 < 33 < ... < ff): canonical index 0 is member",
+    "N (0e..22) and index 13 is member A (01..ff). A tool that sorts display strings puts A at 0.",
+    "Members by canonical index: 13=A 12=B 11=C ... 0=N.",
+    "Story: A (index 13) misses epochs 2-6 -> counter 1..5, suspended at epoch 5 (count 4),",
+    "banned at epoch 6 (count 5, height 168). B (index 12) misses epoch 3 (counter 1), is",
+    "UNOBSERVED in epoch 4 while that streak is live (the hold branch no recorded devnet epoch",
+    "has exercised), is online in epoch 5 (reset). Epoch 2 is format v1 (everyone observed).",
+    "Epoch 7 is absent (freeze). Epoch 8 is a mass outage (3 of 14 = 21.4%): nothing changes.",
+    "Epoch 9: A online -> recovered; B missed -> counter 1. Epoch 10 has a wrong listSize and",
+    "must be skipped, so C (index 11) is never counted.",
+    "Epoch 3's stored missedProTxHashes is DELIBERATELY the display-order resolution (indices",
+    "13 and 12 read in display order are N and M), so the cross-check warning must fire there",
+    "and nowhere else."
+  ],
+  "members": {
+    "A": "01000000000000000000000000000000000000000000000000000000000000ff",
+    "B": "02000000000000000000000000000000000000000000000000000000000000ee",
+    "C": "03000000000000000000000000000000000000000000000000000000000000dd",
+    "D": "04000000000000000000000000000000000000000000000000000000000000cc",
+    "E": "05000000000000000000000000000000000000000000000000000000000000bb",
+    "F": "06000000000000000000000000000000000000000000000000000000000000aa",
+    "G": "0700000000000000000000000000000000000000000000000000000000000099",
+    "H": "0800000000000000000000000000000000000000000000000000000000000088",
+    "I": "0900000000000000000000000000000000000000000000000000000000000077",
+    "J": "0a00000000000000000000000000000000000000000000000000000000000066",
+    "K": "0b00000000000000000000000000000000000000000000000000000000000055",
+    "L": "0c00000000000000000000000000000000000000000000000000000000000044",
+    "M": "0d00000000000000000000000000000000000000000000000000000000000033",
+    "N": "0e00000000000000000000000000000000000000000000000000000000000022"
+  },
+  "epochs": [
+    {"epoch": 1, "boundaryHeight": 48, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 0, "missedIndices": [], "unobservedIndices": [], "missedProTxHashes": []},
+    {"epoch": 2, "boundaryHeight": 72, "status": "committed", "commitmentVersion": 1, "listSize": 14, "missedCount": 1, "missedIndices": [13], "missedProTxHashes": ["01000000000000000000000000000000000000000000000000000000000000ff"]},
+    {"epoch": 3, "boundaryHeight": 96, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 2, "missedIndices": [13, 12], "unobservedIndices": [], "missedProTxHashes": ["0e00000000000000000000000000000000000000000000000000000000000022", "0d00000000000000000000000000000000000000000000000000000000000033"]},
+    {"epoch": 4, "boundaryHeight": 120, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 1, "missedIndices": [13], "unobservedIndices": [12], "missedProTxHashes": ["01000000000000000000000000000000000000000000000000000000000000ff"]},
+    {"epoch": 5, "boundaryHeight": 144, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 1, "missedIndices": [13], "unobservedIndices": [], "missedProTxHashes": ["01000000000000000000000000000000000000000000000000000000000000ff"]},
+    {"epoch": 6, "boundaryHeight": 168, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 1, "missedIndices": [13], "unobservedIndices": [], "missedProTxHashes": ["01000000000000000000000000000000000000000000000000000000000000ff"]},
+    {"epoch": 7, "boundaryHeight": 192, "status": "absent", "commitmentVersion": null, "listSize": null, "missedCount": null, "missedIndices": [], "unobservedIndices": [], "missedProTxHashes": []},
+    {"epoch": 8, "boundaryHeight": 216, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 3, "missedIndices": [13, 12, 11], "unobservedIndices": [], "missedProTxHashes": ["01000000000000000000000000000000000000000000000000000000000000ff", "02000000000000000000000000000000000000000000000000000000000000ee", "03000000000000000000000000000000000000000000000000000000000000dd"]},
+    {"epoch": 9, "boundaryHeight": 240, "status": "committed", "commitmentVersion": 2, "listSize": 14, "missedCount": 1, "missedIndices": [12], "unobservedIndices": [], "missedProTxHashes": ["02000000000000000000000000000000000000000000000000000000000000ee"]},
+    {"epoch": 10, "boundaryHeight": 264, "status": "committed", "commitmentVersion": 2, "listSize": 15, "missedCount": 1, "missedIndices": [11], "unobservedIndices": [], "missedProTxHashes": []}
+  ]
+}
