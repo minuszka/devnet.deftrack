@@ -75,3 +75,9 @@ audit-scratch/
 !/docs/devnet-rollouts.md
 !/docs/MONGO_BACKUP_RUNBOOK.md
 !/docs/NGINX_HEADERS_RUNBOOK.md
+
+# Session handoffs, the working plan and concept material: local only.
+/plan.md
+/HANDOFF*.md
+/deliverables/
+/.workflows/
