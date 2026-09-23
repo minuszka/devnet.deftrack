@@ -24,7 +24,7 @@ import {
  * TTL ceiling allows a fault to live. So an unanchored run cannot express the
  * experiment at all, and the answer is to anchor the outage on the schedule
  * rather than to raise either ceiling: anchored, one missed window costs two
- * blocks. See docs/simulator/OUTAGE_WINDOWS_HU.md before changing this.
+ * blocks. Re-derive that arithmetic before changing this.
  */
 const MAX_OUTAGE_BLOCKS = 6;
 

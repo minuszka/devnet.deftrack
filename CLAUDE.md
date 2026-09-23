@@ -4,7 +4,7 @@ Working notes for this repository. Everything here was verified against source,
 not assumed — the "Verified facts" section carries file:line references so it
 can be re-checked when the node is upgraded.
 
-**Open work lives in [`plan.md`](plan.md)**: the owed experiment runs and what
+**Open work lives in `plan.md`** (a local file, not in this repository): the owed experiment runs and what
 blocks each, what in the current binary is still unproven and why, the tooling
 debts every measurement exposed, and the v23/M-02 items parked by decision.
 This file records what is known; `plan.md` records what is not yet done. Read it
@@ -1154,7 +1154,7 @@ The explorer database is backed up nightly since 2026-09-14. `ops/mongo-backup.s
 `/usr/local/sbin/deftrack-mongo-backup`, with the `deftrack-mongo-backup.{service,timer}` units.
 It runs mongodump as the read-only user, checks the archive before pruning, and writes a `.sha256` and
 a manifest beside each archive. The procedure, restore check and rollback are in
-[`docs/MONGO_BACKUP_RUNBOOK_HU.md`](docs/MONGO_BACKUP_RUNBOOK_HU.md). The archives hold non-public host
+[`docs/MONGO_BACKUP_RUNBOOK.md`](docs/MONGO_BACKUP_RUNBOOK.md). The archives hold non-public host
 addresses, so every copy that leaves the VPS must stay private.
 
 **Measure an RPC client change against its mechanism, not only against the error count.** #181 closes pooled

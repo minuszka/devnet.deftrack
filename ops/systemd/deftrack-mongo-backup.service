@@ -4,7 +4,7 @@
 # The script is installed as a root-owned copy in /usr/local/sbin rather than
 # run from the app checkout: /opt/devnet-deftrack/app is updated by the deploy,
 # and a root service executing a file that a less privileged account can
-# rewrite is a way to become root. Install and verify: docs/MONGO_BACKUP_RUNBOOK_HU.md.
+# rewrite is a way to become root. Install and verify: docs/MONGO_BACKUP_RUNBOOK.md.
 #
 # A failed run leaves this unit failed, which `systemctl --failed` and the
 # journal show; the script keeps nothing from a failed run and prunes nothing.
