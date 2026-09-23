@@ -1,53 +1,101 @@
 # devnet.deftrack
 
-An explorer for the DeFCoN **devnet** (`defcon-q60`), live at
-[devnet.deftrack.xyz](https://devnet.deftrack.xyz). Its primary job is to record every DKG round —
-including the ones that did not happen — and to attribute masternode failures, so that quorum
-configuration changes can be compared against a measured baseline. It observes the network; it never
-touches consensus.
+[![CI](https://github.com/minuszka/devnet.deftrack/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/minuszka/devnet.deftrack/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Live](https://img.shields.io/badge/live-devnet.deftrack.xyz-0a7ea4.svg)](https://devnet.deftrack.xyz)
 
-**DEVNET — a test network. Its coins have no value.**
+**A measurement explorer for the DeFCoN devnet (`defcon-q60`).**
 
-## What it records
+Most block explorers show what happened. devnet.deftrack also records what *should* have happened and
+did not: every scheduled DKG round is reconstructed from the chain's own schedule, so a quorum that
+failed to form is a row in the record, not a silent gap. Masternode failures are attributed to
+operators, and every deliberate intervention on the network is logged with its hypothesis declared
+before the outcome is known. The result is a baseline that quorum and PoSe configuration changes can
+be measured against.
 
-- DKG / LLMQ rounds for every quorum profile, reconstructed from the expected schedule, so a round that
-  failed to form is a row, not a gap
-- PoSe penalties, bans and revivals, block by block
-- ChainLock coverage and InstantSend behaviour
-- Sentinel Layer (service PoSe) epochs and commitments
-- the Experiments record: every intervention on the network, with its hypothesis declared before the
-  outcome is known
+The explorer only observes. It never signs, stakes or touches consensus.
 
-## Layout
+> **Test network.** The devnet's coins have no value.
 
-| Path | What |
+## Features
+
+| Area | What is recorded |
 |---|---|
-| `shared/` | types shared by server and client |
-| `server/` | Express + Mongoose indexer and API (`/api/v1/...`) |
-| `client/` | Lit front-end, built with Vite |
-| `ops/` | deployment, backup, fleet and measurement tooling |
-| `docker/` | the regtest lab image |
-| `docs/` | the rollout record and operational runbooks |
+| **Quorum rounds** | Every DKG round of every LLMQ profile, formed or failed, with health ratio, punished members and the profile parameters in force at that height |
+| **PoSe** | Penalties, bans and revivals block by block, ban waves, and per-operator reliability |
+| **ChainLocks** | Coverage and observed lock latency, from the first lock ever seen |
+| **Sentinel Layer** | Service-PoSe epochs and commitments: who was marked missed, unobserved or absent |
+| **Block production** | Staking health, producer concentration by host, block arrival lag |
+| **Experiments** | Every rollout, outage and parameter test, with hypothesis, expected result and frozen outcome |
+| **Simulator** | Fault scenarios planned and run against a local regtest lab, never against the live devnet |
 
-## Development
+## Architecture
 
-```bash
-npm install            # workspaces: shared, server, client
-npm run typecheck      # all three workspaces
-npm run build          # shared -> server -> client
-npm run dev            # server :4100 + client :5190 (Vite proxies /api)
-npm test               # server unit tests (vitest)
+```
+ DeFCoN node ──RPC──┐
+ (seed, devnet)     ├──► server  ──► MongoDB
+ ZMQ (localhost) ───┘   Express        ▲
+                        indexer        │
+                        + /api/v1 ◄────┴──── client (Lit, Vite)
 ```
 
-The server needs a MongoDB instance and a DeFCoN node's RPC; see `.env.example`. `CLAUDE.md` holds the
-verified facts about the node that the explorer relies on, with source references.
+| Path | Contents |
+|---|---|
+| [`shared/`](shared/) | Types and contracts shared by server and client |
+| [`server/`](server/) | Express + Mongoose: the chain indexer, collectors, and the `/api/v1` API |
+| [`client/`](client/) | Lit 3 single-page front-end, built with Vite |
+| [`ops/`](ops/) | Deployment, backup, fleet and measurement tooling, with its own tests |
+| [`docker/`](docker/) | The regtest lab image used by the simulator |
+| [`docs/`](docs/) | The rollout record and operational runbooks |
+
+Every API response uses the envelope `{ success, data }`; paged endpoints always return the true
+`total` alongside the page. Route inputs are validated with zod and bounded.
+
+## Getting started
+
+### Requirements
+
+- Node.js 24 (see [`.node-version`](.node-version); `>=22` is enforced)
+- MongoDB 8.0
+- RPC access to a DeFCoN node on the `defcon-q60` devnet (`-devnet=defcon-q60`)
+
+### Setup
+
+```bash
+git clone https://github.com/minuszka/devnet.deftrack.git
+cd devnet.deftrack
+npm install
+cp .env.example .env        # then fill in MongoDB and node RPC settings
+npm run dev                 # server on :4100, client on :5190 (Vite proxies /api)
+```
+
+`.env.example` documents every setting. Keep the node's RPC and ZMQ bound to localhost; the explorer
+is designed to run beside the node, or to reach it over an SSH tunnel.
+
+### Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Server and client in watch mode |
+| `npm run build` | Builds `shared`, then `server`, then `client` |
+| `npm run typecheck` | Type-checks all three workspaces |
+| `npm test` | Server and client unit tests (Vitest) |
+| `npm run test:integration` | Integration tests against a throwaway MongoDB (`MONGODB_TEST_URI`) |
+| `npm run verify:secrets` | The secret-scanning gate CI runs on every push |
 
 ## Documentation
 
-- [`docs/devnet-rollouts.md`](docs/devnet-rollouts.md) — what has been deployed to the devnet, and when
-- [`docs/MONGO_BACKUP_RUNBOOK.md`](docs/MONGO_BACKUP_RUNBOOK.md) — the nightly database backup
+- [`docs/devnet-rollouts.md`](docs/devnet-rollouts.md) — every binary rollout to the devnet, and what it changed
+- [`docs/MONGO_BACKUP_RUNBOOK.md`](docs/MONGO_BACKUP_RUNBOOK.md) — the nightly database backup and restore check
 - [`docs/NGINX_HEADERS_RUNBOOK.md`](docs/NGINX_HEADERS_RUNBOOK.md) — security headers on the served site
+- [`CLAUDE.md`](CLAUDE.md) — verified facts about the node the explorer relies on, with source references
+
+## Security
+
+This repository is public. Never commit `.env`, RPC credentials, API keys, private keys or non-public
+host addresses; CI runs a secret gate that fails on credentials and routable IPv4 addresses. If you find
+a security issue, please report it privately to the maintainer rather than opening a public issue.
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).
