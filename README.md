@@ -1,12 +1,11 @@
-# devnet.deftrack
+# A measurement explorer for the DeFCoN devnet
 
 [![CI](https://github.com/minuszka/devnet.deftrack/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/minuszka/devnet.deftrack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Live](https://img.shields.io/badge/live-devnet.deftrack.xyz-0a7ea4.svg)](https://devnet.deftrack.xyz)
 
-**A measurement explorer for the DeFCoN devnet (`defcon-q60`).**
+Built for the `defcon-q60` devnet.
 
-Most block explorers show what happened. devnet.deftrack also records what *should* have happened and
+Most block explorers show what happened. This one also records what *should* have happened and
 did not: every scheduled DKG round is reconstructed from the chain's own schedule, so a quorum that
 failed to form is a row in the record, not a silent gap. Masternode failures are attributed to
 operators, and every deliberate intervention on the network is logged with its hypothesis declared
@@ -61,9 +60,9 @@ Every API response uses the envelope `{ success, data }`; paged endpoints always
 
 ### Setup
 
+From a clone of this repository:
+
 ```bash
-git clone https://github.com/minuszka/devnet.deftrack.git
-cd devnet.deftrack
 npm install
 cp .env.example .env        # then fill in MongoDB and node RPC settings
 npm run dev                 # server on :4100, client on :5190 (Vite proxies /api)
