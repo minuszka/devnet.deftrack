@@ -498,7 +498,7 @@ test.describe('run status', () => {
   /**
    * Everything below was found by the final independent review (2026-09-13),
    * and each case failed on main before it was fixed. The review's own probes
-   * are in docs/review-2026-09-13; these are the gate's versions, and the order
+   * stayed with the review; these are the gate's versions, and the order
    * of the answers in them is stated with held responses rather than hoped for
    * with delays.
    */

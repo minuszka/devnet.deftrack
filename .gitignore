@@ -68,3 +68,10 @@ audit-scratch/
 
 # Playwright MCP session output (page snapshots taken while verifying a view).
 .playwright-mcp/
+
+# Working notes, reviews, audits and handovers stay on the workstation; only
+# the English operational docs listed below are published.
+/docs/*
+!/docs/devnet-rollouts.md
+!/docs/MONGO_BACKUP_RUNBOOK.md
+!/docs/NGINX_HEADERS_RUNBOOK.md

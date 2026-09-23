@@ -1154,7 +1154,7 @@ The explorer database is backed up nightly since 2026-09-14. `ops/mongo-backup.s
 `/usr/local/sbin/deftrack-mongo-backup`, with the `deftrack-mongo-backup.{service,timer}` units.
 It runs mongodump as the read-only user, checks the archive before pruning, and writes a `.sha256` and
 a manifest beside each archive. The procedure, restore check and rollback are in
-[`docs/MONGO_BACKUP_RUNBOOK_HU.md`](docs/MONGO_BACKUP_RUNBOOK_HU.md). The archives hold non-public host
+[`docs/MONGO_BACKUP_RUNBOOK.md`](docs/MONGO_BACKUP_RUNBOOK.md). The archives hold non-public host
 addresses, so every copy that leaves the VPS must stay private.
 
 **Measure an RPC client change against its mechanism, not only against the error count.** #181 closes pooled
