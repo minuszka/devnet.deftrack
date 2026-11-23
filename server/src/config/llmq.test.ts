@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CHAINLOCK_V2_ACTIVATION_HEIGHT,
   DEVNET_UNUSED_PROFILES_FORMATION_END,
+  DEVNET_V231_ACTIVATION_HEIGHT,
   DKG_BAD_VOTES_V2_ACTIVATION_HEIGHT,
   LLMQ_PROFILES,
   TRACKED_PROFILE_NAMES,
@@ -54,10 +55,32 @@ describe('llmq profile registry', () => {
     expect(LLMQ_PROFILES.llmq_60_75?.formationEndHeight).toBe(end);
     expect(end % 48).toBe(0);
     for (const p of Object.values(LLMQ_PROFILES)) {
-      if (p.llmqName !== 'llmq_50_60' && p.llmqName !== 'llmq_60_75') expect(p.formationEndHeight).toBeUndefined();
-      // a retired profile is one mainnet never forms
-      if (p.formationEndHeight !== undefined) expect(p.formsOnV23Mainnet).toBe(false);
+      // a profile retired at this height is one mainnet never forms
+      if (p.formationEndHeight === end) expect(p.formsOnV23Mainnet).toBe(false);
     }
+  });
+
+  it('retires llmq_400_60 and llmq_400_85 at the v23.1 activation height, on both grids', () => {
+    // The v23.1 bundle ends both types at its one height; a devnet takes that
+    // height from -v231activationheight, which must be a multiple of 576.
+    const end = DEVNET_V231_ACTIVATION_HEIGHT;
+    expect(LLMQ_PROFILES.llmq_400_60?.formationEndHeight).toBe(end);
+    expect(LLMQ_PROFILES.llmq_400_85?.formationEndHeight).toBe(end);
+    expect(end % 576).toBe(0);
+    expect(end % 72).toBe(0);
+    // v23 mainnet forms both until its own v23.1 height, so their rounds below
+    // the end stay mainnet-relevant.
+    expect(LLMQ_PROFILES.llmq_400_60?.formsOnV23Mainnet).toBe(true);
+    expect(LLMQ_PROFILES.llmq_400_85?.formsOnV23Mainnet).toBe(true);
+  });
+
+  it('gives no other profile a formation end, and never ends the Q60 profile', () => {
+    const retired = Object.values(LLMQ_PROFILES)
+      .filter((p) => p.formationEndHeight !== undefined)
+      .map((p) => p.llmqName)
+      .sort();
+    expect(retired).toEqual(['llmq_400_60', 'llmq_400_85', 'llmq_50_60', 'llmq_60_75']);
+    expect(LLMQ_PROFILES.llmq_defcon?.formationEndHeight).toBeUndefined();
   });
 
   it('knows every enabled type, including the one it does not track', () => {
