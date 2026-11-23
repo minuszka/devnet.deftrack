@@ -98,6 +98,17 @@ export interface LlmqProfile {
  */
 export const DEVNET_UNUSED_PROFILES_FORMATION_END = 13488;
 
+/**
+ * Where this devnet stops forming llmq_400_60 and llmq_400_85: its v23.1 activation
+ * height. The v23.1 bundle retires both types at the one height that also halves
+ * the masternode payment, and a devnet takes that height from the node option
+ * `-v231activationheight`, not from chainparams.cpp -- so this constant mirrors
+ * what the fleet's configuration carries (`getblockchaininfo` softforks.v231),
+ * and moves only together with it. A multiple of 576, which is on both grids
+ * (72 and 576). A cycle based below it still completes and is still mined.
+ */
+export const DEVNET_V231_ACTIVATION_HEIGHT = 53568;
+
 const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
   /**
    * The regtest lab's only quorum profile, and the reason it is in this registry
@@ -176,9 +187,11 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThreshold: 300,
     useRotation: false,
     signingActiveQuorumCount: 4,
+    // retired by the v23.1 bundle; on this devnet from the rehearsal height
+    formationEndHeight: DEVNET_V231_ACTIVATION_HEIGHT,
     formsOnV23Mainnet: true,
     mainnetNote:
-      'in the mainnet list and ungated, but needs 350 of 400 members; on this devnet every one of its rounds is impossible',
+      'in the v23 mainnet list and ungated, but needs 350 of 400 members; on this devnet every one of its rounds is impossible. The v23.1 bundle retires it at its activation height',
   },
   llmq_100_67: {
     llmqType: 4,
@@ -213,9 +226,11 @@ const BUILT_IN_PROFILES: Record<string, LlmqProfile> = {
     dkgBadVotesThresholdV2: 300,
     useRotation: false,
     signingActiveQuorumCount: 4,
+    // retired by the v23.1 bundle; on this devnet from the rehearsal height
+    formationEndHeight: DEVNET_V231_ACTIVATION_HEIGHT,
     formsOnV23Mainnet: true,
     mainnetNote:
-      "mainnet's ChainLock quorum today; v23 keeps it forming beside llmq_defcon (retiring it is deferred and needs its own gate)",
+      "mainnet's ChainLock quorum before v23; v23 keeps it forming beside llmq_defcon, and the v23.1 bundle retires it at its activation height",
   },
   llmq_defcon: {
     llmqType: 7,
