@@ -243,6 +243,14 @@ jobs:
       # systemd 255: a misspelt directive (`ProtectSystm=strict`) is printed as
       # "Unknown key name ..., ignoring" and verify still exits 0, so a unit that
       # silently lost its sandbox passed. All four units here verify silent.
+      #
+      # Lines about the runner image's own units are left out: verify loads the
+      # units ours depend on, and a newer systemd warns about the distribution's
+      # files too. Seen 2026-11-23, when the image moved on: "Support for option
+      # CPUAccounting= has been removed and it is ignored" for two xfs_scrub
+      # units under /usr/lib/systemd/system, which failed this step on a tree
+      # that had not changed. A line about one of our units names the checkout
+      # path or the unit itself, never that directory, so it is still caught.
       - name: Verify the systemd units
         run: |
           set -euo pipefail
@@ -253,10 +261,15 @@ jobs:
             ops/chaos/defcon-chaos-recover.timer \
             ops/systemd/deftrack-mongo-backup.service \
             ops/systemd/deftrack-mongo-backup.timer 2>&1) || { printf '%s\n' "$out"; exit 1; }
-          if [ -n "$out" ]; then
-            printf '%s\n' "$out"
+          ours=$(printf '%s\n' "$out" | grep -v -E '^/(usr/)?lib/systemd/system/' || true)
+          if [ -n "$ours" ]; then
+            printf '%s\n' "$ours"
             echo "systemd-analyze verify printed the above; a unit setting is being ignored or rejected"
             exit 1
+          fi
+          if [ -n "$out" ]; then
+            echo "left out, about the runner image's own units:"
+            printf '%s\n' "$out"
           fi
           echo "4 units verified, nothing ignored"
 
