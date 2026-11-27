@@ -8,9 +8,9 @@ import { MasternodeSnapshot } from '../models/MasternodeSnapshot.js';
 import {
   absenceIsEvidence,
   classifyRound,
-  currentRoundHeight,
   expectedRoundHeights,
   isSchedulable,
+  observationFloor,
   retiredObservationHeight,
   roundKeyFor,
 } from '../domain/dkgSchedule.js';
@@ -150,8 +150,7 @@ export class QuorumRoundService {
   private async planProfile(p: LlmqProfile, tip: number): Promise<RoundPlan> {
     // Rounds still open plus every round the observation window can still
     // speak about. Anything older is already resolved and immutable.
-    const windowSpan = p.dkgInterval * p.signingActiveQuorumCount;
-    const oldest = Math.max(0, currentRoundHeight(tip, p.dkgInterval) - windowSpan);
+    const oldest = observationFloor(tip, p.dkgInterval, p.signingActiveQuorumCount);
 
     // A pending row at or above a retired profile's end can only be a placeholder
     // written before the end was known to this deployment: no session starts

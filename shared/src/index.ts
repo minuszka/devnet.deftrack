@@ -594,6 +594,16 @@ export interface DslEpochOutcome {
   convergenceRate: number | null;
 }
 
+/** One piece of scheduled evidence that no collector will ever write. */
+export interface UnobservedObservation {
+  kind: 'quorum-round' | 'sentinel-epoch';
+  /** The round's base height, or the epoch's boundary height. */
+  height: number;
+  /** Rounds only. */
+  roundKey?: string;
+  reason: 'missing' | 'undecided' | 'member-details' | 'missed-count';
+}
+
 export interface ExperimentOutcome {
   rounds: { formed: number; failed: number; pending: number; impossible: number };
   formationRate: number | null;
@@ -635,6 +645,12 @@ export interface ExperimentOutcome {
    * still on record; null only when that was not possible.
    */
   mainnetRelevant?: MainnetRelevantOutcome | null;
+  /**
+   * Evidence the collectors could no longer write when the run was closed,
+   * published on the operator's word. Empty: the close verified a complete
+   * window. Absent on runs closed before coverage was checked.
+   */
+  unobserved?: UnobservedObservation[];
 }
 
 export interface ExperimentRow {

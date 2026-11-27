@@ -29,7 +29,11 @@ import type {
 export async function computeOutcome(
   run: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>,
   tipHeight: number,
-  closeSchedule?: { activationHeight: number; epochInterval: number }
+  close?: {
+    dsl: { activationHeight: number; epochInterval: number };
+    nodeTip: number;
+    acceptUnobserved: boolean;
+  }
 ): Promise<ExperimentOutcome> {
   const from = run.startHeight;
   const to = run.endHeight ?? tipHeight;
@@ -52,7 +56,12 @@ export async function computeOutcome(
     ServiceEpoch.find({ boundaryHeight: heightRange }).select('boundaryHeight status missedCount').lean(),
   ]);
 
-  if (closeSchedule) assertScheduledObservations(from, to, closeSchedule, epochs, rounds);
+  const unobserved = close
+    ? assertScheduledObservations(from, to, close.dsl, epochs, rounds, {
+        nodeTip: close.nodeTip,
+        acceptUnobserved: close.acceptUnobserved,
+      })
+    : undefined;
 
   // Per profile first: the schedules are interleaved, so a streak or a median
   // taken across all of them at once describes no quorum type that exists.
@@ -137,6 +146,9 @@ export async function computeOutcome(
     // carried, the frozen outcome of such a run held every number except
     // that one.
     dsl: dslOutcome(epochs),
+
+    // Only a close checks coverage; a live outcome leaves the field out.
+    ...(unobserved ? { unobserved } : {}),
   };
 }
 
