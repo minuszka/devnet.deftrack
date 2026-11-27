@@ -134,6 +134,24 @@ export interface ExperimentOutcome {
 
   /** Absent on outcomes frozen before it was carried; the read path fills it in. */
   mainnetRelevant?: MainnetRelevantOutcome | null;
+
+  /**
+   * Set at close: the evidence the collectors could no longer write when the
+   * window was frozen, published only because the operator accepted it by name.
+   * Empty means the close verified a complete window. Absent on outcomes frozen
+   * before the close checked coverage.
+   */
+  unobserved?: UnobservedObservation[];
+}
+
+/** One piece of scheduled evidence that no collector will ever write. */
+export interface UnobservedObservation {
+  kind: 'quorum-round' | 'sentinel-epoch';
+  /** The round's base height, or the epoch's boundary height. */
+  height: number;
+  /** Rounds only. */
+  roundKey?: string;
+  reason: 'missing' | 'undecided' | 'member-details' | 'missed-count';
 }
 
 export interface ExperimentRunDocument extends Document {
@@ -276,6 +294,23 @@ const outcomeSchema = new Schema<ExperimentOutcome>(
             worstHealthRatio: { type: Number, default: null },
             longestFailureStreak: { type: Number, default: 0 },
             membersPunished: { type: Number, default: 0 },
+          },
+          { _id: false }
+        ),
+      ],
+      default: undefined,
+    },
+
+    // Left undefined by default: an outcome frozen before the close checked
+    // coverage said nothing about it, and an empty list would claim it did.
+    unobserved: {
+      type: [
+        new Schema<UnobservedObservation>(
+          {
+            kind: { type: String, enum: ['quorum-round', 'sentinel-epoch'], required: true },
+            height: { type: Number, required: true },
+            roundKey: { type: String },
+            reason: { type: String, enum: ['missing', 'undecided', 'member-details', 'missed-count'], required: true },
           },
           { _id: false }
         ),

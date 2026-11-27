@@ -23,6 +23,19 @@ export function currentRoundHeight(tip: number, dkgInterval: number, quorumIndex
   return tip - (tip % dkgInterval) + quorumIndex;
 }
 
+/**
+ * The lowest round height the collector still plans at `tip`.
+ *
+ * `quorum listextended` reports `signingActiveQuorumCount` quorums per type,
+ * so a round further back than that many intervals has left the RPC's reach.
+ * The collector neither creates nor refreshes a non-pending row below this
+ * height, and a close uses the same arithmetic to tell evidence that is late
+ * from evidence that will never come.
+ */
+export function observationFloor(tip: number, dkgInterval: number, signingActiveQuorumCount: number): number {
+  return Math.max(0, currentRoundHeight(tip, dkgInterval) - dkgInterval * signingActiveQuorumCount);
+}
+
 /** Every round height due at or below `tip`, oldest first. */
 export function expectedRoundHeights(tip: number, dkgInterval: number): number[] {
   const heights: number[] = [];

@@ -5,6 +5,7 @@ import {
   currentRoundHeight,
   expectedRoundHeights,
   isSchedulable,
+  observationFloor,
   resolvedByHeight,
   retiredObservationHeight,
   roundKeyFor,
@@ -172,5 +173,18 @@ describe('formation end', () => {
     ] as const) {
       expect(end - interval + windowEnd).toBeLessThanOrEqual(end - 2);
     }
+  });
+});
+
+describe('observation floor', () => {
+  it('reaches back as many intervals as listextended reports quorums', () => {
+    // llmq_defcon at the tip of 2026-11-27: round 55656 in progress, four active quorums.
+    expect(observationFloor(55658, 24, 4)).toBe(55560);
+    // llmq_400_60: 55656 - 4 * 72.
+    expect(observationFloor(55658, 72, 4)).toBe(55368);
+  });
+
+  it('never goes below genesis', () => {
+    expect(observationFloor(30, 24, 4)).toBe(0);
   });
 });

@@ -27,7 +27,8 @@ describe.skipIf(!HAVE_MONGO)('freezing and withdrawing a published experiment', 
   let url: string;
   let rpc: typeof import('../services/rpc.service.js').rpc;
   const headers = { 'x-admin-api-key': 'integration-only', 'content-type': 'application/json' };
-  const close = (height = end) => fetch(url + '/close', { method: 'POST', headers, body: JSON.stringify({ endHeight: height }) });
+  const close = (height = end, extra: Record<string, unknown> = {}) =>
+    fetch(url + '/close', { method: 'POST', headers, body: JSON.stringify({ endHeight: height, ...extra }) });
   const withdraw = () => fetch(url, { method: 'DELETE', headers });
 
   beforeAll(async () => {
@@ -85,8 +86,47 @@ describe.skipIf(!HAVE_MONGO)('freezing and withdrawing a published experiment', 
     await ServiceEpoch.updateOne({ boundaryHeight: 110 }, { missedCount: 0 });
     expect((await close()).status).toBe(200);
     expect(await ExperimentRun.findOne({ runKey: 'test' }).lean()).toMatchObject({
-      status: 'closed', endHeight: end, outcome: { blocks: 11, dsl: { epochs: 3, committed: 2, absent: 1 } },
+      status: 'closed', endHeight: end, outcome: { blocks: 11, dsl: { epochs: 3, committed: 2, absent: 1 }, unobserved: [] },
     });
+  });
+
+  it('publishes a window with evidence no collector can write any more only on the operator word', async () => {
+    // At tip 168 llmq_50_60 (two active quorums) plans nothing below 168 - 48 = 120,
+    // so the round at 96 can never be written.
+    vi.mocked(rpc.getBlockCount).mockResolvedValue(168);
+    await ExperimentRun.updateOne({ runKey: 'test' }, { startHeight: 96 });
+    await Block.insertMany([96, 97, 98, 99].map((height) => blockRow(height)));
+    try {
+      const refused = await close(100);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toMatchObject({
+        error: expect.stringMatching(/can no longer be collected: Missing quorum round 1:96:0\b.*acceptUnobserved true/),
+      });
+      expect(await ExperimentRun.findOne().lean()).toMatchObject({ status: 'running', outcome: null });
+      const accepted = await close(100, { acceptUnobserved: true });
+      expect(accepted.status).toBe(200);
+      expect(await ExperimentRun.findOne().lean()).toMatchObject({
+        status: 'closed', endHeight: 100,
+        outcome: { unobserved: [{ kind: 'quorum-round', height: 96, roundKey: '1:96:0', reason: 'missing' }] },
+      });
+    } finally {
+      await Block.deleteMany({ height: { $lt: start } });
+    }
+  });
+
+  it('never lets the operator waive evidence that is still on its way', async () => {
+    await ExperimentRun.updateOne({ runKey: 'test' }, { startHeight: 96 });
+    await Block.insertMany([96, 97, 98, 99].map((height) => blockRow(height)));
+    try {
+      const reply = await close(100, { acceptUnobserved: true });
+      expect(reply.status).toBe(409);
+      expect(await reply.json()).toMatchObject({
+        error: expect.stringMatching(/^Missing quorum round 1:96:0\. Retry with endHeight 100/),
+      });
+      expect(await ExperimentRun.findOne().lean()).toMatchObject({ status: 'running', outcome: null });
+    } finally {
+      await Block.deleteMany({ height: { $lt: start } });
+    }
   });
 
   it('requires a scheduled round, accepts a genuinely pending one and waits for missing member details', async () => {

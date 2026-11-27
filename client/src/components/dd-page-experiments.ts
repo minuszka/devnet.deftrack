@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import type { ExperimentDetail, ExperimentOutcome, ExperimentRow } from '../lib/api.js';
+import type { ExperimentDetail, ExperimentOutcome, ExperimentRow, UnobservedObservation } from '../lib/api.js';
 import { errorMessage, isAbortError } from '../lib/errors.js';
 import { PollController, type PollRun } from '../lib/poll.js';
 import { QueryStateController, pageToOffset, type ParamSpec } from '../lib/queryState.js';
@@ -349,6 +349,23 @@ export class DdPageExperiments extends LitElement {
     return 'No experiment recorded yet. Open one through the admin API before changing anything on the network.';
   }
 
+  /** A closed window the operator published with gaps no collector could fill. */
+  private _unobservedNote(gaps: UnobservedObservation[]): TemplateResult {
+    const label = (u: UnobservedObservation): string => {
+      if (u.kind === 'sentinel-epoch') {
+        return `Sentinel epoch ${num(u.height)} (${u.reason === 'missing' ? 'not recorded' : 'missed count unknown'})`;
+      }
+      const why = u.reason === 'missing' ? 'not recorded' : u.reason === 'undecided' ? 'never decided' : 'members unknown';
+      return `quorum round ${u.roundKey ?? num(u.height)} (${why})`;
+    };
+    const shown = gaps.slice(0, 3).map(label).join(', ');
+    const more = gaps.length > 3 ? ` and ${num(gaps.length - 3)} more` : '';
+    return html`<div class="note" role="note">
+      Closed with ${num(gaps.length)} observation${gaps.length === 1 ? '' : 's'} the collectors could no longer
+      gather: ${shown}${more}. The figures below cannot include what they would have shown.
+    </div>`;
+  }
+
   private _detailView(): TemplateResult {
     const d = this._detail;
     if (!d) return html`<div class="note">Loading…</div>`;
@@ -361,6 +378,7 @@ export class DdPageExperiments extends LitElement {
           ? 'Waiting for indexed observations in this experiment window.'
           : `Observations through block ${num(d.observedThroughHeight)}.`}
       </div>` : nothing}
+      ${o?.unobserved?.length ? this._unobservedNote(o.unobserved) : nothing}
       ${o
         ? html`
             <section class="tiles">

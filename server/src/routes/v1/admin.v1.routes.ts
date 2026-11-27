@@ -9,7 +9,7 @@ import { asyncRoute, sendData, sendError } from '../../utils/http.js';
 import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
 import { ExperimentRun } from '../../models/ExperimentRun.js';
 import { Transaction } from '../../models/Transaction.js';
-import { IncompleteExperimentWindow } from '../../domain/experimentCoverage.js';
+import { IncompleteExperimentWindow, UnobservableExperimentWindow } from '../../domain/experimentCoverage.js';
 import { outcomeForClose } from '../../services/experimentClose.service.js';
 import { currentParticipants } from '../../services/experiment.service.js';
 import { chainlockProfileAtHeight } from '../../config/llmq.js';
@@ -276,8 +276,17 @@ router.patch(
  * Bounded at both ends: never before the run started, never past the tip. A
  * window that runs backwards or into unmined chain would produce an outcome
  * over blocks that do not exist.
+ *
+ * A window missing evidence that is still on its way stays open. A window
+ * missing evidence that no collector can write any more -- a round that left
+ * the RPC's reach undecided, say -- would stay open for ever, so it closes
+ * only with `acceptUnobserved: true`, and the outcome lists every gap. The
+ * flag never waives evidence that can still arrive.
  */
-const closeSchema = z.object({ endHeight: z.coerce.number().int().min(0).optional() });
+const closeSchema = z.object({
+  endHeight: z.coerce.number().int().min(0).optional(),
+  acceptUnobserved: z.boolean().optional(),
+});
 
 router.post(
   '/experiments/:runKey/close',
@@ -311,8 +320,17 @@ router.post(
 
     let outcome;
     try {
-      outcome = await outcomeForClose(run.startHeight, endHeight);
+      outcome = await outcomeForClose(run.startHeight, endHeight, tip, parsed.data.acceptUnobserved === true);
     } catch (error) {
+      if (error instanceof UnobservableExperimentWindow) {
+        sendError(
+          res,
+          409,
+          `${error.message}. Waiting will not fill these. Close again with endHeight ${endHeight} and ` +
+            'acceptUnobserved true to publish the window with each gap listed, or choose an earlier endHeight.'
+        );
+        return;
+      }
       if (!(error instanceof IncompleteExperimentWindow)) throw error;
       sendError(res, 409, `${error.message}. Retry with endHeight ${endHeight} to keep the same window.`);
       return;
