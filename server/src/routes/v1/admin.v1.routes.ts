@@ -9,7 +9,9 @@ import { asyncRoute, sendData, sendError } from '../../utils/http.js';
 import { OperatorIndex, hostOf } from '../../domain/operatorIndex.js';
 import { ExperimentRun } from '../../models/ExperimentRun.js';
 import { Transaction } from '../../models/Transaction.js';
-import { computeOutcome, currentParticipants } from '../../services/experiment.service.js';
+import { IncompleteExperimentWindow } from '../../domain/experimentCoverage.js';
+import { outcomeForClose } from '../../services/experimentClose.service.js';
+import { currentParticipants } from '../../services/experiment.service.js';
 import { chainlockProfileAtHeight } from '../../config/llmq.js';
 import { rpc } from '../../services/rpc.service.js';
 import { RewindRefusedError, syncService } from '../../services/sync.service.js';
@@ -297,27 +299,35 @@ router.post(
     }
 
     const tip = await rpc.getBlockCount();
-    const requested = parsed.data.endHeight;
-    if (requested !== undefined) {
-      if (requested < run.startHeight) {
-        sendError(res, 400, `endHeight ${requested} is below startHeight ${run.startHeight}`);
-        return;
-      }
-      if (requested > tip) {
-        sendError(res, 400, `endHeight ${requested} is above the tip ${tip}`);
-        return;
-      }
+    const endHeight = parsed.data.endHeight ?? tip;
+    if (endHeight < run.startHeight) {
+      sendError(res, 400, `endHeight ${endHeight} is below startHeight ${run.startHeight}`);
+      return;
+    }
+    if (endHeight > tip) {
+      sendError(res, 400, `endHeight ${endHeight} is above the tip ${tip}`);
+      return;
     }
 
-    run.endHeight = requested ?? tip;
-    run.endedAt = new Date();
-    // Snapshotted so a published result stays quotable -- not so it becomes the
-    // only copy. Everything here is recomputable from the rounds and events.
-    run.outcome = await computeOutcome(run, tip);
-    run.status = 'closed';
-    await run.save();
+    let outcome;
+    try {
+      outcome = await outcomeForClose(run.startHeight, endHeight);
+    } catch (error) {
+      if (!(error instanceof IncompleteExperimentWindow)) throw error;
+      sendError(res, 409, `${error.message}. Retry with endHeight ${endHeight} to keep the same window.`);
+      return;
+    }
 
-    sendData(res, { runKey: run.runKey, endHeight: run.endHeight, outcome: run.outcome });
+    const closed = await ExperimentRun.updateOne(
+      { _id: run._id, status: 'running', outcome: null },
+      { $set: { status: 'closed', endedAt: new Date(), endHeight, outcome } },
+      { runValidators: true }
+    );
+    if (closed.modifiedCount !== 1) {
+      sendError(res, 409, 'experiment was closed or withdrawn during close');
+      return;
+    }
+    sendData(res, { runKey: run.runKey, endHeight, outcome });
   })
 );
 
@@ -344,7 +354,11 @@ router.delete(
       sendError(res, 409, 'a closed experiment is a published result; it cannot be withdrawn');
       return;
     }
-    await ExperimentRun.deleteOne({ _id: run._id });
+    const withdrawn = await ExperimentRun.deleteOne({ _id: run._id, status: 'running', outcome: null });
+    if (withdrawn.deletedCount !== 1) {
+      sendError(res, 409, 'experiment was closed or withdrawn during withdrawal');
+      return;
+    }
     sendData(res, { withdrawn: run.runKey });
   })
 );

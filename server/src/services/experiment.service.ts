@@ -1,5 +1,6 @@
 import { QuorumRound } from '../models/QuorumRound.js';
 import { MasternodeEvent } from '../models/MasternodeEvent.js';
+import { assertScheduledObservations } from '../domain/experimentCoverage.js';
 import { Block } from '../models/Block.js';
 import { Transaction } from '../models/Transaction.js';
 import { stakingHealth, type BlockSample } from '../domain/stakingHealth.js';
@@ -27,7 +28,8 @@ import type {
  */
 export async function computeOutcome(
   run: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>,
-  tipHeight: number
+  tipHeight: number,
+  closeSchedule?: { activationHeight: number; epochInterval: number }
 ): Promise<ExperimentOutcome> {
   const from = run.startHeight;
   const to = run.endHeight ?? tipHeight;
@@ -39,7 +41,7 @@ export async function computeOutcome(
     // three of another type had already decided inside its window.
     QuorumRound.find({ expectedHeight: heightRange })
       .sort({ expectedHeight: 1 })
-      .select('llmqName dkgInterval status healthRatio invalidMembers')
+      .select('roundKey detailsComplete llmqName dkgInterval status healthRatio invalidMembers')
       .lean(),
     MasternodeEvent.find({ height: heightRange }).select('type proTxHash').lean(),
     Block.find({ height: heightRange, isProofOfStake: true }).select('height time').lean(),
@@ -47,8 +49,10 @@ export async function computeOutcome(
     Block.countDocuments({ height: heightRange, hasChainLock: true }),
     // Sentinel epochs are keyed by their boundary block, so "inside the
     // window" means the boundary is; an epoch is judged as a whole.
-    ServiceEpoch.find({ boundaryHeight: heightRange }).select('status missedCount').lean(),
+    ServiceEpoch.find({ boundaryHeight: heightRange }).select('boundaryHeight status missedCount').lean(),
   ]);
+
+  if (closeSchedule) assertScheduledObservations(from, to, closeSchedule, epochs, rounds);
 
   // Per profile first: the schedules are interleaved, so a streak or a median
   // taken across all of them at once describes no quorum type that exists.
