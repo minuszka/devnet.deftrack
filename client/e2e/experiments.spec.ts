@@ -1,6 +1,7 @@
 import { expect, fail, ok, test, type ApiStubs } from './harness.js';
 import { experimentRow, pageOf } from './fixtures/api.js';
 import { shellStubs } from './fixtures/stubs.js';
+import type { ExperimentOutcome } from '@devnet-deftrack/shared';
 
 /**
  * F04: the experiment list showed 25 of 34 and called it the record.
@@ -170,5 +171,55 @@ test.describe('experiment list', () => {
     // The second answer has not arrived yet; the first must already be gone.
     await expect(page.locator('main')).not.toContainText('The first run');
     await expect(page.locator('main')).toContainText('The second run');
+  });
+});
+
+/**
+ * A close can publish a window whose evidence no collector will ever write, but
+ * only on the operator's word, and the outcome names each gap. The page has to
+ * say so above the figures, or they read as complete.
+ */
+test.describe('a run closed with gaps no collector could fill', () => {
+  const outcome: ExperimentOutcome = {
+    rounds: { formed: 30, failed: 0, pending: 1, impossible: 0 },
+    formationRate: 1,
+    medianHealthRatio: 0.98,
+    worstHealthRatio: 0.9,
+    longestFailureStreak: 0,
+    banEvents: 0,
+    revivalEvents: 0,
+    penaltyIncreases: 0,
+    masternodesPunished: 0,
+    blocks: 2401,
+    medianBlockIntervalSec: 104,
+    distinctStakers: 9,
+    chainLockedBlocks: 2401,
+    chainLockCoverage: 1,
+  };
+
+  function detailStub(runKey: string, unobserved: ExperimentOutcome['unobserved']): ApiStubs {
+    const run = experimentRow({ runKey, title: 'Run with a stuck round', outcome: { ...outcome, unobserved } });
+    return { ...experimentStubs(), [`/api/v1/experiments/${runKey}`]: { body: ok({ ...run, members: [] }) } };
+  }
+
+  test('names the gaps above the figures', async ({ app, page }) => {
+    app.stub(
+      detailStub('fixture-gaps', [
+        { kind: 'sentinel-epoch', height: 14016, reason: 'missing' },
+        { kind: 'quorum-round', height: 14400, roundKey: '2:14400:0', reason: 'undecided' },
+      ])
+    );
+    await app.goto('/experiments/fixture-gaps');
+    const note = page.getByRole('note');
+    await expect(note).toContainText('Closed with 2 observations the collectors could no longer gather');
+    await expect(note).toContainText('Sentinel epoch 14,016 (not recorded)');
+    await expect(note).toContainText('quorum round 2:14400:0 (never decided)');
+  });
+
+  test('says nothing when the close verified a complete window', async ({ app, page }) => {
+    app.stub(detailStub('fixture-complete', []));
+    await app.goto('/experiments/fixture-complete');
+    await expect(page.locator('main')).toContainText('Run with a stuck round');
+    await expect(page.getByRole('note')).toHaveCount(0);
   });
 });
