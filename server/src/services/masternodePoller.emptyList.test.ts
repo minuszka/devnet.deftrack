@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../config.js', () => ({
-  config: { masternode: { intervalMs: 60_000 } },
+  config: { masternode: { intervalMs: 60_000, expectedFleet: new Set() } },
 }));
 vi.mock('../utils/logger.js', () => ({ logger: state.logs }));
 vi.mock('./rpc.service.js', () => ({

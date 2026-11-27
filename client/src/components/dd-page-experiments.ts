@@ -355,6 +355,12 @@ export class DdPageExperiments extends LitElement {
     const o = d.outcome;
 
     return html`
+      ${d.status === 'running' && d.observedThroughHeight !== undefined ? html`<div class="note" role="status">
+        ${d.tipHeight === null ? 'Node tip unavailable.' : `Node tip ${num(d.tipHeight)}.`}
+        ${d.observedThroughHeight == null
+          ? 'Waiting for indexed observations in this experiment window.'
+          : `Observations through block ${num(d.observedThroughHeight)}.`}
+      </div>` : nothing}
       ${o
         ? html`
             <section class="tiles">
@@ -628,12 +634,12 @@ export class DdPageExperiments extends LitElement {
             </dd>
             ${d.currentParticipants
               ? html`
-                  <dt>Right now</dt>
+                  <dt>Latest participants</dt>
                   <dd class="mono">
                     ${num(d.currentParticipants.masternodes)} masternodes on
                     ${num(d.currentParticipants.hosts)} hosts ·
                     ${num(d.currentParticipants.stakers)} staker(s)
-                    <span class="muted">height ${num(d.tipHeight)}</span>
+                    <span class="muted">height ${num(d.observedThroughHeight ?? d.tipHeight)}</span>
                   </dd>
                 `
               : nothing}

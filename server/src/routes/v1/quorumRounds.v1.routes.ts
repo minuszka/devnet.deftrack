@@ -222,7 +222,7 @@ router.get(
         .sort({ expectedHeight: -1 })
         .skip(q.offset)
         .limit(q.limit)
-        .select(`${ROUND_BASE_FIELDS} invalidMembers members`)
+        .select(`${ROUND_BASE_FIELDS} invalidMembers members detailsComplete`)
         .lean(),
       QuorumRound.countDocuments(filter),
     ]);
@@ -230,6 +230,7 @@ router.get(
     const [predecessors, runs] = await Promise.all([predecessorsFor(rounds), interventionRunsFor(rounds)]);
     const items: QuorumRoundListItem[] = rounds.map((r) => ({
       ...baseView(r, churnView(r, predecessors), interventionsCovering(r, runs)),
+      memberDetailsComplete: r.detailsComplete === true && r.members.length > 0,
       invalidMemberCount: r.invalidMembers.length,
       failuresByOperator: failuresByOperator(r),
     }));

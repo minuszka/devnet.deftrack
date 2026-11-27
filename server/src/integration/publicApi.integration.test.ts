@@ -204,6 +204,17 @@ describe.skipIf(!HAVE_MONGO)('no public endpoint publishes a host address', () =
     expect(containsHostAddress(row)).toBe(true);
   });
 
+  it('carries the member detail flag from the collector through the round list', async () => {
+    const { QuorumRound } = await import('../models/QuorumRound.js');
+    const roundKey = '7:8256:0';
+    for (const complete of [false, true]) {
+      await QuorumRound.updateOne({ roundKey }, { detailsComplete: complete });
+      const response = await fetch(`${base}/api/v1/quorum-rounds`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { items: [{ roundKey, memberDetailsComplete: complete }] } });
+    }
+  });
+
   for (const probe of PROBES) {
     it(`answers ${probe.path} without an address`, async () => {
       const response = await fetch(`${base}${probe.path}`);

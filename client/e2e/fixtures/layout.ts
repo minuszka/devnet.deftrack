@@ -182,7 +182,7 @@ function experimentDetail(): ExperimentDetail {
   return {
     ...experimentRow({ runKey: LONG_RUN_KEY, title: `A run whose title quotes ${LONG_TOKEN}`, status: 'running', endedAt: null, endHeight: null }),
     currentParticipants: { masternodes: 152, hosts: 16, stakers: 9 },
-    tipHeight: TIP_HEIGHT,
+    tipHeight: TIP_HEIGHT, observedThroughHeight: TIP_HEIGHT,
     comparison: null,
   };
 }

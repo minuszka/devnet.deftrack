@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { expectedFleet } from './domain/fleetRoster.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -218,6 +219,7 @@ export const config = {
   },
 
   masternode: {
+    expectedFleet: expectedFleet(process.env.MN_EXPECTED_PROTX_HASHES ?? ''),
     // PoSe penalty decays one per block (~150 s here), so a minute of
     // resolution captures every transition without missing a step.
     intervalMs: optionalNumber('MN_POLL_INTERVAL_MS', 60_000),

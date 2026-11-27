@@ -145,6 +145,7 @@ export interface MembershipChurnView {
 
 /** List rows omit the member array; it is only worth sending for one round. */
 export type QuorumRoundListItem = Omit<QuorumRoundView, 'invalidMembers'> & {
+  memberDetailsComplete: boolean;
   invalidMemberCount: number;
   /** "op-koen (2), op-marsellus (6)" -- who the invalid members belonged to. */
   failuresByOperator: Array<{ operatorLabel: string | null; count: number }>;
@@ -254,6 +255,9 @@ export interface MasternodeVersions {
 }
 
 export interface MasternodeTimelinePoint {
+  /** Null on snapshots without a configured roster. */
+  expectedEnabled?: number | null;
+  missingExpected?: number | null;
   at: string;
   height: number;
   total: number;
@@ -663,7 +667,9 @@ export interface ExperimentRow {
 export interface ExperimentDetail extends ExperimentRow {
   /** The network as it stands now; null once the run is closed. */
   currentParticipants: { masternodes: number; hosts: number; stakers: number } | null;
-  tipHeight: number;
+  /** Current node RPC height; null when the node could not be reached. */
+  tipHeight: number | null;
+  observedThroughHeight: number | null;
   comparison: {
     baselineRunKey: string;
     baseline: ExperimentOutcome;

@@ -78,6 +78,7 @@ describe.skipIf(!HAVE_MONGO)('the masternode poller, against a real MongoDB', ()
   let llmq: typeof import('../config/llmq.js');
 
   beforeAll(async () => {
+    vi.stubEnv('MN_EXPECTED_PROTX_HASHES', [MN_A, MN_B].join(','));
     const dbName = await connectTestMongo('mnpoller');
     process.env.MONGODB_URI = `mongodb://127.0.0.1:27017/${dbName}`;
 
@@ -95,6 +96,7 @@ describe.skipIf(!HAVE_MONGO)('the masternode poller, against a real MongoDB', ()
 
   afterAll(async () => {
     await dropTestMongo();
+    vi.unstubAllEnvs();
   });
 
   const eventKeys = async (): Promise<string[]> =>
@@ -246,6 +248,21 @@ describe.skipIf(!HAVE_MONGO)('the masternode poller, against a real MongoDB', ()
     expect(await MasternodeEvent.countDocuments()).toBe(4);
     expect(await MasternodeState.countDocuments()).toBe(4);
   });
+  it('captures a required member loss masked by an unplanned recovery at the same total', async () => {
+    rpcState.height = 110;
+    rpcState.list = [entry(MN_A, '10.0.0.1'), entry(MN_B, '10.0.0.2'), entry(MN_C, '10.0.0.3', { PoSeBanHeight: 90 })];
+    await service.collect();
+    expect(await MasternodeSnapshot.findOne({ height: 110 }).lean()).toMatchObject({
+      enabled: 2, banned: 1, expectedEnabled: 2, missingExpected: 0,
+    });
+    rpcState.height++;
+    rpcState.list = [entry(MN_A, '10.0.0.1'), entry(MN_B, '10.0.0.2', { PoSeBanHeight: 111 }), entry(MN_C, '10.0.0.3')];
+    await service.collect();
+    expect(await MasternodeSnapshot.findOne({ height: 111 }).lean()).toMatchObject({
+      enabled: 2, banned: 1, expectedEnabled: 2, missingExpected: 1,
+    });
+  });
+
 });
 
 describe.skipIf(HAVE_MONGO)('the masternode poller, against a real MongoDB', () => {

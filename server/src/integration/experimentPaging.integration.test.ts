@@ -1,5 +1,5 @@
 import type { Server } from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { connectTestMongo, dropTestMongo, HAVE_MONGO, MONGO_URI, syncIndexes } from './mongo.js';
 
 /**
@@ -82,6 +82,30 @@ describe.skipIf(!HAVE_MONGO)('the experiment list pages completely', () => {
   afterAll(async () => {
     await new Promise((resolve) => server?.close(resolve));
     await dropTestMongo();
+  });
+
+  it('reports indexed history across a tip RPC outage and recovery', async () => {
+    const { rpc } = await import('../services/rpc.service.js');
+    const { SyncState } = await import('../models/SyncState.js');
+    const { Block } = await import('../models/Block.js');
+    const { blockRow } = await import('./fixtures.js');
+    const detail = async () => {
+      const response = await fetch(`${base}/api/v1/experiments/paging-run-001`);
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const tip = vi.spyOn(rpc, 'getBlockCount').mockRejectedValue(new Error('offline'));
+    try {
+      expect(await detail()).toMatchObject({ data: { tipHeight: null, observedThroughHeight: null, outcome: null } });
+      await Block.insertMany([10001, 10002, 10003].map((height) => blockRow(height)));
+      await SyncState.create({ key: 'blocks', lastSyncedHeight: 10002 });
+      expect(await detail()).toMatchObject({ data: { tipHeight: null, observedThroughHeight: 10002, outcome: { blocks: 2 } } });
+      tip.mockResolvedValue(10004);
+      await SyncState.updateOne({ key: 'blocks' }, { lastSyncedHeight: 10003 });
+      expect(await detail()).toMatchObject({ data: { tipHeight: 10004, observedThroughHeight: 10003, outcome: { blocks: 3 } } });
+    } finally {
+      tip.mockRestore();
+    }
   });
 
   interface ListBody {
