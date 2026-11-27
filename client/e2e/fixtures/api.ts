@@ -154,6 +154,7 @@ export function roundListItem(overrides: Partial<QuorumRoundListItem> = {}): Quo
       punishmentExplainedByJoiners: false,
     },
     invalidMemberCount: 1,
+    memberDetailsComplete: true,
     failuresByOperator: [{ operatorLabel: 'op-fixture-1', count: 1 }],
     detectedAt: FIXED_NOW_ISO,
     ...overrides,

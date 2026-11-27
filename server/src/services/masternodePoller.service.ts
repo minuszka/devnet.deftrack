@@ -125,6 +125,7 @@ export class MasternodePollerService {
     const eventOps: Parameters<typeof MasternodeEvent.bulkWrite>[0] = [];
     const now = new Date();
 
+    const missing = new Set(config.masternode.expectedFleet);
     let enabled = 0;
     let banned = 0;
     let penaltySum = 0;
@@ -146,7 +147,10 @@ export class MasternodePollerService {
       const operatorLabel = operators.resolve(entry.proTxHash, hostIp);
 
       if (isBanned) banned++;
-      else enabled++;
+      else {
+        enabled++;
+        missing.delete(entry.proTxHash.toLowerCase());
+      }
       penaltySum += penalty;
       penaltyMax = Math.max(penaltyMax, penalty);
       if (penalty > 0) penalised++;
@@ -287,7 +291,7 @@ export class MasternodePollerService {
     // effective quorum size must come from the profile actually signing.
     const profile = chainlockProfileAtHeight(height);
     const effectiveQuorumSize = Math.min(profile.size, enabled);
-    const counts = `${list.length}|${enabled}|${banned}|${penaltySum}|${penaltyMax}`;
+    const counts = `${list.length}|${enabled}|${banned}|${penaltySum}|${penaltyMax}|${missing.size}`;
     const changed = counts !== this.lastCounts;
 
     if (changed || Date.now() - this.lastSnapshotAt >= HEARTBEAT_MS) {
@@ -300,6 +304,8 @@ export class MasternodePollerService {
         penaltySum,
         penaltyMax,
         penalised,
+        expectedEnabled: config.masternode.expectedFleet.size || null,
+        missingExpected: config.masternode.expectedFleet.size ? missing.size : null,
         effectiveQuorumSize,
         maxPossibleBan: maxPossibleBan(effectiveQuorumSize, profile.minSize),
       });

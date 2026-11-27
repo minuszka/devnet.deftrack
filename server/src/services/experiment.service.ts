@@ -198,7 +198,7 @@ export async function currentParticipants(tipHeight: number): Promise<Participan
     HostStatus.find().select('host stakeScripts').lean(),
     Transaction.distinct('vout.scriptHex', {
       isCoinstake: true,
-      height: { $gt: tipHeight - STAKER_WINDOW },
+      height: { $gt: tipHeight - STAKER_WINDOW, $lte: tipHeight },
     }),
   ]);
 

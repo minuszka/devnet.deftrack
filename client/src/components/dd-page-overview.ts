@@ -749,6 +749,12 @@ export class DdPageOverview extends LitElement {
   private _tiles(s: NonNullable<HealthTimeline['summary']>, status: NetworkStatus): TemplateResult {
     const mn = this._mn;
     const stakers = this._health?.stakers.active ?? null;
+    let fleetTone = mn ? (mn.banned > 0 ? 'crit' : 'good') : '';
+    let fleetNote = mn ? `${num(mn.banned)} banned · ${num(mn.penalised)} penalised` : 'no sample yet';
+    if (mn?.expectedEnabled != null && mn.missingExpected != null) {
+      fleetTone = mn.missingExpected > 0 ? 'crit' : mn.banned > 0 ? 'warn' : 'good';
+      fleetNote += ` · ${num(mn.missingExpected)} of ${num(mn.expectedEnabled)} expected nodes unavailable`;
+    }
 
     if (status.state === 'bootstrap') {
       return html`
@@ -767,7 +773,8 @@ export class DdPageOverview extends LitElement {
           <dd-stat
             label="Enabled masternodes"
             value=${mn ? num(mn.enabled) : num(this._health?.masternodes.enabled ?? 0)}
-            sub=${mn ? `${num(mn.banned)} banned · ${num(mn.penalised)} penalised` : 'none registered'}
+            sub=${fleetNote}
+            tone=${fleetTone}
           ></dd-stat>
           <dd-stat
             label="Chain is staking"
@@ -803,8 +810,8 @@ export class DdPageOverview extends LitElement {
         <dd-stat
           label="Masternodes"
           value=${mn ? num(mn.enabled) : '—'}
-          sub=${mn ? `${num(mn.banned)} banned · ${num(mn.penalised)} penalised` : 'no sample yet'}
-          tone=${mn ? (mn.banned === 0 ? 'good' : 'crit') : ''}
+          sub=${fleetNote}
+          tone=${fleetTone}
         ></dd-stat>
         <dd-stat
           label="Max possible ban"
@@ -911,6 +918,7 @@ export class DdPageOverview extends LitElement {
   }
 
   private _evidence(r: QuorumRoundListItem, status: NetworkStatus): string {
+    if (r.status === 'formed' && !r.memberDetailsComplete) return 'awaiting member details';
     if (r.failuresByOperator.length > 0) {
       return r.failuresByOperator
         .map((f) => `${f.operatorLabel ?? 'unattributed'} (${f.count})`)

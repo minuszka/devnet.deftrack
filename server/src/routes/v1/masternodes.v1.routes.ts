@@ -117,7 +117,7 @@ router.get(
     const since = new Date(Date.now() - q.hours * 3600_000);
     const points = await MasternodeSnapshot.find({ at: { $gte: since } })
       .sort({ at: 1 })
-      .select('at height total enabled banned penalised penaltyMax effectiveQuorumSize maxPossibleBan')
+      .select('at height total enabled banned expectedEnabled missingExpected penalised penaltyMax effectiveQuorumSize maxPossibleBan')
       .lean();
 
     sendData(res, {
@@ -128,6 +128,8 @@ router.get(
         total: p.total,
         enabled: p.enabled,
         banned: p.banned,
+        expectedEnabled: p.expectedEnabled ?? null,
+        missingExpected: p.missingExpected ?? null,
         penalised: p.penalised,
         penaltyMax: p.penaltyMax,
         effectiveQuorumSize: p.effectiveQuorumSize,

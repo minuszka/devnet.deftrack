@@ -36,6 +36,7 @@ function round(
       punishmentExplainedByJoiners: false,
     },
     invalidMemberCount: 0,
+    memberDetailsComplete: true,
     failuresByOperator: [],
     detectedAt: new Date().toISOString(),
   };

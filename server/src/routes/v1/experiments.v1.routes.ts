@@ -13,6 +13,7 @@ import {
   mainnetRelevantForRun,
 } from '../../services/experiment.service.js';
 import { formsOnV23Mainnet } from '../../config/llmq.js';
+import { SyncState } from '../../models/SyncState.js';
 import { rpc } from '../../services/rpc.service.js';
 import { withCachePolicy } from '../../middleware/cachePolicy.js';
 import { asyncRoute, MAX_OFFSET, page, parsedQuery, sendData, sendError, validateQuery } from '../../utils/http.js';
@@ -161,7 +162,14 @@ router.get(
       return;
     }
 
-    const tip = await rpc.getBlockCount().catch(() => run.endHeight ?? run.startHeight);
+    const [tip, cursor] = await Promise.all([
+      rpc.getBlockCount().catch(() => null),
+      SyncState.findOne({ key: 'blocks' }).select('lastSyncedHeight').lean(),
+    ]);
+    const indexed = cursor?.lastSyncedHeight ?? -1;
+    const through = tip === null ? indexed : Math.min(tip, indexed);
+    const runningOutcome = (r: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>) =>
+      through >= r.startHeight ? computeOutcome(r, through) : null;
     // An outcome frozen before the mainnet view existed answers it from its
     // rounds now, which are still on record. Nothing is written back; a run
     // closed with the field keeps what it froze.
@@ -169,15 +177,15 @@ router.get(
       o: ExperimentOutcome | null | undefined,
       r: Pick<ExperimentRunDocument, 'startHeight' | 'endHeight'>
     ): Promise<ExperimentOutcome | null> =>
-      o ? (o.mainnetRelevant === undefined ? { ...o, mainnetRelevant: await mainnetRelevantForRun(r, tip) } : o) : null;
+      o ? (o.mainnetRelevant === undefined ? { ...o, mainnetRelevant: await mainnetRelevantForRun(r, through) } : o) : null;
 
-    const live = await withMainnet(run.status === 'running' ? await computeOutcome(run, tip) : run.outcome, run);
+    const live = await withMainnet(run.status === 'running' ? await runningOutcome(run) : run.outcome, run);
 
     // The declared participants stay frozen -- that is the point of declaring
     // them. A running experiment also shows the network as it stands now, so a
     // change during the run is visible rather than hidden behind a stale
     // number.
-    const current = run.status === 'running' ? await currentParticipants(tip) : null;
+    const current = run.status === 'running' && through >= run.startHeight ? await currentParticipants(through) : null;
 
     let comparison = null;
     if (run.baselineRunKey && live) {
@@ -187,7 +195,7 @@ router.get(
       const baselineOutcome =
         baseline &&
         (await withMainnet(
-          baseline.status === 'closed' ? baseline.outcome : await computeOutcome(baseline, tip),
+          baseline.status === 'closed' ? baseline.outcome : await runningOutcome(baseline),
           baseline
         ));
       if (baselineOutcome) {
@@ -205,6 +213,7 @@ router.get(
       comparison,
       currentParticipants: current,
       tipHeight: tip,
+      observedThroughHeight: run.status === 'closed' ? run.endHeight : through >= run.startHeight ? through : null,
     };
     sendData(res, body);
   })

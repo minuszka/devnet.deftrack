@@ -42,7 +42,7 @@ function tx(): TxDetail {
 }
 
 function experiment(runKey: string): ExperimentDetail {
-  return { ...experimentRow({ runKey, title: 'Fixture outage run' }), currentParticipants: null, tipHeight: TIP_HEIGHT, comparison: null };
+  return { ...experimentRow({ runKey, title: 'Fixture outage run' }), currentParticipants: null, tipHeight: TIP_HEIGHT, observedThroughHeight: TIP_HEIGHT, comparison: null };
 }
 
 /** Every lookup endpoint, answering from the table given and 404 otherwise. */

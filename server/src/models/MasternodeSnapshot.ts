@@ -17,6 +17,8 @@ export interface MasternodeSnapshotDocument extends Document {
   total: number;
   enabled: number;
   banned: number;
+  expectedEnabled: number | null;
+  missingExpected: number | null;
 
   penaltySum: number;
   penaltyMax: number;
@@ -36,6 +38,8 @@ const masternodeSnapshotSchema = new Schema<MasternodeSnapshotDocument>({
   total: { type: Number, required: true },
   enabled: { type: Number, required: true },
   banned: { type: Number, required: true },
+  expectedEnabled: { type: Number, default: null },
+  missingExpected: { type: Number, default: null },
 
   penaltySum: { type: Number, default: 0 },
   penaltyMax: { type: Number, default: 0 },
